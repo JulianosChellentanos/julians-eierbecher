@@ -121,8 +121,32 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.12; }
   border: 1px solid var(--line); border-radius: 999px; padding: 7px 15px;
   color: var(--ink-soft);
 }
-.stage-badge { left: 18px; bottom: 18px; }
+.stage-badge { left: 18px; bottom: 18px; max-width: 30%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stage-color { right: 18px; bottom: 18px; display: flex; align-items: center; gap: 8px; }
+
+/* Szenen-Umschalter & Foto-Shooting */
+.scene-chips {
+  position: absolute; z-index: 4; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 4px; padding: 4px;
+  background: color-mix(in srgb, var(--card) 78%, transparent);
+  backdrop-filter: blur(8px); border: 1px solid var(--line); border-radius: 999px;
+}
+.scene-chip {
+  border: none; background: transparent; cursor: pointer;
+  font-family: var(--sans); font-size: 0.8rem; font-weight: 600; color: var(--ink-soft);
+  padding: 6px 13px; border-radius: 999px; transition: all 0.15s;
+}
+.scene-chip.active { background: var(--ink); color: var(--bg); }
+.stage-foto {
+  position: absolute; z-index: 4; bottom: 18px; left: 50%; transform: translateX(-50%);
+  border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--card) 85%, transparent);
+  backdrop-filter: blur(8px);
+  font-family: var(--sans); font-size: 0.85rem; font-weight: 600; color: var(--ink);
+  padding: 9px 18px; transition: all 0.15s;
+}
+.stage-foto:hover { background: var(--card); box-shadow: 0 4px 16px rgba(60,45,30,0.18); }
+.stage-foto:disabled { opacity: 0.5; }
 .stage-color::before {
   content: ''; width: 13px; height: 13px; border-radius: 50%;
   background: var(--accent-live); border: 1px solid rgba(0,0,0,0.12);
@@ -263,6 +287,45 @@ input[type=range]::-moz-range-thumb {
 .price-hint { font-size: 0.78rem; color: var(--ink-soft); text-align: right; }
 .tiny { font-size: 0.76rem; color: var(--ink-soft); text-align: center; }
 
+/* ---------- Produkt-Showcase ---------- */
+.produkte-band { padding: 30px 0 80px; }
+.section-sub { text-align: center; color: var(--ink-soft); margin: -26px auto 38px; max-width: 520px; }
+.showcase-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; max-width: 980px; margin: 0 auto; }
+.showcase-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 24px;
+  overflow: hidden; cursor: pointer; box-shadow: var(--shadow);
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+.showcase-card:hover { transform: translateY(-4px); box-shadow: 0 18px 50px rgba(60,45,30,0.18); }
+.showcase-card img { width: 100%; aspect-ratio: 6/7; object-fit: cover; display: block; background: var(--bg-soft); }
+.showcase-body { padding: 20px 24px 24px; }
+.showcase-body h3 { font-size: 1.4rem; margin-bottom: 6px; }
+.showcase-body p { color: var(--ink-soft); font-size: 0.93rem; margin-bottom: 16px; }
+.showcase-cta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.showcase-price { font-family: var(--serif); font-weight: 700; font-size: 1.15rem; }
+
+/* Extras (Untersetzer) */
+.check-row { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.check-row input {
+  appearance: none; flex: 0 0 auto; width: 22px; height: 22px; margin-top: 2px;
+  border: 2px solid var(--line); border-radius: 7px; cursor: pointer;
+  display: grid; place-content: center; transition: all 0.15s; background: var(--bg);
+}
+.check-row input:checked { background: var(--ink); border-color: var(--ink); }
+.check-row input:checked::after { content: '✓'; color: var(--bg); font-size: 0.85rem; font-weight: 800; }
+.check-row small { color: var(--ink-soft); }
+
+/* Foto-Modal */
+#foto-modal { max-width: 780px; }
+.foto-wrap { padding: 26px; background: var(--card); display: flex; flex-direction: column; gap: 12px; }
+.foto-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.foto-grid img {
+  width: 100%; border-radius: 14px; display: block; border: 1px solid var(--line);
+  transition: transform 0.15s;
+}
+.foto-grid a:hover img { transform: scale(1.02); }
+#foto-close { align-self: center; margin-top: 4px; }
+
 /* ---------- Bänder ---------- */
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
 .card {
@@ -343,4 +406,9 @@ dialog input:focus, dialog textarea:focus, dialog select:focus { border-color: v
   .swatch-grid { grid-template-columns: repeat(5, 1fr); gap: 12px; }
   .price-row { flex-wrap: wrap; gap: 2px 12px; }
   .price-hint { width: 100%; text-align: left; }
+  .showcase-grid { grid-template-columns: 1fr; }
+  .scene-chips { top: auto; bottom: 52px; }
+  .stage-foto { bottom: 10px; font-size: 0.78rem; padding: 7px 14px; }
+  .stage-color { bottom: 52px; }
+  .foto-grid { grid-template-columns: 1fr; }
 }

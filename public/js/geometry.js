@@ -271,50 +271,7 @@ export function buildModel(params) {
     openingDia = rIn(1) * 2;
   }
 
-  // --- Vertices
-  const positions = [];
-  const ringStart = [];
-  const pointIdx = [];
-  for (const st of stations) {
-    if (st.r === 0 && !st.rFn) {
-      pointIdx.push(positions.length / 3);
-      ringStart.push(-1);
-      positions.push(0, st.y, 0);
-    } else {
-      ringStart.push(positions.length / 3);
-      pointIdx.push(-1);
-      for (let j = 0; j < RS; j++) {
-        const theta = (j / RS) * Math.PI * 2;
-        const r = st.rFn ? st.rFn(theta) : st.r;
-        positions.push(Math.sin(theta) * r, st.y, Math.cos(theta) * r);
-      }
-    }
-  }
-
-  // --- Triangulation (Winding: Normalen zeigen aus dem Material heraus)
-  const indices = [];
-  for (let i = 0; i < stations.length - 1; i++) {
-    const a = ringStart[i], b = ringStart[i + 1];
-    if (a === -1 && b === -1) continue;
-    if (a === -1) {
-      const c = pointIdx[i];
-      for (let j = 0; j < RS; j++) indices.push(c, b + (j + 1) % RS, b + j);
-    } else if (b === -1) {
-      const c = pointIdx[i + 1];
-      for (let j = 0; j < RS; j++) indices.push(a + j, a + (j + 1) % RS, c);
-    } else {
-      for (let j = 0; j < RS; j++) {
-        const j1 = (j + 1) % RS;
-        indices.push(a + j, b + j1, b + j);
-        indices.push(a + j, a + j1, b + j1);
-      }
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
+  const geometry = revolve(stations, RS);
 
   return {
     geometry,
@@ -337,6 +294,125 @@ export function buildModel(params) {
 
 // Alias für bestehende Aufrufer/Tools
 export const buildEggcup = buildModel;
+
+// ---------------------------------------------------------------------------
+// Rotationskörper aus Stationen (geschlossene Kontur → manifold Mesh).
+// Stationen: { y, r } | { y, rFn(θ) }; r === 0 → degenerierter Punkt (Fächer).
+// ---------------------------------------------------------------------------
+function revolve(stations, RS) {
+  const positions = [];
+  const ringStart = [];
+  const pointIdx = [];
+  for (const st of stations) {
+    if (st.r === 0 && !st.rFn) {
+      pointIdx.push(positions.length / 3);
+      ringStart.push(-1);
+      positions.push(0, st.y, 0);
+    } else {
+      ringStart.push(positions.length / 3);
+      pointIdx.push(-1);
+      for (let j = 0; j < RS; j++) {
+        const theta = (j / RS) * Math.PI * 2;
+        const r = st.rFn ? st.rFn(theta) : st.r;
+        positions.push(Math.sin(theta) * r, st.y, Math.cos(theta) * r);
+      }
+    }
+  }
+  const indices = [];
+  for (let i = 0; i < stations.length - 1; i++) {
+    const a = ringStart[i], b = ringStart[i + 1];
+    if (a === -1 && b === -1) continue;
+    if (a === -1) {
+      const c = pointIdx[i];
+      for (let j = 0; j < RS; j++) indices.push(c, b + (j + 1) % RS, b + j);
+    } else if (b === -1) {
+      const c = pointIdx[i + 1];
+      for (let j = 0; j < RS; j++) indices.push(a + j, a + (j + 1) % RS, c);
+    } else {
+      for (let j = 0; j < RS; j++) {
+        const j1 = (j + 1) % RS;
+        indices.push(a + j, b + j1, b + j);
+        indices.push(a + j, a + j1, b + j1);
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+// ---------------------------------------------------------------------------
+/**
+ * Untersetzer zum Eierbecher: flache Schale mit Sitz-Mulde für den Becherfuß
+ * und Rand zum Auffangen der Eierschalen. Übernimmt Muster & Breite des
+ * Bechers, damit beide zusammen wie ein Set wirken.
+ * Rückgabe: { geometry, info: { outerRadius, seatHeight, height } }
+ */
+export function buildSaucer(params) {
+  const p = { ...DEFAULTS, ...params };
+  const product = PRODUCTS.eierbecher;
+  const points =
+    (p.preset === 'eigene' && Array.isArray(p.customPoints) && p.customPoints.length >= 4)
+      ? p.customPoints
+      : (product.presets[p.preset] || product.presets.kelch).points;
+  const curve = makeCurve(points);
+  const [hMin, hMax] = product.heightRange;
+  const H = Math.min(hMax, Math.max(hMin, p.height));
+  const rMax = product.maxRadius * p.width;
+  const rBaseCup = Math.max(0.08, curve(CHAMFER / H)) * rMax - CHAMFER * 0.6;
+
+  const rSeat = rBaseCup + 0.8;              // Sitz-Mulde: Becherfuß + Spiel
+  const rOut = Math.max(rMax * 1.85, rSeat + 15);
+  const hRim = 9;
+  const seatFloor = 2.6;
+
+  const amp = p.pattern === 'glatt' ? 0 : p.depth;
+  const q = Math.min(1, Math.max(0.4, p.quality));
+  const RS = Math.round(Math.min(640, Math.max(200, p.ribs * 9)) * q);
+  // Querwellen sind höhenbasiert — auf dem flachen Rand als normale Wellen zeigen
+  const patt = p.pattern === 'querwellen' ? 'wellen' : p.pattern;
+
+  const stations = [];
+  stations.push({ y: 0, r: 0 });
+  stations.push({ y: 0, r: rOut * 0.5 });
+  stations.push({ y: 0, r: rOut - 1 });
+  stations.push({ y: 0.8, r: rOut });
+  // Außenwand mit Muster (an beiden Enden ausblenden)
+  const BAND = Math.max(8, Math.round(22 * q));
+  for (let i = 1; i <= BAND; i++) {
+    const s = i / BAND;
+    const y = 0.8 + s * (hRim - 0.8 - 0.6);
+    const a = amp * smoothstep(0, 0.3, s) * smoothstep(1, 0.7, s);
+    stations.push(
+      a > 1e-4
+        ? { y, rFn: (theta) => rOut + a * waveTheta(patt, p.ribs * theta) }
+        : { y, r: rOut }
+    );
+  }
+  stations.push({ y: hRim, r: rOut - 0.9 });
+  // Innenfläche: sanfte Schale hinab zur Sitz-Mulde
+  const DISH = Math.max(8, Math.round(16 * q));
+  const rInStart = rOut - 1.8, yInStart = hRim - 0.5;
+  for (let i = 1; i <= DISH; i++) {
+    const s = i / DISH;
+    const ease = 1 - Math.pow(1 - s, 1.7);
+    stations.push({
+      y: yInStart - (yInStart - 3.4) * ease,
+      r: rInStart - (rInStart - (rSeat + 1.2)) * s,
+    });
+  }
+  stations.push({ y: 3.4, r: rSeat });
+  stations.push({ y: seatFloor, r: rSeat });
+  stations.push({ y: seatFloor, r: rSeat * 0.5 });
+  stations.push({ y: seatFloor, r: 0 });
+
+  return {
+    geometry: revolve(stations, RS),
+    info: { outerRadius: rOut, seatHeight: seatFloor, height: hRim },
+  };
+}
 
 // ---------------------------------------------------------------------------
 /**

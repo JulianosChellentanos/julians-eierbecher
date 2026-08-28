@@ -17,6 +17,7 @@
   <div class="wrap">
     <div class="logo"><span class="logo-mark">🥚</span><span id="brand-name">OVJU</span></div>
     <nav>
+      <a href="#produkte">Produkte</a>
       <a href="#konfigurator">Konfigurator</a>
       <a href="#sogehts">So geht's</a>
       <a href="#faq">FAQ</a>
@@ -34,6 +35,14 @@
   </div>
 </section>
 
+<section id="produkte" class="produkte-band">
+  <div class="wrap">
+    <h2 class="section-title" id="showcase-title"></h2>
+    <p class="section-sub" id="showcase-sub"></p>
+    <div class="showcase-grid" id="showcase"></div>
+  </div>
+</section>
+
 <section id="konfigurator" class="configurator">
   <div class="wrap config-grid">
 
@@ -42,6 +51,8 @@
       <canvas id="viewer"></canvas>
       <div class="stage-badge" id="dim-info"></div>
       <div class="stage-color"><span id="color-name">Elfenbein</span></div>
+      <div class="scene-chips" id="scene-chips"></div>
+      <button class="stage-foto" id="btn-foto" title="Dein Design in mehreren Szenen rendern">📸 Foto-Shooting</button>
     </div>
 
     <aside class="panel">
@@ -114,6 +125,15 @@
         <div class="swatch-grid" id="swatches"></div>
       </section>
 
+      <section class="ctrl" id="extras-section">
+        <h3>Extras</h3>
+        <label class="check-row">
+          <input type="checkbox" id="c-saucer">
+          <span>🍽️ <b>Passender Untersetzer</b> <span class="opt" id="saucer-price"></span><br>
+          <small>Mit Sitz-Mulde für den Becher und Rand — fängt Eierschalen &amp; Tropfen auf. Wird im gleichen Muster &amp; in der gleichen Farbe mitgedruckt.</small></span>
+        </label>
+      </section>
+
       <div class="panel-cta">
         <div class="price-row">
           <div><span class="price" id="price">9,90&nbsp;€</span><span class="price-unit">/ Stück</span></div>
@@ -184,6 +204,16 @@
     <p>Deine Bestellnummer: <b id="confirm-id"></b></p>
     <p class="tiny">Dein Design ist als druckfertige STL bei uns gespeichert. Du bekommst eine Bestätigung per E-Mail, sobald dein Eierbecher auf dem Druckbett liegt.</p>
     <button class="btn btn-primary" id="confirm-close">Super!</button>
+  </div>
+</dialog>
+
+<!-- Foto-Shooting -->
+<dialog id="foto-modal">
+  <div class="foto-wrap">
+    <h2>📸 Dein Design in Szene</h2>
+    <p class="tiny">Tippe ein Bild an, um es als PNG zu speichern — perfekt zum Teilen.</p>
+    <div class="foto-grid" id="foto-grid"></div>
+    <button class="btn btn-primary" id="foto-close">Fertig</button>
   </div>
 </dialog>
 

@@ -4,10 +4,11 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { FontLoader } from '../vendor/FontLoader.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
-  buildModel, bendTextOntoCup, maxTextArc, sampleProfile,
+  buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
   DEFAULTS, PRODUCTS, PATTERNS, FONTS,
 } from './geometry.js';
 import { exportSTL, downloadSTL, bufferToBase64 } from './exporter.js';
+import { woodTexture, wallTexture, makeEgg, makeGrass } from './scenes.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -16,6 +17,7 @@ const IS_SMALL = window.matchMedia('(max-width: 980px)').matches;
 const state = {
   ...DEFAULTS,
   quality: IS_SMALL ? 0.55 : 1,
+  saucer: false,
   color: null, colorName: '', colorHex: '#efe9dc',
 };
 const customByProduct = { eierbecher: null, vase: null };
@@ -117,15 +119,16 @@ controls.maxDistance = 900;
 controls.maxPolarAngle = Math.PI * 0.55;
 controls.addEventListener('start', () => { userInteracted = true; });
 
-scene.add(new THREE.HemisphereLight(0xfff6ea, 0xb9a894, 0.9));
-const key = new THREE.DirectionalLight(0xfff2e0, 1.6);
-key.position.set(120, 220, 140);
-key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
-key.shadow.camera.left = -140; key.shadow.camera.right = 140;
-key.shadow.camera.top = 260; key.shadow.camera.bottom = -140;
-key.shadow.radius = 6;
-scene.add(key);
+const hemi = new THREE.HemisphereLight(0xfff6ea, 0xb9a894, 0.9);
+scene.add(hemi);
+const keyLight = new THREE.DirectionalLight(0xfff2e0, 1.6);
+keyLight.position.set(120, 220, 140);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.left = -140; keyLight.shadow.camera.right = 140;
+keyLight.shadow.camera.top = 260; keyLight.shadow.camera.bottom = -140;
+keyLight.shadow.radius = 6;
+scene.add(keyLight);
 const fill = new THREE.DirectionalLight(0xdce8ff, 0.5);
 fill.position.set(-90, 60, -60);
 scene.add(fill);
@@ -139,11 +142,86 @@ scene.add(ground);
 
 const material = new THREE.MeshStandardMaterial({ color: state.colorHex, roughness: 0.62, metalness: 0.0 });
 
+// ---------------------------------------------------------------------------
+// Szenen: Studio / Frühstückstisch / Abendlicht (alles prozedural)
+// ---------------------------------------------------------------------------
+const SCENES = {
+  studio: { label: 'Studio', room: false, props: false, hemi: 0.9, keyI: 1.6, keyColor: 0xfff2e0 },
+  tisch: { label: 'Tisch', room: true, props: true, hemi: 0.95, keyI: 1.45, keyColor: 0xfff2e0, wallTop: '#eee3d2', wallBot: '#d8c8b0' },
+  abend: { label: 'Abend', room: true, props: true, hemi: 0.42, keyI: 2.0, keyColor: 0xffd3a0, wallTop: '#59514a', wallBot: '#332e2a' },
+};
+let currentScene = 'studio';
+const wallTexCache = {};
+
+const roomGroup = new THREE.Group();
+const woodFloor = new THREE.Mesh(
+  new THREE.PlaneGeometry(1400, 1400).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.85 })
+);
+woodFloor.material.map.wrapS = woodFloor.material.map.wrapT = THREE.RepeatWrapping;
+woodFloor.material.map.repeat.set(2.6, 2.6);
+woodFloor.receiveShadow = true;
+const backWall = new THREE.Mesh(
+  new THREE.PlaneGeometry(2400, 1300),
+  new THREE.MeshStandardMaterial({ roughness: 1 })
+);
+backWall.position.set(0, 620, -430);
+roomGroup.add(woodFloor, backWall);
+roomGroup.visible = false;
+scene.add(roomGroup);
+
+const propsGroup = new THREE.Group();
+propsGroup.visible = false;
+scene.add(propsGroup);
+
+function applyScene(key) {
+  currentScene = key;
+  const cfg = SCENES[key];
+  roomGroup.visible = cfg.room;
+  ground.visible = !cfg.room;
+  propsGroup.visible = cfg.props;
+  hemi.intensity = cfg.hemi;
+  keyLight.intensity = cfg.keyI;
+  keyLight.color.set(cfg.keyColor);
+  if (cfg.room) {
+    if (!wallTexCache[key]) wallTexCache[key] = wallTexture(cfg.wallTop, cfg.wallBot);
+    backWall.material.map = wallTexCache[key];
+    backWall.material.needsUpdate = true;
+    controls.minAzimuthAngle = -1.05;
+    controls.maxAzimuthAngle = 1.05;
+  } else {
+    controls.minAzimuthAngle = -Infinity;
+    controls.maxAzimuthAngle = Infinity;
+  }
+  $$('.scene-chip').forEach((c) => c.classList.toggle('active', c.dataset.scene === key));
+  if (!userInteracted) frameCamera();
+}
+
+function updateProps() {
+  while (propsGroup.children.length) {
+    const c = propsGroup.children.pop();
+    c.traverse?.((o) => o.geometry?.dispose());
+    propsGroup.remove(c);
+  }
+  if (!currentInfo) return;
+  const lift = saucerLift();
+  if (currentInfo.product === 'eierbecher') {
+    const egg = makeEgg();
+    egg.position.y = currentInfo.height + 8 + lift;
+    propsGroup.add(egg);
+  } else {
+    propsGroup.add(makeGrass(currentInfo.openingDiameter / 2, currentInfo.height));
+  }
+}
+
 // Kamera so setzen, dass das Objekt in Höhe UND Breite passt (auch mobil)
 function frameCamera() {
   const H = currentInfo ? currentInfo.height : 58;
-  const rM = currentInfo ? currentInfo.maxRadius : 24;
-  const halfH = H * 0.62 + 8, halfW = rM * 1.65;
+  let rM = currentInfo ? currentInfo.maxRadius : 24;
+  if (saucerInfo && state.saucer) rM = Math.max(rM, saucerInfo.outerRadius * 0.82);
+  // Ei ragt über den Becher hinaus, wenn Deko-Props sichtbar sind
+  const eggExtra = (propsGroup.visible && currentInfo?.product === 'eierbecher') ? 40 : 0;
+  const halfH = H * 0.62 + 8 + eggExtra, halfW = rM * 1.65;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const dist = Math.max(halfH / t, halfW / (t * camera.aspect));
   controls.target.set(0, H * 0.5, 0);
@@ -183,6 +261,12 @@ function activePoints() {
   return PRODUCTS[state.product].presets[state.preset].points;
 }
 
+let saucerMesh = null;
+let saucerInfo = null;
+function saucerLift() {
+  return (state.product === 'eierbecher' && state.saucer && saucerInfo) ? saucerInfo.seatHeight : 0;
+}
+
 function rebuild() {
   const { geometry, info } = buildModel({ ...state, customPoints: customByProduct[state.product] });
   currentInfo = info;
@@ -195,11 +279,28 @@ function rebuild() {
     cupMesh.geometry.dispose();
     cupMesh.geometry = geometry;
   }
+  // Untersetzer (nur Eierbecher)
+  if (saucerMesh) {
+    cupGroup.remove(saucerMesh);
+    saucerMesh.geometry.dispose();
+    saucerMesh = null; saucerInfo = null;
+  }
+  if (state.product === 'eierbecher' && state.saucer) {
+    const s = buildSaucer({ ...state, customPoints: customByProduct[state.product] });
+    saucerInfo = s.info;
+    saucerMesh = new THREE.Mesh(s.geometry, material);
+    saucerMesh.castShadow = true;
+    saucerMesh.receiveShadow = true;
+    cupGroup.add(saucerMesh);
+  }
+  cupMesh.position.y = saucerLift();
   rebuildText();
+  updateProps();
   if (!userInteracted) frameCamera();
   $('#dim-info').textContent = info.product === 'vase'
     ? `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Öffnung Ø ${info.openingDiameter.toFixed(0)} mm`
-    : `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`;
+    : `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`
+      + (state.saucer ? ` · Untersetzer Ø ${(saucerInfo.outerRadius * 2).toFixed(0)} mm` : '');
 }
 
 let textBuildId = 0;
@@ -243,6 +344,7 @@ async function rebuildText() {
   }
   textMesh = new THREE.Mesh(geo, material);
   textMesh.castShadow = true;
+  textMesh.position.y = saucerLift();
   cupGroup.add(textMesh);
 }
 
@@ -377,6 +479,7 @@ function setProduct(id) {
   markActiveProduct();
   renderPresetButtons();
   renderPrices();
+  $('#extras-section').style.display = id === 'eierbecher' ? '' : 'none';
   userInteracted = false; // neu einrahmen
   rebuild();
 }
@@ -452,6 +555,22 @@ function initControls() {
     downloadSTL(exportCurrentSTL(), stlFilename());
   });
 
+  // Szenen-Chips + Foto-Shooting
+  $('#scene-chips').innerHTML = Object.entries(SCENES).map(([id, s]) =>
+    `<button class="scene-chip" data-scene="${id}">${s.label}</button>`).join('');
+  $$('.scene-chip').forEach((b) => b.addEventListener('click', () => applyScene(b.dataset.scene)));
+  applyScene('studio');
+  $('#btn-foto').addEventListener('click', fotoShooting);
+  $('#foto-close').addEventListener('click', () => $('#foto-modal').close());
+
+  // Untersetzer
+  $('#saucer-price').textContent = `+ ${money(content.pricing.eierbecher.untersetzer)}`;
+  $('#c-saucer').addEventListener('change', (e) => {
+    state.saucer = e.target.checked;
+    userInteracted = false; // neu einrahmen (Untersetzer ist breiter)
+    rebuild();
+  });
+
   $('#hero-cta').addEventListener('click', () => {
     $('#konfigurator').scrollIntoView({ behavior: 'smooth' });
   });
@@ -477,12 +596,150 @@ function stlFilename() {
 
 function exportCurrentSTL() {
   // Für den Export in voller Auflösung frisch bauen (Preview ist ggf. reduziert)
-  const { geometry } = buildModel({ ...state, quality: 1, customPoints: customByProduct[state.product] });
+  const { geometry, info } = buildModel({ ...state, quality: 1, customPoints: customByProduct[state.product] });
   const meshes = [new THREE.Mesh(geometry)];
-  if (textMesh) meshes.push(new THREE.Mesh(textMesh.geometry));
+  if (textMesh) meshes.push(new THREE.Mesh(textMesh.geometry)); // Becher liegt beim Druck auf y=0
+  const extra = [];
+  if (state.product === 'eierbecher' && state.saucer) {
+    const s = buildSaucer({ ...state, quality: 1, customPoints: customByProduct[state.product] });
+    const sm = new THREE.Mesh(s.geometry);
+    sm.position.x = s.info.outerRadius + info.baseDiameter / 2 + 6; // nebeneinander aufs Druckbett
+    meshes.push(sm);
+    extra.push(s.geometry);
+  }
   const buf = exportSTL(meshes);
   geometry.dispose();
+  extra.forEach((g) => g.dispose());
   return buf;
+}
+
+// ---------------------------------------------------------------------------
+// Foto-Shooting & Produkt-Showcase (Renderer offscreen wiederverwenden)
+// ---------------------------------------------------------------------------
+function placeCamera(zoom, dir = [0.55, 0.32, 1]) {
+  const H = currentInfo ? currentInfo.height : 58;
+  frameCamera();
+  const d = new THREE.Vector3(...dir).normalize();
+  const dist = camera.position.distanceTo(controls.target) * zoom;
+  camera.position.copy(controls.target).addScaledVector(d, dist);
+  camera.lookAt(controls.target);
+}
+
+function shotSetup(w, h) {
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+function shotRestore(saved) {
+  applyScene(saved.scene);
+  cupGroup.rotation.y = saved.rot;
+  camera.position.copy(saved.pos);
+  controls.target.copy(saved.tgt);
+  camera.aspect = saved.aspect;
+  camera.updateProjectionMatrix();
+  canvas.width = 0; // erzwingt Restore der Canvas-Größe im nächsten Frame
+  resize();
+}
+
+function saveView() {
+  return {
+    scene: currentScene, rot: cupGroup.rotation.y, aspect: camera.aspect,
+    pos: camera.position.clone(), tgt: controls.target.clone(),
+  };
+}
+
+async function fotoShooting() {
+  const btn = $('#btn-foto');
+  btn.disabled = true;
+  const saved = saveView();
+  const shots = [];
+  const setups = [
+    { scene: 'tisch', angle: 0.45, zoom: 1.0, name: 'tisch' },
+    { scene: 'tisch', angle: -0.55, zoom: 0.78, name: 'nah' },
+    { scene: 'abend', angle: 0.25, zoom: 0.85, name: 'abend' },
+    { scene: 'studio', angle: 0.6, zoom: 0.95, name: 'studio' },
+  ];
+  shotSetup(1200, 900);
+  for (const s of setups) {
+    applyScene(s.scene);
+    cupGroup.rotation.y = s.angle;
+    placeCamera(s.zoom);
+    renderer.render(scene, camera);
+    shots.push({ url: renderer.domElement.toDataURL('image/png'), name: s.name });
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  shotRestore(saved);
+  $('#foto-grid').innerHTML = shots.map((s) => `
+    <a href="${s.url}" download="ovju-${state.product}-${s.name}.png"><img src="${s.url}" alt="Szene ${s.name}"></a>`).join('');
+  $('#foto-modal').showModal();
+  btn.disabled = false;
+}
+
+function productShot(params, hex, extraProp) {
+  const { geometry, info } = buildModel({ ...DEFAULTS, ...params, quality: 0.75 });
+  const g = new THREE.Group();
+  const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: hex, roughness: 0.62 }));
+  m.castShadow = true;
+  g.add(m);
+  if (extraProp === 'egg') {
+    const egg = makeEgg();
+    egg.position.y = info.height + 8;
+    g.add(egg);
+  } else if (extraProp === 'grass') {
+    g.add(makeGrass(info.openingDiameter / 2, info.height));
+  }
+  g.rotation.y = 0.5;
+  const saved = saveView();
+  const savedInfo = currentInfo;
+  cupGroup.visible = false;
+  scene.add(g);
+  applyScene('tisch');
+  propsGroup.visible = false;
+  currentInfo = info;
+  shotSetup(880, 1050);
+  placeCamera(extraProp === 'egg' ? 1.55 : 1.12, [0.5, 0.34, 1]);
+  renderer.render(scene, camera);
+  const url = renderer.domElement.toDataURL('image/jpeg', 0.9);
+  scene.remove(g);
+  geometry.dispose();
+  cupGroup.visible = true;
+  currentInfo = savedInfo;
+  shotRestore(saved);
+  return url;
+}
+
+function renderShowcase() {
+  const sc = content.showcase;
+  if (!sc) return;
+  $('#showcase-title').textContent = sc.title;
+  $('#showcase-sub').textContent = sc.sub;
+  const defs = [
+    {
+      id: 'eierbecher', c: sc.eierbecher, hex: '#c86f4a', extra: 'egg',
+      params: { product: 'eierbecher', preset: 'kelch', pattern: 'rippen', ribs: 48, depth: 0.9, height: 58 },
+      price: content.pricing.eierbecher.single,
+    },
+    {
+      id: 'vase', c: sc.vase, hex: '#9caf88', extra: 'grass',
+      params: { product: 'vase', preset: 'flasche', pattern: 'rippen', ribs: 72, depth: 0.9, height: 150 },
+      price: content.pricing.vase.single,
+    },
+  ];
+  $('#showcase').innerHTML = defs.map((d) => `
+    <div class="showcase-card" data-product="${d.id}">
+      <img src="${productShot(d.params, d.hex, d.extra)}" alt="${d.c.title}">
+      <div class="showcase-body">
+        <h3>${d.c.title}</h3>
+        <p>${d.c.text}</p>
+        <div class="showcase-cta"><span class="showcase-price">ab ${money(d.price)}</span>
+        <button class="btn btn-primary">${d.c.cta}</button></div>
+      </div>
+    </div>`).join('');
+  $$('.showcase-card').forEach((card) => card.addEventListener('click', () => {
+    setProduct(card.dataset.product);
+    $('#konfigurator').scrollIntoView({ behavior: 'smooth' });
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -549,10 +806,13 @@ function renderQtyOptions() {
 
 function orderTotal(qty) {
   const pp = productPricing();
-  if (qty === 2 && pp.duo) return pp.duo;
-  if (qty === 4 && pp.family4) return pp.family4;
-  if (qty > 2) return Math.round(qty * pp.single * 0.85 * 10) / 10;
-  return qty * pp.single;
+  let total;
+  if (qty === 2 && pp.duo) total = pp.duo;
+  else if (qty === 4 && pp.family4) total = pp.family4;
+  else if (qty > 2) total = Math.round(qty * pp.single * 0.85 * 10) / 10;
+  else total = qty * pp.single;
+  if (state.product === 'eierbecher' && state.saucer) total += qty * content.pricing.eierbecher.untersetzer;
+  return Math.round(total * 100) / 100;
 }
 
 function updateOrderTotal() {
@@ -566,7 +826,7 @@ function orderSummaryHTML() {
   const twist = state.twist === 0 ? '' : `, Drall ${Math.round(state.twist * 180)}°`;
   return `<span class="dot" style="background:${state.colorHex}"></span>
     <b>${product.label} „${presetLabel}“</b> · ${PATTERNS[state.pattern]}${state.pattern !== 'glatt' ? ` (${state.ribs}×, ${state.depth.toFixed(1)} mm${twist})` : ''}
-    · ${state.height} mm · <b>${state.colorName}</b>${state.text ? ` · Gravur „${state.text}“ (${FONTS[state.font].label})` : ''}`;
+    · ${state.height} mm · <b>${state.colorName}</b>${state.text ? ` · Gravur „${state.text}“ (${FONTS[state.font].label})` : ''}${state.product === 'eierbecher' && state.saucer ? ' · 🍽️ mit Untersetzer' : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -583,4 +843,5 @@ function orderSummaryHTML() {
   rebuild();
   animate();
   $('#loading').classList.add('hidden');
+  setTimeout(renderShowcase, 400); // Produkt-Showcase mit echten Engine-Renders
 })();

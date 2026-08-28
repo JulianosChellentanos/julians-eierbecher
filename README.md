@@ -13,6 +13,9 @@
 - **Oberflächen**: Glatt, Rippen, Wellen, Zickzack (Facetten), Querwellen — mit Anzahl, Tiefe und **Drall** (→ Spiralen / diagonale Wellen)
 - **Gravur**: 5 Schriftarten, Größe & Höhen-Position einstellbar; der Text folgt der Silhouette (Taille/Bauch) und wird um die Wand gebogen
 - **10 matte PLA-Farben** (Bambu-Lab-Palette, definiert in `public/content.json`)
+- **Szenen-Vorschau**: Studio, Frühstückstisch & Abendlicht (prozedural, kein Bildmaterial) — mit Ei im Becher bzw. Trockengräsern in der Vase
+- **📸 Foto-Shooting**: rendert das aktuelle Design in 4 Szenen als speicherbare PNGs
+- **Untersetzer-Extra** (+4,90 €): Schale mit Sitz-Mulde für den Becher, fängt Eierschalen auf; wandert als zweites Teil mit in die STL (nebeneinander auf dem Bett)
 - **STL-Export** direkt im Browser: binär, Millimeter, **wasserdicht/manifold** — slicebar in Bambu Studio, PrusaSlicer & Co.
 - **Bestellsystem**: Bestellung inkl. druckfertiger STL landet in `orders/<ID>/`, Admin-Übersicht mit Download
 - Kein Build-Schritt, keine Runtime-Dependencies — alles lokal gevendort (Three.js, Fonts)

@@ -4,7 +4,7 @@
     "tagline": "Dein Ei. Dein Design."
   },
   "hero": {
-    "headline": "Der Eierbecher, den es nur einmal gibt: deiner.",
+    "headline": "Eierbecher & Vasen, die es nur einmal gibt: deine.",
     "subheadline": "Gestalte deine Eierbecher und Vasen im 3D-Konfigurator – Rippen, Spiralen, Wellen, Zickzack, zehn matte Farben und deine persönliche Gravur. Wir drucken dein Design für dich – oder du lädst die Datei für deinen eigenen Drucker.",
     "cta": "Jetzt gestalten"
   },
@@ -123,12 +123,27 @@
     "eierbecher": {
       "single": 9.9,
       "duo": 17.9,
-      "family4": 29.9
+      "family4": 29.9,
+      "untersetzer": 4.9
     },
     "vase": {
       "single": 24.9,
       "duo": 44.9
     },
     "currency": "EUR"
+  },
+  "showcase": {
+    "title": "Zwei Produkte. Unendlich viele Designs.",
+    "sub": "Beides aus demselben Studio: forme, färbe und graviere – wir drucken.",
+    "eierbecher": {
+      "title": "Der Eierbecher",
+      "text": "Dein Frühstücks-Statement: Kelch, Schale oder Tulpe, mit Rippen oder Spiralen – und auf Wunsch mit passendem Untersetzer für die Schalen.",
+      "cta": "Eierbecher designen"
+    },
+    "vase": {
+      "title": "Die Vase",
+      "text": "Vom Japandi-Klassiker bis zur Skulptur mit eigener Silhouette: bis 22 cm hoch, echte Hohlform, bereit für Trockenblumen.",
+      "cta": "Vase designen"
+    }
   }
 }
