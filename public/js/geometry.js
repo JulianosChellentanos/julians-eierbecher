@@ -1,53 +1,130 @@
-// OVJU — parametrische Eierbecher-Geometrie
-// Erzeugt ein wasserdichtes (manifold) Mesh in Millimetern, bereit für den 3D-Druck.
+// OVJU — parametrische Geometrie für Eierbecher & Vasen
+// Erzeugt wasserdichte (manifold) Meshes in Millimetern, bereit für den 3D-Druck.
 import * as THREE from 'three';
 
 // ---------------------------------------------------------------------------
-// Form-Presets: Silhouetten als (t, r)-Kontrollpunkte.
+// Produkte & Form-Presets: Silhouetten als (t, r)-Kontrollpunkte.
 // t = 0..1 (Höhe von unten nach oben), r relativ zum Maximalradius.
 // ---------------------------------------------------------------------------
-export const PRESETS = {
-  kelch: {
-    label: 'Kelch',
-    points: [
-      [0.00, 0.62], [0.07, 0.68], [0.16, 0.58], [0.28, 0.52],
-      [0.42, 0.66], [0.60, 0.85], [0.80, 0.96], [0.93, 1.00], [1.00, 0.98],
-    ],
+export const PRODUCTS = {
+  eierbecher: {
+    label: 'Eierbecher',
+    icon: '🥚',
+    heightRange: [35, 75],
+    defaultHeight: 58,
+    maxRadius: 24,
+    presets: {
+      kelch: {
+        label: 'Kelch',
+        points: [
+          [0.00, 0.62], [0.07, 0.68], [0.16, 0.58], [0.28, 0.52],
+          [0.42, 0.66], [0.60, 0.85], [0.80, 0.96], [0.93, 1.00], [1.00, 0.98],
+        ],
+      },
+      schale: {
+        label: 'Schale',
+        points: [
+          [0.00, 0.55], [0.06, 0.63], [0.22, 0.78], [0.45, 0.90],
+          [0.70, 0.97], [0.90, 1.00], [1.00, 1.00],
+        ],
+      },
+      tulpe: {
+        label: 'Tulpe',
+        points: [
+          [0.00, 0.72], [0.08, 0.74], [0.20, 0.62], [0.35, 0.58],
+          [0.55, 0.76], [0.75, 0.93], [0.90, 1.00], [1.00, 0.95],
+        ],
+      },
+    },
   },
-  schale: {
-    label: 'Schale',
-    points: [
-      [0.00, 0.55], [0.06, 0.63], [0.22, 0.78], [0.45, 0.90],
-      [0.70, 0.97], [0.90, 1.00], [1.00, 1.00],
-    ],
+  vase: {
+    label: 'Vase',
+    icon: '🏺',
+    heightRange: [90, 220],
+    defaultHeight: 150,
+    maxRadius: 45,
+    presets: {
+      flasche: {
+        label: 'Flasche',
+        points: [
+          [0.00, 0.80], [0.08, 0.94], [0.30, 1.00], [0.52, 0.96],
+          [0.66, 0.74], [0.78, 0.44], [0.88, 0.38], [1.00, 0.40],
+        ],
+      },
+      kugel: {
+        label: 'Kugel',
+        points: [
+          [0.00, 0.52], [0.12, 0.84], [0.34, 1.00], [0.58, 0.92],
+          [0.74, 0.62], [0.85, 0.44], [0.94, 0.42], [1.00, 0.48],
+        ],
+      },
+      tropfen: {
+        label: 'Tropfen',
+        points: [
+          [0.00, 0.46], [0.14, 0.78], [0.38, 1.00], [0.62, 0.88],
+          [0.82, 0.60], [0.94, 0.42], [1.00, 0.36],
+        ],
+      },
+      zylinder: {
+        label: 'Zylinder',
+        points: [
+          [0.00, 0.94], [0.25, 1.00], [0.75, 1.00], [1.00, 0.97],
+        ],
+      },
+      kurve: {
+        label: 'Kurve',
+        points: [
+          [0.00, 0.74], [0.14, 0.90], [0.30, 0.70], [0.50, 0.55],
+          [0.68, 0.72], [0.86, 0.98], [1.00, 0.94],
+        ],
+      },
+    },
   },
-  tulpe: {
-    label: 'Tulpe',
-    points: [
-      [0.00, 0.72], [0.08, 0.74], [0.20, 0.62], [0.35, 0.58],
-      [0.55, 0.76], [0.75, 0.93], [0.90, 1.00], [1.00, 0.95],
-    ],
-  },
+};
+
+// Schriften für die Gravur (typeface.json im fonts/-Ordner)
+export const FONTS = {
+  helvetiker: { label: 'Modern', file: 'helvetiker_bold.typeface.json' },
+  optimer: { label: 'Soft', file: 'optimer_bold.typeface.json' },
+  gentilis: { label: 'Fein', file: 'gentilis_bold.typeface.json' },
+  droid_sans: { label: 'Kräftig', file: 'droid_sans_bold.typeface.json' },
+  droid_serif: { label: 'Klassisch', file: 'droid_serif_bold.typeface.json' },
+};
+
+export const PATTERNS = {
+  glatt: 'Glatt',
+  rippen: 'Rippen',
+  wellen: 'Wellen',
+  zickzack: 'Zickzack',
+  querwellen: 'Querwellen',
 };
 
 export const DEFAULTS = {
+  product: 'eierbecher',
   preset: 'kelch',
   height: 58,        // mm
-  width: 1.0,        // Faktor 0.85..1.15 auf den Maximalradius (24 mm)
-  pattern: 'rippen', // 'glatt' | 'wellen' | 'rippen'
-  ribs: 48,          // Anzahl Rippen/Wellen um den Umfang
+  width: 1.0,        // Faktor 0.85..1.15 auf den Maximalradius
+  pattern: 'rippen',
+  ribs: 48,          // Anzahl Rippen/Wellen
   depth: 0.9,        // Amplitude in mm (0..1.6)
-  twist: 0,          // -2..2 — Drall (Umdrehungsanteil über die Höhe → Spirale)
+  twist: 0,          // -2..2 — Drall (→ Spiralen / diagonale Querwellen)
   text: '',
   textSize: 7,       // mm
+  textPos: 0.55,     // Gravur-Höhe als Anteil der Gesamthöhe (0.15..0.8)
+  font: 'helvetiker',
+  customPoints: null, // eigene Silhouette [[t,r],...] wenn preset === 'eigene'
+  quality: 1,        // 0.5..1 — Mesh-Auflösung (Mobile-Vorschau niedriger)
 };
 
-const MAX_RADIUS = 24;      // mm bei width = 1
 const CHAMFER = 0.8;        // Boden-Fase
-const RIM_MIN_WALL = 2.6;   // minimale Randbreite oben
+const RIM_MIN_WALL = 2.6;   // minimale Randbreite Eierbecher
 const CAVITY_R_MAX = 21.0;  // Ei-Mulde Öffnungsradius (Ei ≈ 44 mm breit)
+const VASE_WALL = 2.2;      // Vasen-Wandstärke (zusätzlich zur Rippen-Tiefe)
+const VASE_FLOOR = 3.0;     // Vasen-Bodendicke
 
+// ---------------------------------------------------------------------------
 // Kubische Hermite-Interpolation (Catmull-Rom für nicht-uniforme Knoten)
+// ---------------------------------------------------------------------------
 function makeCurve(points) {
   const ts = points.map((p) => p[0]);
   const rs = points.map((p) => p[1]);
@@ -73,88 +150,131 @@ function makeCurve(points) {
   };
 }
 
+/** Silhouette als [t, r]-Polyline sampeln (für Preset-Icons & Formen-Editor). */
+export function sampleProfile(points, n = 40) {
+  const curve = makeCurve(points);
+  const out = [];
+  for (let i = 0; i <= n; i++) out.push([i / n, curve(i / n)]);
+  return out;
+}
+
 function smoothstep(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 }
 
-// Oberflächen-Welle: -1..1 über den Phasenwinkel
-function waveFn(pattern, phase) {
-  if (pattern === 'glatt') return 0;
+// θ-basierte Muster: -1..1 über den Phasenwinkel
+function waveTheta(pattern, phase) {
   const c = (Math.cos(phase) + 1) / 2; // 0..1
-  if (pattern === 'rippen') return Math.pow(c, 2.2) * 2 - 1; // schmale Grate
-  return c * 2 - 1; // weiche Sinuswellen
+  if (pattern === 'rippen') return Math.pow(c, 2.2) * 2 - 1;              // schmale Grate
+  if (pattern === 'zickzack') return (2 / Math.PI) * Math.asin(Math.sin(phase)); // Facetten
+  return c * 2 - 1;                                                        // weiche Wellen
 }
 
+// ---------------------------------------------------------------------------
 /**
- * Baut die Eierbecher-Geometrie (ohne Text).
- * Rückgabe: { geometry, info } — geometry ist indexed BufferGeometry in mm,
+ * Baut die Becher-/Vasen-Geometrie (ohne Text).
+ * Rückgabe: { geometry, info } — indexed BufferGeometry in mm,
  * y-Achse = Höhe, Ursprung in der Bodenmitte.
  */
-export function buildEggcup(params) {
+export function buildModel(params) {
   const p = { ...DEFAULTS, ...params };
-  const preset = PRESETS[p.preset] || PRESETS.kelch;
-  const curve = makeCurve(preset.points);
-  const H = p.height;
-  const rMax = MAX_RADIUS * p.width;
-  const R = (t) => curve(t) * rMax; // glatter Außenradius bei Höhe t
+  const product = PRODUCTS[p.product] || PRODUCTS.eierbecher;
+  const isVase = p.product === 'vase';
+  const points =
+    (p.preset === 'eigene' && Array.isArray(p.customPoints) && p.customPoints.length >= 4)
+      ? p.customPoints
+      : (product.presets[p.preset] || Object.values(product.presets)[0]).points;
+  const curve = makeCurve(points);
+
+  const [hMin, hMax] = product.heightRange;
+  const H = Math.min(hMax, Math.max(hMin, p.height));
+  const rMax = product.maxRadius * p.width;
+  const R = (t) => Math.max(0.08, curve(t)) * rMax; // glatter Außenradius, gegen 0 geklemmt
 
   const amp = p.pattern === 'glatt' ? 0 : p.depth;
-  const twistAngle = p.twist * Math.PI; // Gesamtverdrehung über die Höhe
+  const twistAngle = p.twist * Math.PI;
+  const isQuer = p.pattern === 'querwellen';
+  // Querwellen: vertikale Wellenanzahl aus dem Rippen-Regler, Drall = ganzzahliger
+  // Umlauf-Versatz (muss ganzzahlig sein, damit die Naht bei θ=2π schließt)
+  const quersV = Math.max(2, Math.round(p.ribs / 5));
+  const querK = Math.round(p.twist * 2);
 
-  // Auflösung: genug radiale Segmente für runde Rippen
-  const RS = Math.min(720, Math.max(240, p.ribs * 10));
-  // Bei starkem Drall wandern die Grate diagonal → mehr vertikale Auflösung nötig
-  const WALL_STEPS = Math.min(340, Math.round(110 + Math.abs(twistAngle) * 34));
-  const CAVITY_STEPS = 36;  // Stationen in der Ei-Mulde
+  const q = Math.min(1, Math.max(0.4, p.quality));
+  const RS = Math.round(Math.min(640, Math.max(200, p.ribs * 9)) * q);
+  const wallBase = isVase ? Math.max(140, H * 1.1) : 110;
+  const querExtra = isQuer ? quersV * 14 : 0;
+  const WALL_STEPS = Math.round(Math.min(320, wallBase + Math.abs(twistAngle) * 30 + querExtra) * q);
+  const CAVITY_STEPS = Math.round(36 * q);
+  const INNER_STEPS = Math.round(44 * q);
 
-  // Ei-Mulde: Kugelkappe
-  const rTop = R(1);
-  const rCav = Math.min(CAVITY_R_MAX, rTop - RIM_MIN_WALL - amp);
-  const D = Math.min(20, H - 9); // Muldentiefe
-  const Rs = (rCav * rCav + D * D) / (2 * D); // Kugelradius
-  const yc = H - D + Rs; // Kugelzentrum auf der Achse
-  const phiRim = Math.asin(Math.min(1, rCav / Rs));
+  // Rippen-Fade: unten glatt (Druckbett); Querwellen auch oben glatt (sauberer Rand)
+  const fade = (t) => {
+    let f = smoothstep(0.02, 0.12, t);
+    if (isQuer) f *= smoothstep(1.0, 0.93, t);
+    return f;
+  };
+  const ampAt = (t) => amp * fade(t);
 
-  // Rippen-Fade: unten glatt (Druckbett), oben voll durchlaufend (gezackter Rand)
-  const fade = (t) => smoothstep(0.02, 0.14, t);
+  // Oberflächen-Versatz an Position (θ, t)
+  const offset = (theta, t) => {
+    const a = ampAt(t);
+    if (a < 1e-4) return 0;
+    if (isQuer) return a * Math.sin(2 * Math.PI * quersV * t + querK * theta);
+    return a * waveTheta(p.pattern, p.ribs * (theta + twistAngle * t));
+  };
 
-  // --- Stationen definieren: Liste von { y, r(θ) | r:number } von unten nach oben,
-  // Kontur läuft: Bodenmitte → Boden → Fase → Außenwand → Rand → Mulde → Muldengrund.
+  // --- Stationen: Kontur von Bodenmitte → außen hoch → Rand → innen → Achse
   const stations = [];
   const rBase = R(CHAMFER / H) - CHAMFER * 0.6;
-  stations.push({ y: 0, r: 0 });                    // Bodenmitte (degeneriert)
-  stations.push({ y: 0, r: rBase * 0.55 });         // Boden
-  stations.push({ y: 0, r: rBase });                // Bodenkante
-  // Außenwand mit Muster
+  stations.push({ y: 0, r: 0 });
+  stations.push({ y: 0, r: rBase * 0.55 });
+  stations.push({ y: 0, r: rBase });
   for (let i = 0; i <= WALL_STEPS; i++) {
     const s = i / WALL_STEPS;
     const y = CHAMFER + s * (H - CHAMFER);
     const t = y / H;
-    const base = R(t);
-    const a = amp * fade(t);
-    if (a > 1e-4) {
-      stations.push({
-        y,
-        rFn: (theta) => base + a * waveFn(p.pattern, p.ribs * (theta + twistAngle * t)),
-      });
-    } else {
-      stations.push({ y, r: base });
-    }
+    stations.push(
+      ampAt(t) > 1e-4
+        ? { y, rFn: (theta) => R(t) + offset(theta, t) }
+        : { y, r: R(t) }
+    );
   }
-  // Rand: von der (evtl. gezackten) Außenkante glatt zur Muldenöffnung
-  stations.push({ y: H, r: rCav });
-  // Ei-Mulde (Kugelkappe), von der Öffnung zum Grund
-  for (let i = 1; i < CAVITY_STEPS; i++) {
-    const phi = phiRim * (1 - i / CAVITY_STEPS);
-    stations.push({ y: yc - Rs * Math.cos(phi), r: Rs * Math.sin(phi) });
-  }
-  stations.push({ y: H - D, r: 0 });                // Muldengrund (degeneriert)
 
-  // --- Vertices erzeugen
+  let cavityDia = 0, cavityDepth = 0, openingDia = 0;
+  if (!isVase) {
+    // --- Eierbecher: Ei-Mulde als Kugelkappe
+    const rTop = R(1);
+    const rCav = Math.min(CAVITY_R_MAX, rTop - RIM_MIN_WALL - amp);
+    const D = Math.min(20, H - 9);
+    const Rs = (rCav * rCav + D * D) / (2 * D);
+    const yc = H - D + Rs;
+    const phiRim = Math.asin(Math.min(1, rCav / Rs));
+    stations.push({ y: H, r: rCav });
+    for (let i = 1; i < CAVITY_STEPS; i++) {
+      const phi = phiRim * (1 - i / CAVITY_STEPS);
+      stations.push({ y: yc - Rs * Math.cos(phi), r: Rs * Math.sin(phi) });
+    }
+    stations.push({ y: H - D, r: 0 });
+    cavityDia = rCav * 2; cavityDepth = D;
+  } else {
+    // --- Vase: Innenwand folgt der Silhouette (Wandstärke konstant), Boden dicht
+    const wallEff = VASE_WALL + amp;
+    const rIn = (t) => Math.max(1.4, R(t) - wallEff);
+    const tFloor = VASE_FLOOR / H;
+    stations.push({ y: H, r: rIn(1) });
+    for (let i = 1; i <= INNER_STEPS; i++) {
+      const t = 1 - (1 - tFloor) * (i / INNER_STEPS);
+      stations.push({ y: t * H, r: rIn(t) });
+    }
+    stations.push({ y: VASE_FLOOR, r: 0 });
+    openingDia = rIn(1) * 2;
+  }
+
+  // --- Vertices
   const positions = [];
-  const ringStart = []; // Startindex je Station (-1 → degenerierter Punkt)
-  const pointIdx = [];  // Vertexindex degenerierter Stationen
+  const ringStart = [];
+  const pointIdx = [];
   for (const st of stations) {
     if (st.r === 0 && !st.rFn) {
       pointIdx.push(positions.length / 3);
@@ -171,27 +291,17 @@ export function buildEggcup(params) {
     }
   }
 
-  // --- Triangulation: Bänder zwischen benachbarten Stationen.
-  // θ läuft über sin/cos so, dass (bei Kontur „aufwärts außen") die Flächen-
-  // normalen nach außen zeigen; Mulde und Boden ergeben sich automatisch korrekt.
+  // --- Triangulation (Winding: Normalen zeigen aus dem Material heraus)
   const indices = [];
   for (let i = 0; i < stations.length - 1; i++) {
     const a = ringStart[i], b = ringStart[i + 1];
     if (a === -1 && b === -1) continue;
     if (a === -1) {
-      // Fächer von Punkt (unten) zu Ring b — Bodenmitte, Normale -y
       const c = pointIdx[i];
-      for (let j = 0; j < RS; j++) {
-        const j1 = (j + 1) % RS;
-        indices.push(c, b + j1, b + j);
-      }
+      for (let j = 0; j < RS; j++) indices.push(c, b + (j + 1) % RS, b + j);
     } else if (b === -1) {
-      // Fächer von Ring a zu Punkt (oben) — Muldengrund, Normale +y
       const c = pointIdx[i + 1];
-      for (let j = 0; j < RS; j++) {
-        const j1 = (j + 1) % RS;
-        indices.push(a + j, a + j1, c);
-      }
+      for (let j = 0; j < RS; j++) indices.push(a + j, a + (j + 1) % RS, c);
     } else {
       for (let j = 0; j < RS; j++) {
         const j1 = (j + 1) % RS;
@@ -209,33 +319,40 @@ export function buildEggcup(params) {
   return {
     geometry,
     info: {
+      product: p.product,
       height: H,
-      topDiameter: (rTop + amp) * 2,
+      maxRadius: rMax,
+      topDiameter: (R(1) + amp) * 2,
       baseDiameter: rBase * 2,
-      cavityDiameter: rCav * 2,
-      cavityDepth: D,
+      cavityDiameter: cavityDia,
+      cavityDepth,
+      openingDiameter: openingDia,
       radialSegments: RS,
-      textRadius: R(0.58),
-      textY: H * 0.58,
-      surfaceAmp: amp * fade(0.58),
+      // Für die Text-Prägung: glatter Radius & Muster-Amplitude an Höhe t
+      radiusAt: R,
+      ampAt,
     },
   };
 }
 
+// Alias für bestehende Aufrufer/Tools
+export const buildEggcup = buildModel;
+
+// ---------------------------------------------------------------------------
 /**
- * Biegt eine (bereits gebaute, zentrierte) Text-Geometrie um die Becherwand.
- * textGeo: extrudierte TextGeometry in xy, Extrusion in +z (Tiefe `depth`).
- * Ergebnis überlappt die Wand um ~1.5 mm → Slicer verschmilzt beide Körper.
+ * Biegt eine extrudierte Text-Geometrie um die Wand und lässt sie der
+ * Silhouette folgen (auch bei Taille/Bauch sitzt jeder Buchstabe auf der
+ * lokalen Oberfläche). textPos = Höhe der Textmitte als Anteil von H.
+ * Rückgabe-Overlap ~1.5 mm in der Wand → Slicer verschmilzt beide Körper.
  */
-export function bendTextOntoCup(textGeo, info) {
+export function bendTextOntoCup(textGeo, info, textPos = 0.55) {
   textGeo.computeBoundingBox();
   const bb = textGeo.boundingBox;
   const wdt = bb.max.x - bb.min.x;
-  const hgt = bb.max.y - bb.min.y;
   const depth = bb.max.z - bb.min.z;
-  const rOuterFace = info.textRadius + info.surfaceAmp + 0.55; // Textfront über den Rippen
-  const rBase = rOuterFace - depth;                            // Textrückseite in der Wand
-  const rMid = info.textRadius;
+  const yCenter = textPos * info.height;
+  const tC = Math.min(0.97, Math.max(0.03, textPos));
+  const rMid = info.radiusAt(tC);
 
   const pos = textGeo.getAttribute('position');
   const cx = (bb.min.x + bb.max.x) / 2;
@@ -244,13 +361,17 @@ export function bendTextOntoCup(textGeo, info) {
     const x = pos.getX(i) - cx;
     const y = pos.getY(i) - cy;
     const z = pos.getZ(i) - bb.min.z;
-    const alpha = x / rMid; // Bogenlänge → Winkel
-    const r = rBase + z;
-    pos.setXYZ(i, Math.sin(alpha) * r, info.textY + y, Math.cos(alpha) * r);
+    const yWorld = yCenter + y;
+    const t = Math.min(0.99, Math.max(0.01, yWorld / info.height));
+    // lokale Oberfläche an dieser Höhe: glatter Radius + Musterberge
+    const rFace = info.radiusAt(t) + info.ampAt(t) + 0.55;
+    const r = rFace - (depth - z); // Rückseite steckt `depth` tief in der Wand
+    const alpha = x / rMid;
+    pos.setXYZ(i, Math.sin(alpha) * r, yWorld, Math.cos(alpha) * r);
   }
   pos.needsUpdate = true;
   textGeo.computeVertexNormals();
-  return { arc: wdt / rMid, height: hgt, depth };
+  return { arc: wdt / rMid, depth };
 }
 
 /** Maximale Textbreite (Bogen ≤ 55 % des Umfangs) — für UI-Feedback. */

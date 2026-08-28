@@ -30,7 +30,7 @@
     <h1 id="hero-headline">Der Eierbecher, den es nur einmal gibt: deiner.</h1>
     <p class="sub" id="hero-sub"></p>
     <button class="btn btn-primary btn-lg" id="hero-cta">Jetzt gestalten</button>
-    <div class="hero-hint">↓ Live-3D-Vorschau · STL für deinen Drucker · ab 9,90&nbsp;€</div>
+    <div class="hero-hint">↓ Live-3D-Vorschau · STL für deinen Drucker · Eierbecher ab 9,90&nbsp;€ · Vasen ab 24,90&nbsp;€</div>
   </div>
 </section>
 
@@ -50,22 +50,18 @@
         <button class="btn btn-ghost" id="btn-random" title="Zufälliges Design">🎲 Überrasch mich</button>
       </div>
 
+      <div class="product-tabs" id="product-tabs"></div>
+
       <section class="ctrl">
         <h3>Form</h3>
-        <div class="preset-row">
-          <button class="preset-btn active" data-preset="kelch">
-            <svg viewBox="0 0 40 52"><path d="M12 50h16M14 50c0-6-1-8-3-10 8-4 8-9 5-13-4-5-5-12-2-18 2-3 10-3 12 0 3 6 2 13-2 18-3 4-3 9 5 13-2 2-3 4-3 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" transform="rotate(180 20 26)"/></svg>
-            Kelch</button>
-          <button class="preset-btn" data-preset="schale">
-            <svg viewBox="0 0 40 52"><path d="M8 18c-2 10 1 22 5 26h14c4-4 7-16 5-26-3-6-21-6-24 0z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-            Schale</button>
-          <button class="preset-btn" data-preset="tulpe">
-            <svg viewBox="0 0 40 52"><path d="M10 6c6 4 14 4 20 0 2 8 0 16-6 20-2 2-2 6 1 8 2 2 2 8 0 10H15c-2-2-2-8 0-10 3-2 3-6 1-8-6-4-8-12-6-20z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-            Tulpe</button>
+        <div class="preset-row" id="preset-row"></div>
+        <div id="shape-editor" hidden>
+          <svg id="profile-svg" viewBox="0 0 150 200"></svg>
+          <p class="tiny editor-hint">✏️ Zieh die Punkte zur Seite — deine ganz eigene Silhouette.</p>
         </div>
         <label class="slider-row">
           <span>Höhe <output id="s-height-val"></output></span>
-          <input type="range" id="s-height" min="42" max="75" step="1" value="58">
+          <input type="range" id="s-height" min="35" max="75" step="1" value="58">
         </label>
         <label class="slider-row">
           <span>Breite <output id="s-width-val"></output></span>
@@ -77,8 +73,10 @@
         <h3>Oberfläche</h3>
         <div class="seg">
           <button class="pattern-btn" data-pattern="glatt">Glatt</button>
-          <button class="pattern-btn" data-pattern="wellen">Wellen</button>
           <button class="pattern-btn active" data-pattern="rippen">Rippen</button>
+          <button class="pattern-btn" data-pattern="wellen">Wellen</button>
+          <button class="pattern-btn" data-pattern="zickzack">Zickzack</button>
+          <button class="pattern-btn" data-pattern="querwellen">Querwellen</button>
         </div>
         <div id="surface-sliders">
           <label class="slider-row">
@@ -99,9 +97,14 @@
       <section class="ctrl">
         <h3>Gravur <span class="opt">(optional)</span></h3>
         <input type="text" id="i-text" maxlength="16" placeholder="z. B. JULIAN" autocomplete="off">
+        <div class="font-row" id="font-row"></div>
         <label class="slider-row">
           <span>Schriftgröße <output id="s-textsize-val"></output></span>
           <input type="range" id="s-textsize" min="4" max="10" step="0.5" value="7">
+        </label>
+        <label class="slider-row">
+          <span>Position (Höhe) <output id="s-textpos-val"></output></span>
+          <input type="range" id="s-textpos" min="0.15" max="0.8" step="0.01" value="0.55">
         </label>
         <div class="warn" id="text-warn"></div>
       </section>

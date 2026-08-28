@@ -1,14 +1,17 @@
 # 🥚 OVJU — Julians Eierbecher
 
-**Dein Ei. Dein Design.** — Web-Konfigurator für individuell designte, 3D-gedruckte Eierbecher.
+**Dein Ei. Dein Design.** — Web-Konfigurator für individuell designte, 3D-gedruckte **Eierbecher und Vasen**.
 
 ![Konfigurator](docs/screenshot-configurator.png)
+![Vase](docs/screenshot-vase.png)
+![Formen-Editor](docs/screenshot-editor.png)
 
 ## Features
 
-- **Live-3D-Konfigurator** (Three.js): Form (Kelch / Schale / Tulpe), Höhe & Breite frei ziehbar
-- **Oberflächen**: Glatt, Wellen, Rippen — mit Anzahl, Tiefe und **Drall** (→ Spiralen)
-- **Gravur**: Text wird plastisch um die Becherwand gebogen (automatische Größenanpassung)
+- **Zwei Produktwelten**: Eierbecher (Kelch/Schale/Tulpe) und Vasen (Flasche/Kugel/Tropfen/Zylinder/Kurve), Höhe & Breite frei ziehbar
+- **Formen-Editor „Eigene"**: Silhouetten-Punkte per Drag ziehen — komplett eigene Formen
+- **Oberflächen**: Glatt, Rippen, Wellen, Zickzack (Facetten), Querwellen — mit Anzahl, Tiefe und **Drall** (→ Spiralen / diagonale Wellen)
+- **Gravur**: 5 Schriftarten, Größe & Höhen-Position einstellbar; der Text folgt der Silhouette (Taille/Bauch) und wird um die Wand gebogen
 - **10 matte PLA-Farben** (Bambu-Lab-Palette, definiert in `public/content.json`)
 - **STL-Export** direkt im Browser: binär, Millimeter, **wasserdicht/manifold** — slicebar in Bambu Studio, PrusaSlicer & Co.
 - **Bestellsystem**: Bestellung inkl. druckfertiger STL landet in `orders/<ID>/`, Admin-Übersicht mit Download
@@ -61,4 +64,5 @@ Watertightness (jede Kante exakt gepaart) und positives Volumen.
 
 - Material: **PLA matt**, Schichthöhe 0.16–0.20 mm
 - 3 Wandlinien, 10–15 % Infill, kein Support nötig (Mulde ≤ 45°)
-- Becher steht flach auf dem Bett — einfach STL öffnen, Farbe wählen, slicen
+- Becher/Vase stehen flach auf dem Bett — einfach STL öffnen, Farbe wählen, slicen
+- Vasen sind geschlossene Hohlkörper (2,2 mm Wand + Boden) — normal slicen, kein Vasenmodus nötig

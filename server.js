@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
 const ORDERS = path.join(__dirname, 'orders');
 const PORT = process.env.PORT || 4488;
-const MAX_BODY = 40 * 1024 * 1024; // 40 MB (STL als base64)
+const MAX_BODY = 64 * 1024 * 1024; // 64 MB (STL als base64, Vasen sind groß)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

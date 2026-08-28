@@ -1,20 +1,39 @@
-// OVJU — Konfigurator: 3D-Szene, UI-Bindings, Bestellung
+// OVJU — Konfigurator: 3D-Szene, UI-Bindings, Bestellung (Eierbecher & Vasen)
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import { FontLoader } from '../vendor/FontLoader.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
-import { buildEggcup, bendTextOntoCup, maxTextArc, DEFAULTS, PRESETS } from './geometry.js';
+import {
+  buildModel, bendTextOntoCup, maxTextArc, sampleProfile,
+  DEFAULTS, PRODUCTS, PATTERNS, FONTS,
+} from './geometry.js';
 import { exportSTL, downloadSTL, bufferToBase64 } from './exporter.js';
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-const state = { ...DEFAULTS, color: null, colorName: '', colorHex: '#efe9dc' };
+const IS_SMALL = window.matchMedia('(max-width: 980px)').matches;
+const state = {
+  ...DEFAULTS,
+  quality: IS_SMALL ? 0.55 : 1,
+  color: null, colorName: '', colorHex: '#efe9dc',
+};
+const customByProduct = { eierbecher: null, vase: null };
+const EDITOR_T = [0, 0.15, 0.3, 0.45, 0.62, 0.8, 1];
+let lastRealPreset = { eierbecher: 'kelch', vase: 'flasche' };
 let content = null;
-let font = null;
 let cupMesh = null;
 let textMesh = null;
+let currentInfo = null;
 let userInteracted = false;
+
+const fontCache = {};
+function loadFont(key) {
+  if (fontCache[key]) return fontCache[key];
+  fontCache[key] = new Promise((resolve, reject) =>
+    new FontLoader().load(`fonts/${FONTS[key].file}`, resolve, undefined, reject));
+  return fontCache[key];
+}
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -36,39 +55,40 @@ async function loadContent() {
   $('#usps').innerHTML = content.usps.map((u) => `
     <div class="usp card"><div class="usp-icon">${u.icon}</div>
     <h3>${u.title}</h3><p>${u.text}</p></div>`).join('');
-
   $('#steps').innerHTML = content.steps.map((s) => `
     <div class="step"><div class="step-num">${s.num}</div>
     <h3>${s.title}</h3><p>${s.text}</p></div>`).join('');
-
   $('#faq-list').innerHTML = content.faq.map((f) => `
     <details class="card"><summary>${f.q}</summary><p>${f.a}</p></details>`).join('');
 
-  // Farb-Swatches
   $('#swatches').innerHTML = content.colors.map((c) => `
     <button class="swatch" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}"
       style="--sw:${c.hex}" title="${c.name}"><span></span></button>`).join('');
   $$('.swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
   setColor({ id: content.colors[0].id, hex: content.colors[0].hex, name: content.colors[0].name });
-
-  renderPrices();
 }
 
 function money(v) {
   return v.toLocaleString('de-DE', { style: 'currency', currency: content.pricing.currency });
 }
 
+function productPricing() {
+  return content.pricing[state.product];
+}
+
 function renderPrices() {
-  $('#price').textContent = money(content.pricing.single);
-  $('#price-hint').textContent = `Duo ${money(content.pricing.duo)} · 4er-Set ${money(content.pricing.family4)}`;
+  const pp = productPricing();
+  $('#price').textContent = money(pp.single);
+  $('#price-hint').textContent = pp.family4
+    ? `Duo ${money(pp.duo)} · 4er-Set ${money(pp.family4)}`
+    : `Duo ${money(pp.duo)}`;
 }
 
 function setColor({ id, hex, name }) {
   state.color = id; state.colorHex = hex; state.colorName = name;
   $$('.swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
   $('#color-name').textContent = name;
-  if (cupMesh) cupMesh.material.color.set(hex);
-  if (textMesh) textMesh.material.color.set(hex);
+  material.color.set(hex);
   document.documentElement.style.setProperty('--accent-live', hex);
 }
 
@@ -85,51 +105,51 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(32, 1, 1, 800);
+const camera = new THREE.PerspectiveCamera(32, 1, 1, 1600);
 camera.position.set(95, 75, 150);
 
 const controls = new OrbitControls(camera, canvas);
 controls.target.set(0, 30, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.minDistance = 70;
-controls.maxDistance = 320;
+controls.minDistance = 60;
+controls.maxDistance = 900;
 controls.maxPolarAngle = Math.PI * 0.55;
 controls.addEventListener('start', () => { userInteracted = true; });
 
-// Licht: weiches Studio-Setup
 scene.add(new THREE.HemisphereLight(0xfff6ea, 0xb9a894, 0.9));
 const key = new THREE.DirectionalLight(0xfff2e0, 1.6);
-key.position.set(80, 140, 90);
+key.position.set(120, 220, 140);
 key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
-key.shadow.camera.left = -80; key.shadow.camera.right = 80;
-key.shadow.camera.top = 80; key.shadow.camera.bottom = -80;
+key.shadow.camera.left = -140; key.shadow.camera.right = 140;
+key.shadow.camera.top = 260; key.shadow.camera.bottom = -140;
 key.shadow.radius = 6;
 scene.add(key);
 const fill = new THREE.DirectionalLight(0xdce8ff, 0.5);
 fill.position.set(-90, 60, -60);
 scene.add(fill);
 
-// Boden mit weichem Schatten
 const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(220, 64).rotateX(-Math.PI / 2),
+  new THREE.CircleGeometry(400, 64).rotateX(-Math.PI / 2),
   new THREE.ShadowMaterial({ opacity: 0.16 })
 );
 ground.receiveShadow = true;
 scene.add(ground);
 
-const material = new THREE.MeshStandardMaterial({
-  color: state.colorHex, roughness: 0.62, metalness: 0.0,
-});
+const material = new THREE.MeshStandardMaterial({ color: state.colorHex, roughness: 0.62, metalness: 0.0 });
 
-// Kamera so weit zurücksetzen, dass der Becher in Höhe UND Breite hineinpasst
-// (wichtig für schmale/mobile Viewports) — nur solange der Nutzer nicht selbst zoomt.
+// Kamera so setzen, dass das Objekt in Höhe UND Breite passt (auch mobil)
 function frameCamera() {
-  const halfH = 46, halfW = 38; // mm inkl. Marge um den Becher
+  const H = currentInfo ? currentInfo.height : 58;
+  const rM = currentInfo ? currentInfo.maxRadius : 24;
+  const halfH = H * 0.62 + 8, halfW = rM * 1.65;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const dist = Math.max(halfH / t, halfW / (t * camera.aspect));
-  const dir = camera.position.clone().sub(controls.target).normalize();
+  controls.target.set(0, H * 0.5, 0);
+  const dir = camera.position.clone().sub(controls.target);
+  if (dir.lengthSq() < 1) dir.set(0.55, 0.35, 1);
+  dir.normalize();
   camera.position.copy(controls.target).addScaledVector(dir, dist);
 }
 
@@ -147,7 +167,7 @@ new ResizeObserver(resize).observe(canvas);
 function animate() {
   requestAnimationFrame(animate);
   resize();
-  if (!userInteracted && cupMesh) cupMesh.parent.rotation.y += 0.004;
+  if (!userInteracted && cupMesh) cupGroup.rotation.y += 0.004;
   controls.update();
   renderer.render(scene, camera);
 }
@@ -156,12 +176,15 @@ const cupGroup = new THREE.Group();
 scene.add(cupGroup);
 
 // ---------------------------------------------------------------------------
-// Becher (neu) bauen
+// Modell (neu) bauen
 // ---------------------------------------------------------------------------
-let currentInfo = null;
+function activePoints() {
+  if (state.preset === 'eigene') return customByProduct[state.product];
+  return PRODUCTS[state.product].presets[state.preset].points;
+}
 
 function rebuild() {
-  const { geometry, info } = buildEggcup(state);
+  const { geometry, info } = buildModel({ ...state, customPoints: customByProduct[state.product] });
   currentInfo = info;
   if (!cupMesh) {
     cupMesh = new THREE.Mesh(geometry, material);
@@ -173,11 +196,15 @@ function rebuild() {
     cupMesh.geometry = geometry;
   }
   rebuildText();
-  $('#dim-info').textContent =
-    `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`;
+  if (!userInteracted) frameCamera();
+  $('#dim-info').textContent = info.product === 'vase'
+    ? `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Öffnung Ø ${info.openingDiameter.toFixed(0)} mm`
+    : `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`;
 }
 
-function rebuildText() {
+let textBuildId = 0;
+async function rebuildText() {
+  const myId = ++textBuildId;
   if (textMesh) {
     cupGroup.remove(textMesh);
     textMesh.geometry.dispose();
@@ -185,19 +212,26 @@ function rebuildText() {
   }
   const txt = state.text.trim();
   $('#text-warn').textContent = '';
-  if (!txt || !font || !currentInfo) return;
+  if (!txt || !currentInfo) return;
 
-  const depth = currentInfo.surfaceAmp + 2.0;
+  let font;
+  try {
+    font = await loadFont(state.font);
+  } catch {
+    $('#text-warn').textContent = 'Schrift konnte nicht geladen werden.';
+    return;
+  }
+  if (myId !== textBuildId) return; // inzwischen neuer Aufruf
+
+  const depth = currentInfo.ampAt(state.textPos) + 2.0;
   let size = state.textSize;
   let geo, result;
   for (let attempt = 0; attempt < 6; attempt++) {
-    geo = new TextGeometry(txt, {
-      font, size, height: depth, curveSegments: 6, bevelEnabled: false,
-    });
-    result = bendTextOntoCup(geo, currentInfo);
+    geo = new TextGeometry(txt, { font, size, height: depth, curveSegments: 6, bevelEnabled: false });
+    result = bendTextOntoCup(geo, currentInfo, state.textPos);
     if (result.arc <= maxTextArc()) break;
     geo.dispose();
-    size *= 0.88; // Text zu breit → verkleinern
+    size *= 0.88;
   }
   if (result.arc > maxTextArc()) {
     $('#text-warn').textContent = 'Text zu lang — bitte kürzen.';
@@ -216,7 +250,136 @@ const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
 const rebuildSoon = debounce(rebuild, 60);
-const rebuildTextSoon = debounce(rebuildText, 150);
+const rebuildTextSoon = debounce(rebuildText, 120);
+
+// ---------------------------------------------------------------------------
+// Silhouetten (SVG) für Preset-Buttons & Formen-Editor
+// ---------------------------------------------------------------------------
+function silhouettePath(points, w, h, pad = 3) {
+  const prof = sampleProfile(points, 26);
+  const cx = w / 2;
+  const sx = (w / 2 - pad) / 1.08;
+  const ys = (t) => h - pad - t * (h - 2 * pad);
+  let d = '';
+  prof.forEach(([t, r], i) => {
+    d += (i ? 'L' : 'M') + (cx + r * sx).toFixed(1) + ' ' + ys(t).toFixed(1) + ' ';
+  });
+  for (let i = prof.length - 1; i >= 0; i--) {
+    d += 'L' + (cx - prof[i][1] * sx).toFixed(1) + ' ' + ys(prof[i][0]).toFixed(1) + ' ';
+  }
+  return d + 'Z';
+}
+
+function renderPresetButtons() {
+  const product = PRODUCTS[state.product];
+  const entries = Object.entries(product.presets);
+  $('#preset-row').innerHTML = entries.map(([id, pr]) => `
+    <button class="preset-btn" data-preset="${id}">
+      <svg viewBox="0 0 40 52"><path d="${silhouettePath(pr.points, 40, 52)}"
+        fill="currentColor" fill-opacity="0.16" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      ${pr.label}</button>`).join('') + `
+    <button class="preset-btn" data-preset="eigene">
+      <svg viewBox="0 0 40 52"><path d="M20 6 L30 16 L14 44 L8 46 L10 38 Z" fill="currentColor" fill-opacity="0.16"
+        stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      Eigene</button>`;
+  $$('.preset-btn').forEach((b) => b.addEventListener('click', () => selectPreset(b.dataset.preset)));
+  markActivePreset();
+}
+
+function markActivePreset() {
+  $$('.preset-btn').forEach((x) => x.classList.toggle('active', x.dataset.preset === state.preset));
+  $('#shape-editor').hidden = state.preset !== 'eigene';
+}
+
+function selectPreset(id) {
+  if (id === 'eigene') {
+    if (!customByProduct[state.product]) {
+      // Startform: aktuell gewähltes Preset an den Editor-Stationen abtasten
+      const src = PRODUCTS[state.product].presets[lastRealPreset[state.product]].points;
+      const prof = sampleProfile(src, 100);
+      customByProduct[state.product] = EDITOR_T.map((t) => [t, prof[Math.round(t * 100)][1]]);
+    }
+  } else {
+    lastRealPreset[state.product] = id;
+  }
+  state.preset = id;
+  markActivePreset();
+  if (id === 'eigene') renderShapeEditor();
+  rebuild();
+}
+
+// --- Formen-Editor: Punkte horizontal ziehen -------------------------------
+const ED = { w: 150, h: 200, pad: 12 };
+function edX(r) { return ED.w / 2 + r * ((ED.w / 2 - ED.pad) / 1.08); }
+function edY(t) { return ED.h - ED.pad - t * (ED.h - 2 * ED.pad); }
+
+function renderShapeEditor() {
+  const pts = customByProduct[state.product];
+  const svg = $('#profile-svg');
+  svg.innerHTML = `
+    <path d="${silhouettePath(pts, ED.w, ED.h, ED.pad)}" class="ed-body"/>
+    <line x1="${ED.w / 2}" y1="${ED.pad - 6}" x2="${ED.w / 2}" y2="${ED.h - ED.pad + 6}" class="ed-axis"/>
+    ${pts.map(([t, r], i) => `
+      <line x1="${ED.w / 2}" y1="${edY(t)}" x2="${edX(r)}" y2="${edY(t)}" class="ed-guide"/>
+      <circle cx="${edX(r)}" cy="${edY(t)}" r="7" class="ed-handle" data-i="${i}"/>`).join('')}
+  `;
+  svg.querySelectorAll('.ed-handle').forEach((c) => {
+    c.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      c.setPointerCapture(e.pointerId);
+      const i = parseInt(c.dataset.i, 10);
+      const rect = svg.getBoundingClientRect();
+      const scale = ED.w / rect.width;
+      const move = (ev) => {
+        const x = (ev.clientX - rect.left) * scale;
+        const r = Math.min(1.08, Math.max(0.12, Math.abs(x - ED.w / 2) / ((ED.w / 2 - ED.pad) / 1.08)));
+        customByProduct[state.product][i][1] = Math.round(r * 100) / 100;
+        renderShapeEditor();
+        rebuildSoon();
+      };
+      const up = () => {
+        svg.removeEventListener('pointermove', move);
+        svg.removeEventListener('pointerup', up);
+      };
+      svg.addEventListener('pointermove', move);
+      svg.addEventListener('pointerup', up);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Produkt-Wechsel
+// ---------------------------------------------------------------------------
+function renderProductTabs() {
+  $('#product-tabs').innerHTML = Object.entries(PRODUCTS).map(([id, pr]) => `
+    <button class="product-tab" data-product="${id}">
+      <span class="pt-icon">${pr.icon}</span>${pr.label}
+      <small>ab ${money(content.pricing[id].single)}</small>
+    </button>`).join('');
+  $$('.product-tab').forEach((b) => b.addEventListener('click', () => setProduct(b.dataset.product)));
+  markActiveProduct();
+}
+
+function markActiveProduct() {
+  $$('.product-tab').forEach((x) => x.classList.toggle('active', x.dataset.product === state.product));
+}
+
+function setProduct(id) {
+  if (state.product === id) return;
+  state.product = id;
+  const product = PRODUCTS[id];
+  state.preset = Object.keys(product.presets)[0];
+  state.height = product.defaultHeight;
+  const [hMin, hMax] = product.heightRange;
+  const hs = $('#s-height');
+  hs.min = hMin; hs.max = hMax; hs.value = state.height;
+  $('#s-height-val').textContent = `${state.height} mm`;
+  markActiveProduct();
+  renderPresetButtons();
+  renderPrices();
+  userInteracted = false; // neu einrahmen
+  rebuild();
+}
 
 // ---------------------------------------------------------------------------
 // UI-Bindings
@@ -233,15 +396,21 @@ function bindSlider(id, key, fmt, cb) {
   update();
 }
 
-function initControls() {
-  // Form-Presets
-  $$('.preset-btn').forEach((b) => b.addEventListener('click', () => {
-    state.preset = b.dataset.preset;
-    $$('.preset-btn').forEach((x) => x.classList.toggle('active', x === b));
-    rebuild();
+function renderFontRow() {
+  $('#font-row').innerHTML = Object.entries(FONTS).map(([id, f]) => `
+    <button class="font-chip font-${id}" data-font="${id}"><span>Aa</span><small>${f.label}</small></button>`).join('');
+  $$('.font-chip').forEach((b) => b.addEventListener('click', () => {
+    state.font = b.dataset.font;
+    markActiveFont();
+    rebuildTextSoon();
   }));
+  markActiveFont();
+}
+function markActiveFont() {
+  $$('.font-chip').forEach((x) => x.classList.toggle('active', x.dataset.font === state.font));
+}
 
-  // Muster
+function initControls() {
   $$('.pattern-btn').forEach((b) => b.addEventListener('click', () => {
     state.pattern = b.dataset.pattern;
     $$('.pattern-btn').forEach((x) => x.classList.toggle('active', x === b));
@@ -255,22 +424,24 @@ function initControls() {
   bindSlider('#s-depth', 'depth', (v) => `${v.toFixed(1)} mm`, rebuildSoon);
   bindSlider('#s-twist', 'twist', (v) => v === 0 ? 'gerade' : `${v > 0 ? '+' : ''}${Math.round(v * 180)}°`, rebuildSoon);
   bindSlider('#s-textsize', 'textSize', (v) => `${v} mm`, rebuildTextSoon);
+  bindSlider('#s-textpos', 'textPos', (v) => `${Math.round(v * 100)} %`, rebuildTextSoon);
 
   $('#i-text').addEventListener('input', (e) => {
     state.text = e.target.value.slice(0, 16);
     rebuildTextSoon();
   });
 
-  // Überrasch mich
   $('#btn-random').addEventListener('click', () => {
-    const presets = Object.keys(PRESETS);
-    const patterns = ['wellen', 'rippen', 'rippen'];
+    const presets = Object.keys(PRODUCTS[state.product].presets);
+    const patterns = Object.keys(PATTERNS).filter((p) => p !== 'glatt');
     state.preset = presets[Math.floor(Math.random() * presets.length)];
+    lastRealPreset[state.product] = state.preset;
     state.pattern = patterns[Math.floor(Math.random() * patterns.length)];
-    state.ribs = 16 + Math.floor(Math.random() * 70);
+    state.ribs = 14 + Math.floor(Math.random() * 70);
     state.depth = 0.5 + Math.random() * 1.1;
-    state.twist = Math.random() < 0.4 ? 0 : (Math.random() * 3 - 1.5);
-    state.height = 45 + Math.floor(Math.random() * 25);
+    state.twist = Math.random() < 0.35 ? 0 : (Math.random() * 3 - 1.5);
+    const [hMin, hMax] = PRODUCTS[state.product].heightRange;
+    state.height = hMin + Math.floor(Math.random() * (hMax - hMin));
     syncControls();
     const c = content.colors[Math.floor(Math.random() * content.colors.length)];
     setColor({ id: c.id, hex: c.hex, name: c.name });
@@ -278,8 +449,7 @@ function initControls() {
   });
 
   $('#btn-download').addEventListener('click', () => {
-    const buf = exportCurrentSTL();
-    downloadSTL(buf, stlFilename());
+    downloadSTL(exportCurrentSTL(), stlFilename());
   });
 
   $('#hero-cta').addEventListener('click', () => {
@@ -290,7 +460,7 @@ function initControls() {
 }
 
 function syncControls() {
-  $$('.preset-btn').forEach((x) => x.classList.toggle('active', x.dataset.preset === state.preset));
+  markActivePreset();
   $$('.pattern-btn').forEach((x) => x.classList.toggle('active', x.dataset.pattern === state.pattern));
   $('#surface-sliders').classList.toggle('disabled', state.pattern === 'glatt');
   $('#s-height').value = state.height; $('#s-height-val').textContent = `${state.height} mm`;
@@ -302,18 +472,16 @@ function syncControls() {
 
 function stlFilename() {
   const brand = content ? content.brand.name.toLowerCase() : 'ovju';
-  return `${brand}-eierbecher-${state.preset}-${state.pattern}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.stl`;
+  return `${brand}-${state.product}-${state.preset}-${state.pattern}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.stl`;
 }
 
 function exportCurrentSTL() {
-  const meshes = [cupMesh];
-  if (textMesh) meshes.push(textMesh);
-  // Ohne Gruppenrotation exportieren, damit die STL sauber ausgerichtet ist
-  const rot = cupGroup.rotation.y;
-  cupGroup.rotation.y = 0;
-  cupGroup.updateMatrixWorld(true);
+  // Für den Export in voller Auflösung frisch bauen (Preview ist ggf. reduziert)
+  const { geometry } = buildModel({ ...state, quality: 1, customPoints: customByProduct[state.product] });
+  const meshes = [new THREE.Mesh(geometry)];
+  if (textMesh) meshes.push(new THREE.Mesh(textMesh.geometry));
   const buf = exportSTL(meshes);
-  cupGroup.rotation.y = rot;
+  geometry.dispose();
   return buf;
 }
 
@@ -324,11 +492,12 @@ function initOrderModal() {
   const modal = $('#order-modal');
   $('#btn-order').addEventListener('click', () => {
     $('#order-summary').innerHTML = orderSummaryHTML();
+    renderQtyOptions();
+    updateOrderTotal();
     modal.showModal();
   });
   $('#order-cancel').addEventListener('click', () => modal.close());
   $('#o-qty').addEventListener('input', updateOrderTotal);
-  updateOrderTotal();
 
   $('#order-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -345,7 +514,7 @@ function initOrderModal() {
           email: $('#o-email').value,
           qty: parseInt($('#o-qty').value, 10),
           notes: $('#o-notes').value,
-          config: { ...state },
+          config: { ...state, customPoints: customByProduct[state.product] },
           colorName: state.colorName,
           filename: stlFilename(),
           stlBase64: bufferToBase64(buf),
@@ -366,12 +535,24 @@ function initOrderModal() {
   $('#confirm-close').addEventListener('click', () => $('#confirm-modal').close());
 }
 
+function renderQtyOptions() {
+  const isEgg = state.product === 'eierbecher';
+  $('#o-qty').innerHTML = isEgg
+    ? `<option value="1">1 Stück</option>
+       <option value="2">2 Stück (Duo-Preis)</option>
+       <option value="4">4 Stück (Familien-Set)</option>
+       <option value="6">6 Stück</option>`
+    : `<option value="1">1 Vase</option>
+       <option value="2">2 Vasen (Duo-Preis)</option>
+       <option value="3">3 Vasen</option>`;
+}
+
 function orderTotal(qty) {
-  const p = content.pricing;
-  if (qty === 2) return p.duo;
-  if (qty === 4) return p.family4;
-  if (qty > 4) return Math.round(qty * p.single * 0.85 * 10) / 10;
-  return qty * p.single;
+  const pp = productPricing();
+  if (qty === 2 && pp.duo) return pp.duo;
+  if (qty === 4 && pp.family4) return pp.family4;
+  if (qty > 2) return Math.round(qty * pp.single * 0.85 * 10) / 10;
+  return qty * pp.single;
 }
 
 function updateOrderTotal() {
@@ -380,11 +561,12 @@ function updateOrderTotal() {
 }
 
 function orderSummaryHTML() {
-  const pat = { glatt: 'Glatt', wellen: 'Wellen', rippen: 'Rippen' }[state.pattern];
+  const product = PRODUCTS[state.product];
+  const presetLabel = state.preset === 'eigene' ? 'Eigene Form' : product.presets[state.preset].label;
   const twist = state.twist === 0 ? '' : `, Drall ${Math.round(state.twist * 180)}°`;
   return `<span class="dot" style="background:${state.colorHex}"></span>
-    <b>${PRESETS[state.preset].label}</b> · ${pat}${state.pattern !== 'glatt' ? ` (${state.ribs}×, ${state.depth.toFixed(1)} mm${twist})` : ''}
-    · ${state.height} mm · <b>${state.colorName}</b>${state.text ? ` · Gravur „${state.text}“` : ''}`;
+    <b>${product.label} „${presetLabel}“</b> · ${PATTERNS[state.pattern]}${state.pattern !== 'glatt' ? ` (${state.ribs}×, ${state.depth.toFixed(1)} mm${twist})` : ''}
+    · ${state.height} mm · <b>${state.colorName}</b>${state.text ? ` · Gravur „${state.text}“ (${FONTS[state.font].label})` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -392,9 +574,12 @@ function orderSummaryHTML() {
 // ---------------------------------------------------------------------------
 (async () => {
   await loadContent();
+  renderProductTabs();
+  renderPresetButtons();
+  renderFontRow();
+  renderPrices();
   initControls();
-  font = await new Promise((resolve, reject) =>
-    new FontLoader().load('fonts/helvetiker_bold.typeface.json', resolve, undefined, reject));
+  loadFont(state.font); // Standardschrift vorwärmen
   rebuild();
   animate();
   $('#loading').classList.add('hidden');
