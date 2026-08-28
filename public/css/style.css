@@ -194,7 +194,7 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.12; }
 .editor-hint { margin-top: 6px; }
 
 /* Schriften-Auswahl */
-.font-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-bottom: 12px; }
+.font-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 12px; }
 .font-chip {
   display: flex; flex-direction: column; align-items: center; gap: 1px;
   padding: 7px 2px 5px; border-radius: 11px; border: 1.5px solid var(--line);
@@ -209,6 +209,8 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.12; }
 .font-gentilis span { font-family: 'Palatino Linotype', Georgia, serif; font-weight: 700; }
 .font-droid_sans span { font-family: 'Inter', sans-serif; font-weight: 900; }
 .font-droid_serif span { font-family: Georgia, 'Times New Roman', serif; font-weight: 700; }
+.font-marcellus span { font-family: 'Fraunces', 'Palatino Linotype', serif; font-weight: 500; letter-spacing: 0.06em; }
+.font-greatvibes span { font-family: 'Segoe Script', 'Brush Script MT', cursive; font-style: italic; }
 .ctrl .opt { font-family: var(--sans); font-weight: 400; font-size: 0.8rem; color: var(--ink-soft); }
 
 .preset-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 8px; margin-bottom: 14px; }
@@ -407,7 +409,8 @@ dialog input:focus, dialog textarea:focus, dialog select:focus { border-color: v
   .price-row { flex-wrap: wrap; gap: 2px 12px; }
   .price-hint { width: 100%; text-align: left; }
   .showcase-grid { grid-template-columns: 1fr; }
-  .scene-chips { top: auto; bottom: 52px; }
+  .scene-chips { top: auto; bottom: 52px; max-width: 94%; }
+  .scene-chip { padding: 5px 9px; font-size: 0.72rem; }
   .stage-foto { bottom: 10px; font-size: 0.78rem; padding: 7px 14px; }
   .stage-color { bottom: 52px; }
   .foto-grid { grid-template-columns: 1fr; }

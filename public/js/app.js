@@ -8,7 +8,8 @@ import {
   DEFAULTS, PRODUCTS, PATTERNS, FONTS,
 } from './geometry.js';
 import { exportSTL, downloadSTL, bufferToBase64 } from './exporter.js';
-import { woodTexture, wallTexture, makeEgg, makeGrass } from './scenes.js';
+import { makeEgg, makeGrass } from './scenes.js';
+import { RGBELoader } from '../vendor/RGBELoader.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -143,57 +144,53 @@ scene.add(ground);
 const material = new THREE.MeshStandardMaterial({ color: state.colorHex, roughness: 0.62, metalness: 0.0 });
 
 // ---------------------------------------------------------------------------
-// Szenen: Studio / Frühstückstisch / Abendlicht (alles prozedural)
+// Szenen: Studio (clean) + fotoreale CC0-HDRI-Räume von Poly Haven
 // ---------------------------------------------------------------------------
 const SCENES = {
-  studio: { label: 'Studio', room: false, props: false, hemi: 0.9, keyI: 1.6, keyColor: 0xfff2e0 },
-  tisch: { label: 'Tisch', room: true, props: true, hemi: 0.95, keyI: 1.45, keyColor: 0xfff2e0, wallTop: '#eee3d2', wallBot: '#d8c8b0' },
-  abend: { label: 'Abend', room: true, props: true, hemi: 0.42, keyI: 2.0, keyColor: 0xffd3a0, wallTop: '#59514a', wallBot: '#332e2a' },
+  studio: { label: 'Studio', props: false, hemi: 0.9, keyI: 1.6, keyColor: 0xfff2e0 },
+  wohnen: { label: 'Wohnen', hdri: 'lebombo', props: true, blur: 0.22, bgI: 1.0, keyI: 1.15 },
+  cafe: { label: 'Café', hdri: 'comfy_cafe', props: true, blur: 0.28, bgI: 1.05, keyI: 1.0 },
+  lounge: { label: 'Lounge', hdri: 'lythwood_room', props: true, blur: 0.26, bgI: 1.0, keyI: 1.0 },
+  abend: { label: 'Abend', hdri: 'warm_restaurant_night', props: true, blur: 0.3, bgI: 0.95, keyI: 1.3, keyColor: 0xffd3a0 },
 };
 let currentScene = 'studio';
-const wallTexCache = {};
-
-const roomGroup = new THREE.Group();
-const woodFloor = new THREE.Mesh(
-  new THREE.PlaneGeometry(1400, 1400).rotateX(-Math.PI / 2),
-  new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.85 })
-);
-woodFloor.material.map.wrapS = woodFloor.material.map.wrapT = THREE.RepeatWrapping;
-woodFloor.material.map.repeat.set(2.6, 2.6);
-woodFloor.receiveShadow = true;
-const backWall = new THREE.Mesh(
-  new THREE.PlaneGeometry(2400, 1300),
-  new THREE.MeshStandardMaterial({ roughness: 1 })
-);
-backWall.position.set(0, 620, -430);
-roomGroup.add(woodFloor, backWall);
-roomGroup.visible = false;
-scene.add(roomGroup);
 
 const propsGroup = new THREE.Group();
 propsGroup.visible = false;
 scene.add(propsGroup);
 
-function applyScene(key) {
+const envCache = {};
+function loadEnv(name) {
+  if (!envCache[name]) {
+    envCache[name] = new Promise((resolve, reject) =>
+      new RGBELoader().load(`env/${name}_1k.hdr`, (tex) => {
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        resolve(tex);
+      }, undefined, reject));
+  }
+  return envCache[name];
+}
+
+async function applyScene(key) {
   currentScene = key;
   const cfg = SCENES[key];
-  roomGroup.visible = cfg.room;
-  ground.visible = !cfg.room;
   propsGroup.visible = cfg.props;
-  hemi.intensity = cfg.hemi;
   keyLight.intensity = cfg.keyI;
-  keyLight.color.set(cfg.keyColor);
-  if (cfg.room) {
-    if (!wallTexCache[key]) wallTexCache[key] = wallTexture(cfg.wallTop, cfg.wallBot);
-    backWall.material.map = wallTexCache[key];
-    backWall.material.needsUpdate = true;
-    controls.minAzimuthAngle = -1.05;
-    controls.maxAzimuthAngle = 1.05;
-  } else {
-    controls.minAzimuthAngle = -Infinity;
-    controls.maxAzimuthAngle = Infinity;
-  }
+  keyLight.color.set(cfg.keyColor || 0xfff2e0);
   $$('.scene-chip').forEach((c) => c.classList.toggle('active', c.dataset.scene === key));
+  if (cfg.hdri) {
+    const tex = await loadEnv(cfg.hdri);
+    if (currentScene !== key) return; // inzwischen umgeschaltet
+    scene.environment = tex;
+    scene.background = tex;
+    scene.backgroundBlurriness = cfg.blur;
+    scene.backgroundIntensity = cfg.bgI;
+    hemi.intensity = 0.15;
+  } else {
+    scene.environment = null;
+    scene.background = null;
+    hemi.intensity = cfg.hemi;
+  }
   if (!userInteracted) frameCamera();
 }
 
@@ -631,8 +628,8 @@ function shotSetup(w, h) {
   camera.updateProjectionMatrix();
 }
 
-function shotRestore(saved) {
-  applyScene(saved.scene);
+async function shotRestore(saved) {
+  await applyScene(saved.scene);
   cupGroup.rotation.y = saved.rot;
   camera.position.copy(saved.pos);
   controls.target.copy(saved.tgt);
@@ -655,28 +652,29 @@ async function fotoShooting() {
   const saved = saveView();
   const shots = [];
   const setups = [
-    { scene: 'tisch', angle: 0.45, zoom: 1.0, name: 'tisch' },
-    { scene: 'tisch', angle: -0.55, zoom: 0.78, name: 'nah' },
+    { scene: 'wohnen', angle: 0.45, zoom: 1.0, name: 'wohnen' },
+    { scene: 'cafe', angle: -0.55, zoom: 0.78, name: 'cafe' },
+    { scene: 'lounge', angle: 0.35, zoom: 0.9, name: 'lounge' },
     { scene: 'abend', angle: 0.25, zoom: 0.85, name: 'abend' },
     { scene: 'studio', angle: 0.6, zoom: 0.95, name: 'studio' },
   ];
   shotSetup(1200, 900);
   for (const s of setups) {
-    applyScene(s.scene);
+    await applyScene(s.scene);
     cupGroup.rotation.y = s.angle;
     placeCamera(s.zoom);
     renderer.render(scene, camera);
     shots.push({ url: renderer.domElement.toDataURL('image/png'), name: s.name });
     await new Promise((r) => setTimeout(r, 30));
   }
-  shotRestore(saved);
+  await shotRestore(saved);
   $('#foto-grid').innerHTML = shots.map((s) => `
     <a href="${s.url}" download="ovju-${state.product}-${s.name}.png"><img src="${s.url}" alt="Szene ${s.name}"></a>`).join('');
   $('#foto-modal').showModal();
   btn.disabled = false;
 }
 
-function productShot(params, hex, extraProp) {
+async function productShot(params, hex, extraProp) {
   const { geometry, info } = buildModel({ ...DEFAULTS, ...params, quality: 0.75 });
   const g = new THREE.Group();
   const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: hex, roughness: 0.62 }));
@@ -694,7 +692,7 @@ function productShot(params, hex, extraProp) {
   const savedInfo = currentInfo;
   cupGroup.visible = false;
   scene.add(g);
-  applyScene('tisch');
+  await applyScene(extraProp === 'egg' ? 'wohnen' : 'lounge');
   propsGroup.visible = false;
   currentInfo = info;
   shotSetup(880, 1050);
@@ -705,11 +703,11 @@ function productShot(params, hex, extraProp) {
   geometry.dispose();
   cupGroup.visible = true;
   currentInfo = savedInfo;
-  shotRestore(saved);
+  await shotRestore(saved);
   return url;
 }
 
-function renderShowcase() {
+async function renderShowcase() {
   const sc = content.showcase;
   if (!sc) return;
   $('#showcase-title').textContent = sc.title;
@@ -726,9 +724,10 @@ function renderShowcase() {
       price: content.pricing.vase.single,
     },
   ];
+  for (const d of defs) d.img = await productShot(d.params, d.hex, d.extra);
   $('#showcase').innerHTML = defs.map((d) => `
     <div class="showcase-card" data-product="${d.id}">
-      <img src="${productShot(d.params, d.hex, d.extra)}" alt="${d.c.title}">
+      <img src="${d.img}" alt="${d.c.title}">
       <div class="showcase-body">
         <h3>${d.c.title}</h3>
         <p>${d.c.text}</p>

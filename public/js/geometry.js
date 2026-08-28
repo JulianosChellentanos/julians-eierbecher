@@ -89,6 +89,8 @@ export const FONTS = {
   gentilis: { label: 'Fein', file: 'gentilis_bold.typeface.json' },
   droid_sans: { label: 'Kräftig', file: 'droid_sans_bold.typeface.json' },
   droid_serif: { label: 'Klassisch', file: 'droid_serif_bold.typeface.json' },
+  marcellus: { label: 'Edel', file: 'marcellus.typeface.json' },
+  greatvibes: { label: 'Kalligrafie', file: 'greatvibes.typeface.json' },
 };
 
 export const PATTERNS = {

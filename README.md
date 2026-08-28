@@ -11,9 +11,9 @@
 - **Zwei Produktwelten**: Eierbecher (Kelch/Schale/Tulpe) und Vasen (Flasche/Kugel/Tropfen/Zylinder/Kurve), Höhe & Breite frei ziehbar
 - **Formen-Editor „Eigene"**: Silhouetten-Punkte per Drag ziehen — komplett eigene Formen
 - **Oberflächen**: Glatt, Rippen, Wellen, Zickzack (Facetten), Querwellen — mit Anzahl, Tiefe und **Drall** (→ Spiralen / diagonale Wellen)
-- **Gravur**: 5 Schriftarten, Größe & Höhen-Position einstellbar; der Text folgt der Silhouette (Taille/Bauch) und wird um die Wand gebogen
+- **Gravur**: 7 Schriftarten (inkl. „Edel" Marcellus & „Kalligrafie" Great Vibes, OFL → Lizenzen in docs/LICENSES.md), Größe & Höhen-Position einstellbar; der Text folgt der Silhouette (Taille/Bauch) und wird um die Wand gebogen
 - **10 matte PLA-Farben** (Bambu-Lab-Palette, definiert in `public/content.json`)
-- **Szenen-Vorschau**: Studio, Frühstückstisch & Abendlicht (prozedural, kein Bildmaterial) — mit Ei im Becher bzw. Trockengräsern in der Vase
+- **Szenen-Vorschau**: Studio + 4 fotoreale CC0-HDRI-Räume von Poly Haven (Wohnen, Café, Lounge, Abend) mit echter Environment-Beleuchtung — mit Ei im Becher bzw. Trockengräsern in der Vase
 - **📸 Foto-Shooting**: rendert das aktuelle Design in 4 Szenen als speicherbare PNGs
 - **Untersetzer-Extra** (+4,90 €): Schale mit Sitz-Mulde für den Becher, fängt Eierschalen auf; wandert als zweites Teil mit in die STL (nebeneinander auf dem Bett)
 - **STL-Export** direkt im Browser: binär, Millimeter, **wasserdicht/manifold** — slicebar in Bambu Studio, PrusaSlicer & Co.
