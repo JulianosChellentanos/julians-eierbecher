@@ -4,7 +4,8 @@ Alle Assets sind frei für private & kommerzielle Nutzung.
 
 ## HDRI-Szenen (`public/env/`)
 Quelle: [Poly Haven](https://polyhaven.com) — Lizenz: **CC0** (Public Domain, keine Namensnennung nötig)
-- lebombo, comfy_cafe, lythwood_room, warm_restaurant_night (je 1k .hdr)
+- lebombo, comfy_cafe, lythwood_room, warm_restaurant_night, spruit_sunrise (je 1k .hdr)
+- Textur wood_table_001 (Holztisch, CC0)
 
 ## Schriften (`public/fonts/`)
 - Fraunces, Inter (Web-Fonts) — SIL Open Font License 1.1

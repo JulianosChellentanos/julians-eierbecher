@@ -148,16 +148,37 @@ const material = new THREE.MeshStandardMaterial({ color: state.colorHex, roughne
 // ---------------------------------------------------------------------------
 const SCENES = {
   studio: { label: 'Studio', props: false, hemi: 0.9, keyI: 1.6, keyColor: 0xfff2e0 },
-  wohnen: { label: 'Wohnen', hdri: 'lebombo', props: true, blur: 0.22, bgI: 1.0, keyI: 1.15 },
-  cafe: { label: 'Café', hdri: 'comfy_cafe', props: true, blur: 0.28, bgI: 1.05, keyI: 1.0 },
-  lounge: { label: 'Lounge', hdri: 'lythwood_room', props: true, blur: 0.26, bgI: 1.0, keyI: 1.0 },
-  abend: { label: 'Abend', hdri: 'warm_restaurant_night', props: true, blur: 0.3, bgI: 0.95, keyI: 1.3, keyColor: 0xffd3a0 },
+  esstisch: { label: 'Esstisch', hdri: 'lebombo', surface: 'wood', props: true, blur: 0.22, bgI: 1.0, keyI: 1.15 },
+  fenster: { label: 'Fensterbrett', hdri: 'spruit_sunrise', surface: 'sill', props: true, blur: 0.12, bgI: 0.95, keyI: 1.15, envI: 0.5, keyColor: 0xffffff },
+  cafe: { label: 'Café', hdri: 'comfy_cafe', surface: 'wood', props: true, blur: 0.28, bgI: 1.05, keyI: 1.0 },
+  abend: { label: 'Abend', hdri: 'warm_restaurant_night', surface: 'wood', props: true, blur: 0.3, bgI: 0.95, keyI: 1.3, keyColor: 0xffd3a0 },
 };
 let currentScene = 'studio';
 
 const propsGroup = new THREE.Group();
 propsGroup.visible = false;
 scene.add(propsGroup);
+
+// Echte Standflächen: Holztisch (CC0-Textur, Poly Haven) & helle Fensterbank
+const woodMap = new THREE.TextureLoader().load('env/wood_table_001_diff_1k.jpg');
+woodMap.colorSpace = THREE.SRGBColorSpace;
+woodMap.wrapS = woodMap.wrapT = THREE.RepeatWrapping;
+woodMap.repeat.set(1.6, 1);
+const tableTop = new THREE.Mesh(
+  new THREE.BoxGeometry(1200, 26, 680),
+  new THREE.MeshStandardMaterial({ map: woodMap, roughness: 0.72 })
+);
+tableTop.position.y = -13; // Oberkante = y 0
+tableTop.receiveShadow = true;
+const sillTop = new THREE.Mesh(
+  new THREE.BoxGeometry(1200, 26, 320),
+  new THREE.MeshStandardMaterial({ color: 0xf2ede3, roughness: 0.5 })
+);
+sillTop.position.set(0, -13, -40);
+sillTop.receiveShadow = true;
+const surfaces = { wood: tableTop, sill: sillTop };
+scene.add(tableTop, sillTop);
+tableTop.visible = sillTop.visible = false;
 
 const envCache = {};
 function loadEnv(name) {
@@ -177,6 +198,9 @@ async function applyScene(key) {
   propsGroup.visible = cfg.props;
   keyLight.intensity = cfg.keyI;
   keyLight.color.set(cfg.keyColor || 0xfff2e0);
+  for (const [name, mesh] of Object.entries(surfaces)) mesh.visible = cfg.surface === name;
+  ground.visible = !cfg.surface;
+  material.envMapIntensity = cfg.envI ?? 1;
   $$('.scene-chip').forEach((c) => c.classList.toggle('active', c.dataset.scene === key));
   if (cfg.hdri) {
     const tex = await loadEnv(cfg.hdri);
@@ -652,9 +676,9 @@ async function fotoShooting() {
   const saved = saveView();
   const shots = [];
   const setups = [
-    { scene: 'wohnen', angle: 0.45, zoom: 1.0, name: 'wohnen' },
+    { scene: 'esstisch', angle: 0.45, zoom: 1.0, name: 'esstisch' },
+    { scene: 'fenster', angle: -0.35, zoom: 0.9, name: 'fensterbrett' },
     { scene: 'cafe', angle: -0.55, zoom: 0.78, name: 'cafe' },
-    { scene: 'lounge', angle: 0.35, zoom: 0.9, name: 'lounge' },
     { scene: 'abend', angle: 0.25, zoom: 0.85, name: 'abend' },
     { scene: 'studio', angle: 0.6, zoom: 0.95, name: 'studio' },
   ];
@@ -692,7 +716,7 @@ async function productShot(params, hex, extraProp) {
   const savedInfo = currentInfo;
   cupGroup.visible = false;
   scene.add(g);
-  await applyScene(extraProp === 'egg' ? 'wohnen' : 'lounge');
+  await applyScene(extraProp === 'egg' ? 'esstisch' : 'fenster');
   propsGroup.visible = false;
   currentInfo = info;
   shotSetup(880, 1050);
