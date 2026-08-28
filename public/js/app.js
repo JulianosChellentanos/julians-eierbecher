@@ -123,12 +123,23 @@ const material = new THREE.MeshStandardMaterial({
   color: state.colorHex, roughness: 0.62, metalness: 0.0,
 });
 
+// Kamera so weit zurücksetzen, dass der Becher in Höhe UND Breite hineinpasst
+// (wichtig für schmale/mobile Viewports) — nur solange der Nutzer nicht selbst zoomt.
+function frameCamera() {
+  const halfH = 46, halfW = 38; // mm inkl. Marge um den Becher
+  const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const dist = Math.max(halfH / t, halfW / (t * camera.aspect));
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  camera.position.copy(controls.target).addScaledVector(dir, dist);
+}
+
 function resize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (canvas.width !== w * renderer.getPixelRatio() || canvas.height !== h * renderer.getPixelRatio()) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    if (!userInteracted) frameCamera();
   }
 }
 new ResizeObserver(resize).observe(canvas);
