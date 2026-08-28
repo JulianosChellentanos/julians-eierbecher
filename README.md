@@ -17,7 +17,8 @@
 - **📸 Foto-Shooting**: rendert das aktuelle Design in 4 Szenen als speicherbare PNGs
 - **Untersetzer-Extra** (+4,90 €): Schale mit Sitz-Mulde für den Becher, fängt Eierschalen auf; wandert als zweites Teil mit in die STL (nebeneinander auf dem Bett)
 - **STL-Export** direkt im Browser: binär, Millimeter, **wasserdicht/manifold** — slicebar in Bambu Studio, PrusaSlicer & Co.
-- **Bestellsystem**: Bestellung inkl. druckfertiger STL landet in `orders/<ID>/`, Admin-Übersicht mit Download
+- **Shop-System**: Warenkorb mit konfigurierbaren **Mengenrabatten** (gleiches Design mehrfach → z. B. −35 % ab 4 Stück), Checkout mit Lieferadresse, **Rechnungserstellung** (Firmendaten, § 19 UStG oder USt, fortlaufende Nummern), Vorkasse + **PayPal-Anbindung** (REST, Sandbox/Live — nur Zugangsdaten eintragen)
+- **Admin** (`/admin`, Standard-Passwort `ovju-admin` — bitte ändern!): Bestellübersicht mit Status-Workflow (neu → bezahlt → im-druck → versendet), STL- & Rechnungs-Downloads, Einstellungen für Preise/Rabatte/Versand/Firma/PayPal — gespeichert in `data/settings.json` (nicht im Git)
 - Kein Build-Schritt, keine Runtime-Dependencies — alles lokal gevendort (Three.js, Fonts)
 
 ## Starten
@@ -29,9 +30,10 @@ node server.js          # → http://localhost:4488
 | Route | Zweck |
 |---|---|
 | `/` | Landingpage + Konfigurator |
-| `/admin` | Bestellübersicht + STL-Downloads (für den Betreiber) |
-| `/api/order` (POST) | Bestellung annehmen (JSON + STL als base64) |
-| `/api/orders` | Bestellungen als JSON |
+| `/admin` | Admin: Bestellungen, Status, Einstellungen (Passwort: `ovju-admin`) |
+| `/api/pricing`, `/api/quote` | Preise & Rabatte (Server = einzige Preisquelle) |
+| `/api/checkout` + STL-Upload | Warenkorb-Bestellung anlegen, Modelle binär hochladen, Rechnung erzeugen |
+| `/api/paypal/*` | PayPal-Order anlegen/einziehen (aktiv, sobald Zugangsdaten hinterlegt) |
 
 ## Struktur
 

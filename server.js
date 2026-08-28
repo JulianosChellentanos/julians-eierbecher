@@ -1,7 +1,7 @@
-// OVJU — Testserver: statische Website + Bestell-API + Admin
-// Start: node server.js   →   http://<host>:4488
+// OVJU — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal
+// Start: node server.js   →   http://<host>:4488   (Admin: /admin, Standard-Passwort: ovju-admin)
 import http from 'node:http';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,116 +10,289 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
 const ORDERS = path.join(__dirname, 'orders');
+const DATA = path.join(__dirname, 'data');
 const PORT = process.env.PORT || 4488;
-const MAX_BODY = 64 * 1024 * 1024; // 64 MB (STL als base64, Vasen sind groß)
+const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
+const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
 
 const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.woff2': 'font/woff2',
-  '.stl': 'model/stl',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.woff2': 'font/woff2', '.stl': 'model/stl', '.svg': 'image/svg+xml',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.hdr': 'application/octet-stream',
   '.ico': 'image/x-icon',
 };
 
+// ---------------------------------------------------------------------------
+// Einstellungen (data/settings.json) — Preise, Rabatte, Firma, PayPal, Admin
+// ---------------------------------------------------------------------------
+const SETTINGS_FILE = path.join(DATA, 'settings.json');
+const DEFAULT_SETTINGS = {
+  adminKey: 'ovju-admin',
+  invoicePrefix: 'RE-2026-',
+  nextInvoice: 1,
+  pricing: {
+    currency: 'EUR',
+    eierbecher: {
+      single: 9.90, untersetzer: 4.90,
+      discounts: [{ qty: 2, off: 20 }, { qty: 4, off: 35 }, { qty: 6, off: 40 }],
+    },
+    vase: {
+      single: 24.90,
+      discounts: [{ qty: 2, off: 10 }, { qty: 3, off: 15 }],
+    },
+    shipping: { flat: 4.90, freeFrom: 39 },
+  },
+  company: {
+    name: 'OVJU — Julians Eierbecher', owner: 'Julian Sendlhofer',
+    street: 'Musterstraße 1', zip: '00000', city: 'Musterstadt',
+    email: 'jsendlhofer.js@gmail.com', phone: '',
+    ustId: '', kleinunternehmer: true,
+    iban: 'DE00 0000 0000 0000 0000 00', bic: '', bank: '',
+  },
+  paypal: { enabled: false, sandbox: true, clientId: '', secret: '' },
+};
+
+let settings;
+function loadSettings() {
+  mkdirSync(DATA, { recursive: true });
+  try {
+    settings = { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) };
+  } catch {
+    settings = structuredClone(DEFAULT_SETTINGS);
+    saveSettings();
+  }
+}
+async function saveSettings() {
+  await mkdir(DATA, { recursive: true });
+  await writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// Preisberechnung (Server = einzige Wahrheit)
+// ---------------------------------------------------------------------------
+function discountFor(product, qty) {
+  const tiers = settings.pricing[product]?.discounts || [];
+  let off = 0;
+  for (const t of tiers) if (qty >= t.qty && t.off > off) off = t.off;
+  return off;
+}
+function priceItem(item) {
+  const p = settings.pricing[item.product];
+  if (!p) throw new Error('Unbekanntes Produkt');
+  const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
+  let unit = p.single;
+  if (item.product === 'eierbecher' && item.saucer) unit += p.untersetzer;
+  const off = discountFor(item.product, qty);
+  const lineFull = unit * qty;
+  const line = Math.round(lineFull * (1 - off / 100) * 100) / 100;
+  return { qty, unit, off, lineFull: Math.round(lineFull * 100) / 100, line };
+}
+function computeTotals(items) {
+  const lines = items.map((it) => ({ ...it, ...priceItem(it) }));
+  const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
+  const ship = settings.pricing.shipping;
+  const shipping = subtotal >= ship.freeFrom ? 0 : ship.flat;
+  const total = Math.round((subtotal + shipping) * 100) / 100;
+  return { lines, subtotal, shipping, total };
+}
+function money(v) {
+  return v.toLocaleString('de-DE', { style: 'currency', currency: settings.pricing.currency });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 function send(res, code, body, type = 'application/json; charset=utf-8') {
   res.writeHead(code, { 'Content-Type': type });
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
-
-function readBody(req) {
+function readBody(req, limit = MAX_JSON) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) { reject(new Error('Datei zu groß')); req.destroy(); return; }
+      if (size > limit) { reject(new Error('Anfrage zu groß')); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
-
 function newOrderId() {
-  const d = new Date();
-  const stamp = d.toISOString().slice(2, 10).replace(/-/g, '');
-  return `OV-${stamp}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+  const stamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
+  return `OV-${stamp}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+function isAdmin(req) {
+  return (req.headers['x-admin-key'] || '') === settings.adminKey;
+}
+async function readOrder(id) {
+  return JSON.parse(await readFile(path.join(ORDERS, id, 'order.json'), 'utf8'));
+}
+async function writeOrder(order) {
+  await writeFile(path.join(ORDERS, order.orderId, 'order.json'), JSON.stringify(order, null, 2));
+}
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function itemLabel(it) {
+  const c = it.config || {};
+  const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen' }[c.pattern] || c.pattern;
+  return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
+    ` · ${c.height} mm · ${it.colorName || ''}` +
+    (c.text ? ` · Gravur „${c.text}“` : '') +
+    (it.saucer ? ' · mit Untersetzer' : '');
 }
 
 // ---------------------------------------------------------------------------
-async function handleOrder(req, res) {
-  let data;
-  try {
-    data = JSON.parse((await readBody(req)).toString('utf8'));
-  } catch (e) {
-    return send(res, 400, { ok: false, error: e.message || 'Ungültige Anfrage' });
-  }
-  const { name, email, qty, notes, config, colorName, filename, stlBase64 } = data;
-  if (!name || !email || !stlBase64) {
-    return send(res, 400, { ok: false, error: 'Name, E-Mail und Modell sind erforderlich' });
-  }
-  const stl = Buffer.from(stlBase64, 'base64');
-  if (stl.length < 84) return send(res, 400, { ok: false, error: 'STL-Datei ungültig' });
-
-  const orderId = newOrderId();
-  const dir = path.join(ORDERS, orderId);
-  await mkdir(dir, { recursive: true });
-  const safeName = (filename || 'eierbecher.stl').replace(/[^a-zA-Z0-9äöüÄÖÜß._-]/g, '_');
-  await writeFile(path.join(dir, safeName), stl);
-  await writeFile(path.join(dir, 'order.json'), JSON.stringify({
-    orderId,
-    createdAt: new Date().toISOString(),
-    name, email, qty: qty || 1, notes: notes || '',
-    colorName, config,
-    stlFile: safeName,
-    stlBytes: stl.length,
-  }, null, 2));
-  console.log(`📦 Neue Bestellung ${orderId} von ${name} <${email}> — ${safeName} (${(stl.length / 1e6).toFixed(1)} MB)`);
-  send(res, 200, { ok: true, orderId });
+// Rechnung (HTML, druckbar → PDF über Browser-Druck)
+// ---------------------------------------------------------------------------
+function invoiceHTML(order) {
+  const co = settings.company;
+  const vatNote = co.kleinunternehmer
+    ? 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.'
+    : `Im Gesamtbetrag enthaltene USt (19 %): ${money(order.total - order.total / 1.19)}`;
+  const payNote = order.payment === 'paypal'
+    ? `Bezahlt per PayPal am ${new Date(order.createdAt).toLocaleDateString('de-DE')}.`
+    : `Bitte überweise den Gesamtbetrag innerhalb von 14 Tagen unter Angabe der Rechnungsnummer:<br>
+       <b>${esc(co.iban)}</b>${co.bic ? ` · BIC: ${esc(co.bic)}` : ''}${co.bank ? ` · ${esc(co.bank)}` : ''}`;
+  const rows = order.lines.map((l) => `
+    <tr><td>${esc(itemLabel(l))}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
+    <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`).join('');
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Rechnung ${esc(order.invoiceNo)}</title>
+  <style>
+    body{font-family:system-ui;color:#1d1a16;max-width:800px;margin:40px auto;padding:0 24px;font-size:14px;line-height:1.5}
+    .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
+    h1{font-size:1.5rem;margin:0 0 4px} .muted{color:#6b6257} .sender{font-size:11px;color:#6b6257;margin-bottom:6px}
+    table{width:100%;border-collapse:collapse;margin:22px 0}
+    th,td{padding:9px 10px;border-bottom:1px solid #e5ddce;text-align:left;vertical-align:top}
+    th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b6257}
+    .r{text-align:right;white-space:nowrap} .tot td{border:none;padding:4px 10px}
+    .grand td{font-weight:700;font-size:1.05rem;border-top:2px solid #1d1a16}
+    .note{background:#faf6ee;border:1px solid #e5ddce;border-radius:10px;padding:14px 18px;margin-top:24px}
+    @media print{body{margin:10mm auto}.noprint{display:none}}
+    .noprint{margin-top:30px}.noprint button{padding:10px 22px;border-radius:999px;border:none;background:#1d1a16;color:#fff;font-weight:600;cursor:pointer}
+  </style></head><body>
+  <div class="head">
+    <div><h1>Rechnung</h1><div class="muted">Nr. ${esc(order.invoiceNo)} · ${new Date(order.createdAt).toLocaleDateString('de-DE')}<br>Bestellung ${esc(order.orderId)}</div></div>
+    <div style="text-align:right"><b>${esc(co.name)}</b><br>${esc(co.owner)}<br>${esc(co.street)}<br>${esc(co.zip)} ${esc(co.city)}<br>${esc(co.email)}${co.phone ? '<br>' + esc(co.phone) : ''}${co.ustId ? '<br>USt-IdNr. ' + esc(co.ustId) : ''}</div>
+  </div>
+  <div class="sender">${esc(co.name)} · ${esc(co.street)} · ${esc(co.zip)} ${esc(co.city)}</div>
+  <div><b>${esc(order.customer.name)}</b><br>${esc(order.customer.street)}<br>${esc(order.customer.zip)} ${esc(order.customer.city)}</div>
+  <table><tr><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
+  <table style="max-width:340px;margin-left:auto">
+    <tr class="tot"><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
+    <tr class="tot"><td>Versand</td><td class="r">${order.shipping === 0 ? 'kostenlos' : money(order.shipping)}</td></tr>
+    <tr class="tot grand"><td>Gesamtbetrag</td><td class="r">${money(order.total)}</td></tr>
+  </table>
+  <p class="muted">${vatNote}</p>
+  <div class="note">${payNote}</div>
+  <p class="muted" style="margin-top:26px">Vielen Dank für deine Bestellung! Jedes Stück wird individuell für dich gedruckt — Lieferzeit ca. 5–8 Werktage.</p>
+  <div class="noprint"><button onclick="print()">🖨️ Drucken / als PDF speichern</button></div>
+  </body></html>`;
 }
 
+// ---------------------------------------------------------------------------
+// PayPal (REST) — aktiv, sobald in den Einstellungen Zugangsdaten hinterlegt sind
+// ---------------------------------------------------------------------------
+function paypalBase() {
+  return settings.paypal.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
+}
+async function paypalToken() {
+  const auth = Buffer.from(`${settings.paypal.clientId}:${settings.paypal.secret}`).toString('base64');
+  const r = await fetch(`${paypalBase()}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials',
+  });
+  if (!r.ok) throw new Error('PayPal-Auth fehlgeschlagen');
+  return (await r.json()).access_token;
+}
+
+// ---------------------------------------------------------------------------
+// Bestellungen
+// ---------------------------------------------------------------------------
 async function listOrders() {
   if (!existsSync(ORDERS)) return [];
   const dirs = (await readdir(ORDERS, { withFileTypes: true }))
     .filter((d) => d.isDirectory()).map((d) => d.name).sort().reverse();
   const orders = [];
   for (const d of dirs) {
-    try {
-      orders.push(JSON.parse(await readFile(path.join(ORDERS, d, 'order.json'), 'utf8')));
-    } catch { /* unvollständige Bestellung überspringen */ }
+    try { orders.push(await readOrder(d)); } catch { /* unvollständig */ }
   }
   return orders;
 }
 
-function adminHTML(orders) {
-  const rows = orders.map((o) => {
-    const c = o.config || {};
-    const cfg = `${c.preset || '?'} · ${c.pattern || '?'}${c.pattern !== 'glatt' ? ` (${c.ribs}×/${c.depth}mm${c.twist ? `, Drall ${Math.round(c.twist * 180)}°` : ''})` : ''} · H ${c.height}mm${c.text ? ` · „${c.text}“` : ''}`;
-    return `<tr>
-      <td><b>${o.orderId}</b><br><small>${new Date(o.createdAt).toLocaleString('de-DE')}</small></td>
-      <td>${o.name}<br><small>${o.email}</small></td>
-      <td>${o.qty}× · ${o.colorName || '?'}</td>
-      <td><small>${cfg}</small>${o.notes ? `<br><small>📝 ${o.notes}</small>` : ''}</td>
-      <td><a class="dl" href="/orders/${o.orderId}/${encodeURIComponent(o.stlFile)}" download>⬇ STL (${(o.stlBytes / 1e6).toFixed(1)} MB)</a></td>
-    </tr>`;
-  }).join('');
-  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>OVJU Admin — Bestellungen</title>
-  <style>
-    body{font-family:system-ui;background:#f4efe7;color:#211d18;margin:0;padding:40px}
-    h1{font-size:1.6rem} .sub{color:#6b6257;margin-bottom:24px}
-    table{width:100%;border-collapse:collapse;background:#fbf8f2;border-radius:14px;overflow:hidden;box-shadow:0 8px 30px rgba(60,45,30,.12)}
-    th,td{padding:14px 16px;text-align:left;border-bottom:1px solid #eee5d5;vertical-align:top}
-    th{background:#211d18;color:#f4efe7;font-size:.82rem;text-transform:uppercase;letter-spacing:.06em}
-    small{color:#6b6257} .dl{color:#a8563a;font-weight:600;text-decoration:none} .dl:hover{text-decoration:underline}
-    .empty{padding:60px;text-align:center;color:#6b6257}
-  </style></head><body>
-  <h1>🥚 OVJU — Bestellungen</h1><p class="sub">${orders.length} Bestellung(en) · STL herunterladen → in Bambu Studio öffnen → slicen → drucken</p>
-  ${orders.length ? `<table><tr><th>Bestellung</th><th>Kunde</th><th>Menge/Farbe</th><th>Design</th><th>Datei</th></tr>${rows}</table>` : '<div class="empty">Noch keine Bestellungen — designe einen auf der <a href="/">Startseite</a>!</div>'}
-  </body></html>`;
+async function handleCheckout(req, res) {
+  const data = JSON.parse((await readBody(req)).toString('utf8'));
+  const { customer, items, payment, paypalOrderId } = data;
+  if (!customer?.name || !customer?.email || !customer?.street || !customer?.zip || !customer?.city) {
+    return send(res, 400, { ok: false, error: 'Bitte Adresse vollständig ausfüllen' });
+  }
+  if (!Array.isArray(items) || !items.length || items.length > 20) {
+    return send(res, 400, { ok: false, error: 'Warenkorb ist leer' });
+  }
+  const totals = computeTotals(items);
+  const orderId = newOrderId();
+  await mkdir(path.join(ORDERS, orderId), { recursive: true });
+  const order = {
+    orderId,
+    createdAt: new Date().toISOString(),
+    status: 'neu',
+    payment: payment === 'paypal' ? 'paypal' : 'vorkasse',
+    paymentStatus: payment === 'paypal' ? 'bezahlt' : 'offen',
+    paypalOrderId: paypalOrderId || null,
+    customer,
+    lines: totals.lines.map((l, i) => ({
+      product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
+      colorName: l.colorName, unit: l.unit, off: l.off, line: l.line,
+      stlFile: `modell-${i + 1}-${l.product}.stl`,
+    })),
+    subtotal: totals.subtotal, shipping: totals.shipping, total: totals.total,
+    invoiceNo: null, filesComplete: false,
+  };
+  await writeOrder(order);
+  send(res, 200, { ok: true, orderId, itemCount: order.lines.length, total: order.total });
+}
+
+async function handleStlUpload(req, res, id, idx) {
+  let order;
+  try { order = await readOrder(id); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
+  if (order.filesComplete) return send(res, 400, { ok: false, error: 'Bestellung abgeschlossen' });
+  const i = parseInt(idx, 10);
+  if (!(i >= 0 && i < order.lines.length)) return send(res, 400, { ok: false, error: 'Ungültiger Index' });
+  const file = path.join(ORDERS, id, order.lines[i].stlFile);
+  const out = createWriteStream(file);
+  let size = 0, aborted = false;
+  req.on('data', (c) => {
+    size += c.length;
+    if (size > MAX_STL && !aborted) { aborted = true; out.destroy(); req.destroy(); send(res, 413, { ok: false, error: 'Datei zu groß' }); }
+  });
+  req.pipe(out);
+  out.on('finish', () => { if (!aborted) send(res, 200, { ok: true, bytes: size }); });
+  out.on('error', () => { if (!aborted) send(res, 500, { ok: false, error: 'Speicherfehler' }); });
+}
+
+async function handleComplete(req, res, id) {
+  let order;
+  try { order = await readOrder(id); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
+  if (!order.invoiceNo) {
+    order.invoiceNo = settings.invoicePrefix + String(settings.nextInvoice++).padStart(4, '0');
+    await saveSettings();
+  }
+  order.filesComplete = order.lines.every((l) => existsSync(path.join(ORDERS, id, l.stlFile)));
+  await writeFile(path.join(ORDERS, id, 'rechnung.html'), invoiceHTML(order));
+  await writeOrder(order);
+  console.log(`📦 Bestellung ${id} — ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
+  send(res, 200, { ok: true, invoiceUrl: `/orders/${id}/rechnung.html`, invoiceNo: order.invoiceNo });
+}
+
+// ---------------------------------------------------------------------------
+// Admin-Seite (Login clientseitig, API mit x-admin-key)
+// ---------------------------------------------------------------------------
+function adminHTML() {
+  return readFileSync(path.join(PUBLIC, 'admin.html'), 'utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -128,11 +301,90 @@ const server = http.createServer(async (req, res) => {
   const p = decodeURIComponent(url.pathname);
 
   try {
-    if (req.method === 'POST' && p === '/api/order') return await handleOrder(req, res);
-    if (p === '/api/orders') return send(res, 200, await listOrders());
-    if (p === '/admin' || p === '/admin/') return send(res, 200, adminHTML(await listOrders()), 'text/html; charset=utf-8');
+    // --- öffentliche API
+    if (p === '/api/pricing') {
+      const pr = settings.pricing;
+      return send(res, 200, {
+        currency: pr.currency,
+        products: {
+          eierbecher: { single: pr.eierbecher.single, untersetzer: pr.eierbecher.untersetzer, discounts: pr.eierbecher.discounts },
+          vase: { single: pr.vase.single, discounts: pr.vase.discounts },
+        },
+        shipping: pr.shipping,
+        paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
+      });
+    }
+    if (req.method === 'POST' && p === '/api/quote') {
+      const { items } = JSON.parse((await readBody(req)).toString('utf8'));
+      const t = computeTotals(items || []);
+      return send(res, 200, { ok: true, lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line })), subtotal: t.subtotal, shipping: t.shipping, total: t.total });
+    }
+    if (req.method === 'POST' && p === '/api/checkout') return await handleCheckout(req, res);
+    const mUp = p.match(/^\/api\/order\/([A-Z0-9-]+)\/stl\/(\d+)$/);
+    if (req.method === 'PUT' && mUp) return await handleStlUpload(req, res, mUp[1], mUp[2]);
+    const mDone = p.match(/^\/api\/order\/([A-Z0-9-]+)\/complete$/);
+    if (req.method === 'POST' && mDone) return await handleComplete(req, res, mDone[1]);
 
-    // Bestell-Dateien (STL-Downloads für den Admin)
+    // --- PayPal
+    if (req.method === 'POST' && p === '/api/paypal/create') {
+      if (!settings.paypal.enabled) return send(res, 400, { ok: false, error: 'PayPal nicht aktiviert' });
+      const { items } = JSON.parse((await readBody(req)).toString('utf8'));
+      const t = computeTotals(items);
+      const token = await paypalToken();
+      const r = await fetch(`${paypalBase()}/v2/checkout/orders`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          intent: 'CAPTURE',
+          purchase_units: [{ amount: { currency_code: settings.pricing.currency, value: t.total.toFixed(2) }, description: 'OVJU — individuelle 3D-Drucke' }],
+        }),
+      });
+      const j = await r.json();
+      return send(res, r.ok ? 200 : 500, r.ok ? { ok: true, id: j.id } : { ok: false, error: j.message || 'PayPal-Fehler' });
+    }
+    const mCap = p.match(/^\/api\/paypal\/capture\/([A-Z0-9]+)$/i);
+    if (req.method === 'POST' && mCap) {
+      const token = await paypalToken();
+      const r = await fetch(`${paypalBase()}/v2/checkout/orders/${mCap[1]}/capture`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const j = await r.json();
+      const ok = r.ok && j.status === 'COMPLETED';
+      return send(res, ok ? 200 : 500, ok ? { ok: true } : { ok: false, error: 'Zahlung nicht abgeschlossen' });
+    }
+
+    // --- Admin-API
+    if (p === '/api/admin/data') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      return send(res, 200, { ok: true, settings, orders: await listOrders() });
+    }
+    if (req.method === 'POST' && p === '/api/admin/settings') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const patch = JSON.parse((await readBody(req)).toString('utf8'));
+      // Nur bekannte Wurzel-Schlüssel übernehmen
+      for (const k of ['pricing', 'company', 'paypal', 'invoicePrefix', 'adminKey']) {
+        if (patch[k] !== undefined) settings[k] = patch[k];
+      }
+      await saveSettings();
+      return send(res, 200, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/admin/order-status') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const { orderId, status } = JSON.parse((await readBody(req)).toString('utf8'));
+      if (!['neu', 'bezahlt', 'im-druck', 'versendet', 'storniert'].includes(status)) {
+        return send(res, 400, { ok: false, error: 'Ungültiger Status' });
+      }
+      const order = await readOrder(orderId);
+      order.status = status;
+      if (status === 'bezahlt') order.paymentStatus = 'bezahlt';
+      await writeOrder(order);
+      return send(res, 200, { ok: true });
+    }
+
+    // --- Seiten & Dateien
+    if (p === '/favicon.ico') { res.writeHead(204); return res.end(); }
+    if (p === '/admin' || p === '/admin/') return send(res, 200, adminHTML(), 'text/html; charset=utf-8');
+
     if (p.startsWith('/orders/')) {
       const file = path.normalize(path.join(__dirname, p));
       if (!file.startsWith(ORDERS + path.sep) || !existsSync(file) || !statSync(file).isFile()) {
@@ -142,7 +394,6 @@ const server = http.createServer(async (req, res) => {
       return createReadStream(file).pipe(res);
     }
 
-    // Statische Dateien
     let file = path.normalize(path.join(PUBLIC, p === '/' ? 'index.html' : p));
     if (!file.startsWith(PUBLIC)) return send(res, 403, { ok: false, error: 'Verboten' });
     if (existsSync(file) && statSync(file).isDirectory()) file = path.join(file, 'index.html');
@@ -155,6 +406,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+loadSettings();
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🥚 OVJU läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);
+  console.log(`🥚 OVJU Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);
 });

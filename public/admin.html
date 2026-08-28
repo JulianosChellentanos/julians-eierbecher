@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OVJU Admin</title>
+<style>
+  :root{--bg:#f4efe7;--card:#fbf8f2;--ink:#211d18;--soft:#6b6257;--line:#ddd3c3;--acc:#a8563a}
+  *{box-sizing:border-box;margin:0}
+  body{font-family:system-ui;background:var(--bg);color:var(--ink);padding:34px 22px;max-width:1180px;margin:0 auto}
+  h1{font-size:1.5rem;margin-bottom:4px} h2{font-size:1.1rem;margin:26px 0 12px}
+  .muted{color:var(--soft);font-size:.88rem}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-top:14px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #eee5d5;vertical-align:top;font-size:.9rem}
+  th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)}
+  input,select{padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font:inherit;background:#fff;max-width:100%}
+  input[type=number]{width:90px} input[type=text],input[type=email],input[type=password]{width:220px}
+  button{padding:9px 18px;border-radius:999px;border:none;background:var(--ink);color:var(--bg);font-weight:600;cursor:pointer;font-size:.9rem}
+  button.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+  a{color:var(--acc);font-weight:600;text-decoration:none} a:hover{text-decoration:underline}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+  label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;font-weight:600;color:var(--soft)}
+  .tabs{display:flex;gap:8px;margin-top:18px}
+  .tabs button{background:transparent;color:var(--soft);border:1.5px solid var(--line)}
+  .tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  .tier{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+  .ok{color:#3c7a3c;font-weight:600} .warn{color:var(--acc)} .badge{font-size:.72rem;padding:2px 9px;border-radius:99px;border:1px solid var(--line)}
+  #login{max-width:380px;margin:80px auto;text-align:center}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  small.h{color:var(--soft);font-weight:400}
+</style>
+</head>
+<body>
+<div id="login" class="card" hidden>
+  <h1>🥚 OVJU Admin</h1>
+  <p class="muted" style="margin:10px 0 16px">Bitte Admin-Passwort eingeben</p>
+  <div class="row" style="justify-content:center">
+    <input type="password" id="pw" placeholder="Passwort">
+    <button onclick="login()">Anmelden</button>
+  </div>
+  <p id="login-err" class="warn" style="margin-top:10px"></p>
+</div>
+
+<div id="app" hidden>
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <div><h1>🥚 OVJU Admin</h1><div class="muted" id="stats"></div></div>
+    <button class="ghost" onclick="logout()">Abmelden</button>
+  </div>
+  <div class="tabs">
+    <button id="tab-orders" class="on" onclick="showTab('orders')">📦 Bestellungen</button>
+    <button id="tab-settings" onclick="showTab('settings')">⚙️ Einstellungen</button>
+  </div>
+
+  <div id="pane-orders"></div>
+
+  <div id="pane-settings" hidden>
+    <div class="card">
+      <h2 style="margin-top:0">💰 Preise</h2>
+      <div class="grid">
+        <label>Eierbecher (€/Stück)<input type="number" step="0.1" id="s-egg-single"></label>
+        <label>Untersetzer (€/Stück)<input type="number" step="0.1" id="s-egg-saucer"></label>
+        <label>Vase (€/Stück)<input type="number" step="0.1" id="s-vase-single"></label>
+        <label>Versand pauschal (€)<input type="number" step="0.1" id="s-ship-flat"></label>
+        <label>Versandfrei ab (€)<input type="number" step="1" id="s-ship-free"></label>
+      </div>
+      <h2>🏷️ Mengenrabatte <small class="h">— gleicher Artikel mehrfach bestellt</small></h2>
+      <div class="row" style="align-items:flex-start;gap:40px">
+        <div><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost" onclick="addTier('egg')">+ Stufe</button></div>
+        <div><b>Vasen</b><div id="tiers-vase"></div><button class="ghost" onclick="addTier('vase')">+ Stufe</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">🏢 Mein Unternehmen <small class="h">— erscheint auf jeder Rechnung</small></h2>
+      <div class="grid">
+        <label>Firmenname<input id="c-name"></label>
+        <label>Inhaber:in<input id="c-owner"></label>
+        <label>Straße &amp; Nr.<input id="c-street"></label>
+        <label>PLZ<input id="c-zip" style="width:90px"></label>
+        <label>Ort<input id="c-city"></label>
+        <label>E-Mail<input id="c-email"></label>
+        <label>Telefon (optional)<input id="c-phone"></label>
+        <label>USt-IdNr. (optional)<input id="c-ustid"></label>
+        <label>IBAN (für Vorkasse)<input id="c-iban"></label>
+        <label>BIC<input id="c-bic"></label>
+        <label>Bank<input id="c-bank"></label>
+        <label>Rechnungs-Präfix<input id="c-prefix" style="width:130px"></label>
+      </div>
+      <label style="flex-direction:row;align-items:center;gap:8px;margin-top:12px">
+        <input type="checkbox" id="c-klein" style="width:auto"> Kleinunternehmer nach § 19 UStG (keine USt ausweisen)
+      </label>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">💙 PayPal <small class="h">— Zugangsdaten aus dem PayPal-Developer-Dashboard (REST-App)</small></h2>
+      <div class="grid">
+        <label>Client-ID<input id="pp-id" style="width:100%"></label>
+        <label>Secret<input type="password" id="pp-secret" style="width:100%"></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="pp-enabled" style="width:auto"> PayPal im Checkout anbieten</label>
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="pp-sandbox" style="width:auto"> Sandbox-Modus (Testzahlungen)</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">🔐 Admin-Passwort</h2>
+      <label>Neues Passwort (leer = unverändert)<input type="password" id="s-adminkey" placeholder="••••••"></label>
+    </div>
+
+    <div style="margin:20px 0"><button onclick="saveSettings()">💾 Einstellungen speichern</button> <span id="save-msg" class="ok"></span></div>
+  </div>
+</div>
+
+<script>
+const KEY = () => localStorage.getItem('ovju-admin-key') || '';
+let DATA = null;
+const $ = (s) => document.querySelector(s);
+const money = (v) => v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-key': KEY(), ...(opts.headers || {}) } });
+  if (r.status === 401) { showLogin(); throw new Error('auth'); }
+  return r.json();
+}
+function showLogin() { $('#login').hidden = false; $('#app').hidden = true; }
+async function login() {
+  localStorage.setItem('ovju-admin-key', $('#pw').value);
+  try { await load(); } catch { $('#login-err').textContent = 'Falsches Passwort'; }
+}
+function logout() { localStorage.removeItem('ovju-admin-key'); showLogin(); }
+function showTab(t) {
+  $('#pane-orders').hidden = t !== 'orders';
+  $('#pane-settings').hidden = t !== 'settings';
+  $('#tab-orders').classList.toggle('on', t === 'orders');
+  $('#tab-settings').classList.toggle('on', t === 'settings');
+}
+
+const STATI = ['neu', 'bezahlt', 'im-druck', 'versendet', 'storniert'];
+function renderOrders() {
+  const orders = DATA.orders;
+  const open = orders.filter(o => !['versendet','storniert'].includes(o.status || 'neu')).length;
+  const rev = orders.filter(o => o.status !== 'storniert').reduce((s, o) => s + (o.total || 0), 0);
+  $('#stats').textContent = `${orders.length} Bestellungen · ${open} offen · Umsatz ${money(rev)}`;
+  const rows = orders.map(o => {
+    const lines = (o.lines || []).map((l, i) =>
+      `<div>${l.qty}× ${esc(l.product)} ${l.off ? `<span class="badge">−${l.off}%</span>` : ''} ${esc((l.config||{}).text ? '„'+(l.config.text)+'“' : '')}
+       — <a href="/orders/${o.orderId}/${encodeURIComponent(l.stlFile)}" download>⬇ STL</a></div>`).join('');
+    const legacy = !o.lines && o.stlFile ? `<a href="/orders/${o.orderId}/${encodeURIComponent(o.stlFile)}" download>⬇ STL (Alt-Format)</a>` : '';
+    return `<tr>
+      <td><b>${o.orderId}</b><br><small class="muted">${new Date(o.createdAt).toLocaleString('de-DE')}</small>
+        ${o.invoiceNo ? `<br><a href="/orders/${o.orderId}/rechnung.html" target="_blank">🧾 ${esc(o.invoiceNo)}</a>` : ''}</td>
+      <td>${esc(o.customer?.name || o.name || '')}<br><small class="muted">${esc(o.customer?.email || o.email || '')}</small>
+        ${o.customer?.street ? `<br><small class="muted">${esc(o.customer.street)}, ${esc(o.customer.zip)} ${esc(o.customer.city)}</small>` : ''}</td>
+      <td>${lines}${legacy}</td>
+      <td>${o.total ? money(o.total) : '—'}<br><small class="muted">${esc(o.payment || '')} ${o.paymentStatus === 'bezahlt' ? '✅' : ''}</small></td>
+      <td><select onchange="setStatus('${o.orderId}', this.value)">
+        ${STATI.map(s => `<option ${((o.status||'neu')===s)?'selected':''}>${s}</option>`).join('')}</select></td>
+    </tr>`;
+  }).join('');
+  $('#pane-orders').innerHTML = `<div class="card" style="overflow-x:auto"><table>
+    <tr><th>Bestellung</th><th>Kunde</th><th>Positionen</th><th>Summe</th><th>Status</th></tr>${rows ||
+    '<tr><td colspan="5" class="muted">Noch keine Bestellungen.</td></tr>'}</table></div>`;
+}
+async function setStatus(orderId, status) {
+  await api('/api/admin/order-status', { method: 'POST', body: JSON.stringify({ orderId, status }) });
+}
+
+let tiers = { egg: [], vase: [] };
+function renderTiers() {
+  for (const [k, sel] of [['egg', '#tiers-egg'], ['vase', '#tiers-vase']]) {
+    $(sel).innerHTML = tiers[k].map((t, i) => `<div class="tier">
+      ab <input type="number" min="2" value="${t.qty}" onchange="tiers['${k}'][${i}].qty=+this.value">
+      Stück → <input type="number" min="0" max="90" value="${t.off}" onchange="tiers['${k}'][${i}].off=+this.value"> % Rabatt
+      <button class="ghost" onclick="tiers['${k}'].splice(${i},1);renderTiers()">✕</button></div>`).join('');
+  }
+}
+function addTier(k) { tiers[k].push({ qty: 2, off: 10 }); renderTiers(); }
+
+function fillSettings() {
+  const s = DATA.settings;
+  $('#s-egg-single').value = s.pricing.eierbecher.single;
+  $('#s-egg-saucer').value = s.pricing.eierbecher.untersetzer;
+  $('#s-vase-single').value = s.pricing.vase.single;
+  $('#s-ship-flat').value = s.pricing.shipping.flat;
+  $('#s-ship-free').value = s.pricing.shipping.freeFrom;
+  tiers.egg = JSON.parse(JSON.stringify(s.pricing.eierbecher.discounts));
+  tiers.vase = JSON.parse(JSON.stringify(s.pricing.vase.discounts));
+  renderTiers();
+  const c = s.company;
+  $('#c-name').value = c.name; $('#c-owner').value = c.owner; $('#c-street').value = c.street;
+  $('#c-zip').value = c.zip; $('#c-city').value = c.city; $('#c-email').value = c.email;
+  $('#c-phone').value = c.phone; $('#c-ustid').value = c.ustId; $('#c-iban').value = c.iban;
+  $('#c-bic').value = c.bic; $('#c-bank').value = c.bank; $('#c-prefix').value = s.invoicePrefix;
+  $('#c-klein').checked = c.kleinunternehmer;
+  $('#pp-id').value = s.paypal.clientId; $('#pp-secret').value = s.paypal.secret;
+  $('#pp-enabled').checked = s.paypal.enabled; $('#pp-sandbox').checked = s.paypal.sandbox;
+}
+async function saveSettings() {
+  const patch = {
+    pricing: {
+      currency: 'EUR',
+      eierbecher: { single: +$('#s-egg-single').value, untersetzer: +$('#s-egg-saucer').value, discounts: tiers.egg },
+      vase: { single: +$('#s-vase-single').value, discounts: tiers.vase },
+      shipping: { flat: +$('#s-ship-flat').value, freeFrom: +$('#s-ship-free').value },
+    },
+    company: {
+      name: $('#c-name').value, owner: $('#c-owner').value, street: $('#c-street').value,
+      zip: $('#c-zip').value, city: $('#c-city').value, email: $('#c-email').value,
+      phone: $('#c-phone').value, ustId: $('#c-ustid').value, kleinunternehmer: $('#c-klein').checked,
+      iban: $('#c-iban').value, bic: $('#c-bic').value, bank: $('#c-bank').value,
+    },
+    paypal: {
+      enabled: $('#pp-enabled').checked, sandbox: $('#pp-sandbox').checked,
+      clientId: $('#pp-id').value, secret: $('#pp-secret').value,
+    },
+    invoicePrefix: $('#c-prefix').value,
+  };
+  if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
+  await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
+  if (patch.adminKey) localStorage.setItem('ovju-admin-key', patch.adminKey);
+  $('#save-msg').textContent = '✅ Gespeichert';
+  setTimeout(() => $('#save-msg').textContent = '', 2500);
+}
+
+async function load() {
+  DATA = await api('/api/admin/data');
+  $('#login').hidden = true;
+  $('#app').hidden = false;
+  renderOrders();
+  fillSettings();
+}
+load().catch(() => {});
+</script>
+</body>
+</html>

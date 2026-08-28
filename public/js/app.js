@@ -1,15 +1,16 @@
 // OVJU — Konfigurator: 3D-Szene, UI-Bindings, Bestellung (Eierbecher & Vasen)
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
-import { FontLoader } from '../vendor/FontLoader.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
   buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
   DEFAULTS, PRODUCTS, PATTERNS, FONTS,
 } from './geometry.js';
-import { exportSTL, downloadSTL, bufferToBase64 } from './exporter.js';
+import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
+import { makeSTL, loadFont } from './modelfactory.js';
+import { initCart, addToCart, getPricing, fmt, discountTeaser } from './cart.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -29,14 +30,6 @@ let cupMesh = null;
 let textMesh = null;
 let currentInfo = null;
 let userInteracted = false;
-
-const fontCache = {};
-function loadFont(key) {
-  if (fontCache[key]) return fontCache[key];
-  fontCache[key] = new Promise((resolve, reject) =>
-    new FontLoader().load(`fonts/${FONTS[key].file}`, resolve, undefined, reject));
-  return fontCache[key];
-}
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -71,20 +64,10 @@ async function loadContent() {
   setColor({ id: content.colors[0].id, hex: content.colors[0].hex, name: content.colors[0].name });
 }
 
-function money(v) {
-  return v.toLocaleString('de-DE', { style: 'currency', currency: content.pricing.currency });
-}
-
-function productPricing() {
-  return content.pricing[state.product];
-}
-
 function renderPrices() {
-  const pp = productPricing();
-  $('#price').textContent = money(pp.single);
-  $('#price-hint').textContent = pp.family4
-    ? `Duo ${money(pp.duo)} · 4er-Set ${money(pp.family4)}`
-    : `Duo ${money(pp.duo)}`;
+  const pp = getPricing().products[state.product];
+  $('#price').textContent = fmt(pp.single);
+  $('#price-hint').textContent = discountTeaser(state.product);
 }
 
 function setColor({ id, hex, name }) {
@@ -477,7 +460,7 @@ function renderProductTabs() {
   $('#product-tabs').innerHTML = Object.entries(PRODUCTS).map(([id, pr]) => `
     <button class="product-tab" data-product="${id}">
       <span class="pt-icon">${pr.icon}</span>${pr.label}
-      <small>ab ${money(content.pricing[id].single)}</small>
+      <small>ab ${fmt(getPricing().products[id].single)}</small>
     </button>`).join('');
   $$('.product-tab').forEach((b) => b.addEventListener('click', () => setProduct(b.dataset.product)));
   markActiveProduct();
@@ -572,8 +555,19 @@ function initControls() {
     rebuild();
   });
 
-  $('#btn-download').addEventListener('click', () => {
-    downloadSTL(exportCurrentSTL(), stlFilename());
+  $('#btn-download').addEventListener('click', async () => {
+    downloadSTL(await makeSTL(currentConfig()), stlFilename());
+  });
+
+  // In den Warenkorb (mit Live-Vorschaubild)
+  $('#btn-order').addEventListener('click', () => {
+    renderer.render(scene, camera);
+    addToCart({
+      config: currentConfig(),
+      colorName: state.colorName,
+      colorHex: state.colorHex,
+      thumb: captureThumb(),
+    });
   });
 
   // Szenen-Chips + Foto-Shooting
@@ -585,7 +579,7 @@ function initControls() {
   $('#foto-close').addEventListener('click', () => $('#foto-modal').close());
 
   // Untersetzer
-  $('#saucer-price').textContent = `+ ${money(content.pricing.eierbecher.untersetzer)}`;
+  $('#saucer-price').textContent = `+ ${fmt(getPricing().products.eierbecher.untersetzer)}`;
   $('#c-saucer').addEventListener('change', (e) => {
     state.saucer = e.target.checked;
     userInteracted = false; // neu einrahmen (Untersetzer ist breiter)
@@ -596,7 +590,6 @@ function initControls() {
     $('#konfigurator').scrollIntoView({ behavior: 'smooth' });
   });
 
-  initOrderModal();
 }
 
 function syncControls() {
@@ -615,23 +608,23 @@ function stlFilename() {
   return `${brand}-${state.product}-${state.preset}-${state.pattern}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.stl`;
 }
 
-function exportCurrentSTL() {
-  // Für den Export in voller Auflösung frisch bauen (Preview ist ggf. reduziert)
-  const { geometry, info } = buildModel({ ...state, quality: 1, customPoints: customByProduct[state.product] });
-  const meshes = [new THREE.Mesh(geometry)];
-  if (textMesh) meshes.push(new THREE.Mesh(textMesh.geometry)); // Becher liegt beim Druck auf y=0
-  const extra = [];
-  if (state.product === 'eierbecher' && state.saucer) {
-    const s = buildSaucer({ ...state, quality: 1, customPoints: customByProduct[state.product] });
-    const sm = new THREE.Mesh(s.geometry);
-    sm.position.x = s.info.outerRadius + info.baseDiameter / 2 + 6; // nebeneinander aufs Druckbett
-    meshes.push(sm);
-    extra.push(s.geometry);
-  }
-  const buf = exportSTL(meshes);
-  geometry.dispose();
-  extra.forEach((g) => g.dispose());
-  return buf;
+function currentConfig() {
+  const { color, colorName, colorHex, quality, ...rest } = state;
+  return {
+    ...rest,
+    saucer: state.product === 'eierbecher' && state.saucer, // Untersetzer gibt's nur beim Eierbecher
+    customPoints: customByProduct[state.product],
+  };
+}
+
+// Quadratisches Vorschaubild aus dem aktuellen Canvas (für den Warenkorb)
+function captureThumb() {
+  const src = renderer.domElement;
+  const c = document.createElement('canvas');
+  c.width = c.height = 260;
+  const m = Math.min(src.width, src.height);
+  c.getContext('2d').drawImage(src, (src.width - m) / 2, (src.height - m) / 2, m, m, 0, 0, 260, 260);
+  return c.toDataURL('image/jpeg', 0.82);
 }
 
 // ---------------------------------------------------------------------------
@@ -740,12 +733,12 @@ async function renderShowcase() {
     {
       id: 'eierbecher', c: sc.eierbecher, hex: '#c86f4a', extra: 'egg',
       params: { product: 'eierbecher', preset: 'kelch', pattern: 'rippen', ribs: 48, depth: 0.9, height: 58 },
-      price: content.pricing.eierbecher.single,
+      price: getPricing().products.eierbecher.single,
     },
     {
       id: 'vase', c: sc.vase, hex: '#9caf88', extra: 'grass',
       params: { product: 'vase', preset: 'flasche', pattern: 'rippen', ribs: 72, depth: 0.9, height: 150 },
-      price: content.pricing.vase.single,
+      price: getPricing().products.vase.single,
     },
   ];
   for (const d of defs) d.img = await productShot(d.params, d.hex, d.extra);
@@ -755,7 +748,7 @@ async function renderShowcase() {
       <div class="showcase-body">
         <h3>${d.c.title}</h3>
         <p>${d.c.text}</p>
-        <div class="showcase-cta"><span class="showcase-price">ab ${money(d.price)}</span>
+        <div class="showcase-cta"><span class="showcase-price">ab ${fmt(d.price)}</span>
         <button class="btn btn-primary">${d.c.cta}</button></div>
       </div>
     </div>`).join('');
@@ -766,97 +759,11 @@ async function renderShowcase() {
 }
 
 // ---------------------------------------------------------------------------
-// Bestell-Flow
-// ---------------------------------------------------------------------------
-function initOrderModal() {
-  const modal = $('#order-modal');
-  $('#btn-order').addEventListener('click', () => {
-    $('#order-summary').innerHTML = orderSummaryHTML();
-    renderQtyOptions();
-    updateOrderTotal();
-    modal.showModal();
-  });
-  $('#order-cancel').addEventListener('click', () => modal.close());
-  $('#o-qty').addEventListener('input', updateOrderTotal);
-
-  $('#order-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const btn = $('#order-submit');
-    btn.disabled = true;
-    btn.textContent = 'Wird gesendet …';
-    try {
-      const buf = exportCurrentSTL();
-      const res = await fetch('/api/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: $('#o-name').value,
-          email: $('#o-email').value,
-          qty: parseInt($('#o-qty').value, 10),
-          notes: $('#o-notes').value,
-          config: { ...state, customPoints: customByProduct[state.product] },
-          colorName: state.colorName,
-          filename: stlFilename(),
-          stlBase64: bufferToBase64(buf),
-        }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Unbekannter Fehler');
-      modal.close();
-      $('#confirm-id').textContent = data.orderId;
-      $('#confirm-modal').showModal();
-    } catch (err) {
-      alert('Bestellung fehlgeschlagen: ' + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Verbindlich bestellen';
-    }
-  });
-  $('#confirm-close').addEventListener('click', () => $('#confirm-modal').close());
-}
-
-function renderQtyOptions() {
-  const isEgg = state.product === 'eierbecher';
-  $('#o-qty').innerHTML = isEgg
-    ? `<option value="1">1 Stück</option>
-       <option value="2">2 Stück (Duo-Preis)</option>
-       <option value="4">4 Stück (Familien-Set)</option>
-       <option value="6">6 Stück</option>`
-    : `<option value="1">1 Vase</option>
-       <option value="2">2 Vasen (Duo-Preis)</option>
-       <option value="3">3 Vasen</option>`;
-}
-
-function orderTotal(qty) {
-  const pp = productPricing();
-  let total;
-  if (qty === 2 && pp.duo) total = pp.duo;
-  else if (qty === 4 && pp.family4) total = pp.family4;
-  else if (qty > 2) total = Math.round(qty * pp.single * 0.85 * 10) / 10;
-  else total = qty * pp.single;
-  if (state.product === 'eierbecher' && state.saucer) total += qty * content.pricing.eierbecher.untersetzer;
-  return Math.round(total * 100) / 100;
-}
-
-function updateOrderTotal() {
-  const qty = Math.max(1, parseInt($('#o-qty').value || '1', 10));
-  $('#order-total').textContent = money(orderTotal(qty));
-}
-
-function orderSummaryHTML() {
-  const product = PRODUCTS[state.product];
-  const presetLabel = state.preset === 'eigene' ? 'Eigene Form' : product.presets[state.preset].label;
-  const twist = state.twist === 0 ? '' : `, Drall ${Math.round(state.twist * 180)}°`;
-  return `<span class="dot" style="background:${state.colorHex}"></span>
-    <b>${product.label} „${presetLabel}“</b> · ${PATTERNS[state.pattern]}${state.pattern !== 'glatt' ? ` (${state.ribs}×, ${state.depth.toFixed(1)} mm${twist})` : ''}
-    · ${state.height} mm · <b>${state.colorName}</b>${state.text ? ` · Gravur „${state.text}“ (${FONTS[state.font].label})` : ''}${state.product === 'eierbecher' && state.saucer ? ' · 🍽️ mit Untersetzer' : ''}`;
-}
-
-// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 (async () => {
   await loadContent();
+  await initCart();
   renderProductTabs();
   renderPresetButtons();
   renderFontRow();

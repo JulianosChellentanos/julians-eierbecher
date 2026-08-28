@@ -22,6 +22,7 @@
       <a href="#sogehts">So geht's</a>
       <a href="#faq">FAQ</a>
     </nav>
+    <button class="cart-btn" id="cart-btn" title="Warenkorb">🛒<span id="cart-count">0</span></button>
   </div>
 </header>
 
@@ -139,7 +140,7 @@
           <div><span class="price" id="price">9,90&nbsp;€</span><span class="price-unit">/ Stück</span></div>
           <div class="price-hint" id="price-hint"></div>
         </div>
-        <button class="btn btn-primary btn-lg" id="btn-order">In Auftrag geben</button>
+        <button class="btn btn-primary btn-lg" id="btn-order">🛒 In den Warenkorb</button>
         <button class="btn btn-ghost" id="btn-download">⬇ STL-Datei herunterladen</button>
         <div class="tiny">Druckfertige Datei in Millimetern — direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.</div>
       </div>
@@ -172,27 +173,43 @@
   </div>
 </footer>
 
-<!-- Bestell-Dialog -->
-<dialog id="order-modal">
-  <form id="order-form" method="dialog">
-    <h2>Bestellung</h2>
-    <div class="order-summary card" id="order-summary"></div>
-    <label>Name <input type="text" id="o-name" required placeholder="Vor- und Nachname"></label>
-    <label>E-Mail <input type="email" id="o-email" required placeholder="du@example.de"></label>
-    <label>Menge
-      <select id="o-qty">
-        <option value="1">1 Stück</option>
-        <option value="2">2 Stück (Duo-Preis)</option>
-        <option value="4">4 Stück (Familien-Set)</option>
-        <option value="6">6 Stück</option>
-      </select>
-    </label>
-    <label>Anmerkung <textarea id="o-notes" rows="2" placeholder="z. B. Geschenkverpackung"></textarea></label>
-    <div class="order-total-row">Gesamt: <b id="order-total"></b> <span class="tiny">inkl. Druck &amp; Versand (D)</span></div>
-    <div class="modal-btns">
-      <button type="button" class="btn btn-ghost" id="order-cancel">Abbrechen</button>
-      <button type="submit" class="btn btn-primary" id="order-submit">Verbindlich bestellen</button>
+<!-- Warenkorb -->
+<dialog id="cart-modal">
+  <div class="cart-wrap">
+    <div class="cart-head"><h2>🛒 Warenkorb</h2><button class="btn btn-ghost" id="cart-close">✕</button></div>
+    <div id="cart-items"></div>
+    <div class="cart-totals" id="cart-totals"></div>
+    <button class="btn btn-primary btn-lg" id="cart-checkout">Zur Kasse</button>
+  </div>
+</dialog>
+
+<!-- Checkout -->
+<dialog id="checkout-modal">
+  <form id="checkout-form" class="co-wrap">
+    <h2>Kasse</h2>
+    <div class="co-summary" id="co-summary"></div>
+    <h3>Lieferadresse</h3>
+    <div class="co-grid">
+      <label>Name <input type="text" id="co-name" required placeholder="Vor- und Nachname"></label>
+      <label>E-Mail <input type="email" id="co-email" required placeholder="du@example.de"></label>
+      <label class="wide">Straße &amp; Hausnummer <input type="text" id="co-street" required></label>
+      <label>PLZ <input type="text" id="co-zip" required pattern="[0-9]{4,5}"></label>
+      <label>Ort <input type="text" id="co-city" required></label>
+      <label class="wide">Anmerkung <input type="text" id="co-note" placeholder="z. B. Geschenkverpackung (optional)"></label>
     </div>
+    <h3>Bezahlung</h3>
+    <div class="pay-rows">
+      <label class="pay-row"><input type="radio" name="pay" id="pay-vorkasse" checked>
+        <span><b>Vorkasse / Überweisung</b><br><small>Bankdaten stehen auf deiner Rechnung — Druck startet nach Zahlungseingang.</small></span></label>
+      <label class="pay-row" id="pay-paypal-row" hidden><input type="radio" name="pay" id="pay-paypal">
+        <span><b>PayPal</b><br><small>Sofort bezahlen, Druck startet direkt.</small></span></label>
+    </div>
+    <div id="paypal-buttons" hidden></div>
+    <div class="modal-btns">
+      <button type="button" class="btn btn-ghost" id="co-back">← Warenkorb</button>
+      <button type="submit" class="btn btn-primary" id="co-submit">Zahlungspflichtig bestellen</button>
+    </div>
+    <div class="tiny" id="co-progress"></div>
   </form>
 </dialog>
 
@@ -202,7 +219,8 @@
     <div class="confirm-icon">🎉</div>
     <h2>Bestellung eingegangen!</h2>
     <p>Deine Bestellnummer: <b id="confirm-id"></b></p>
-    <p class="tiny">Dein Design ist als druckfertige STL bei uns gespeichert. Du bekommst eine Bestätigung per E-Mail, sobald dein Eierbecher auf dem Druckbett liegt.</p>
+    <p><a class="btn btn-ghost" id="confirm-invoice" href="#" target="_blank">🧾 Rechnung ansehen</a></p>
+    <p class="tiny" id="confirm-pay-hint"></p>
     <button class="btn btn-primary" id="confirm-close">Super!</button>
   </div>
 </dialog>
