@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OVJU — Dein Ei. Dein Design.</title>
+  <meta name="description" content="Designe deinen eigenen Eierbecher im 3D-Konfigurator — Rippen, Spiralen, Wellen, 10 matte Farben, persönliche Gravur. 3D-gedruckt und geliefert.">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.js" } }
+  </script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <div class="logo"><span class="logo-mark">🥚</span><span id="brand-name">OVJU</span></div>
+    <nav>
+      <a href="#konfigurator">Konfigurator</a>
+      <a href="#sogehts">So geht's</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow" id="brand-tagline">Dein Ei. Dein Design.</p>
+    <h1 id="hero-headline">Der Eierbecher, den es nur einmal gibt: deiner.</h1>
+    <p class="sub" id="hero-sub"></p>
+    <button class="btn btn-primary btn-lg" id="hero-cta">Jetzt gestalten</button>
+    <div class="hero-hint">↓ Live-3D-Vorschau · STL für deinen Drucker · ab 9,90&nbsp;€</div>
+  </div>
+</section>
+
+<section id="konfigurator" class="configurator">
+  <div class="wrap config-grid">
+
+    <div class="stage">
+      <div id="loading" class="loading"><div class="egg-spin">🥚</div>Lade 3D-Studio …</div>
+      <canvas id="viewer"></canvas>
+      <div class="stage-badge" id="dim-info"></div>
+      <div class="stage-color"><span id="color-name">Elfenbein</span></div>
+    </div>
+
+    <aside class="panel">
+      <div class="panel-head">
+        <h2>Dein Design</h2>
+        <button class="btn btn-ghost" id="btn-random" title="Zufälliges Design">🎲 Überrasch mich</button>
+      </div>
+
+      <section class="ctrl">
+        <h3>Form</h3>
+        <div class="preset-row">
+          <button class="preset-btn active" data-preset="kelch">
+            <svg viewBox="0 0 40 52"><path d="M12 50h16M14 50c0-6-1-8-3-10 8-4 8-9 5-13-4-5-5-12-2-18 2-3 10-3 12 0 3 6 2 13-2 18-3 4-3 9 5 13-2 2-3 4-3 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" transform="rotate(180 20 26)"/></svg>
+            Kelch</button>
+          <button class="preset-btn" data-preset="schale">
+            <svg viewBox="0 0 40 52"><path d="M8 18c-2 10 1 22 5 26h14c4-4 7-16 5-26-3-6-21-6-24 0z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+            Schale</button>
+          <button class="preset-btn" data-preset="tulpe">
+            <svg viewBox="0 0 40 52"><path d="M10 6c6 4 14 4 20 0 2 8 0 16-6 20-2 2-2 6 1 8 2 2 2 8 0 10H15c-2-2-2-8 0-10 3-2 3-6 1-8-6-4-8-12-6-20z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+            Tulpe</button>
+        </div>
+        <label class="slider-row">
+          <span>Höhe <output id="s-height-val"></output></span>
+          <input type="range" id="s-height" min="42" max="75" step="1" value="58">
+        </label>
+        <label class="slider-row">
+          <span>Breite <output id="s-width-val"></output></span>
+          <input type="range" id="s-width" min="0.85" max="1.15" step="0.01" value="1">
+        </label>
+      </section>
+
+      <section class="ctrl">
+        <h3>Oberfläche</h3>
+        <div class="seg">
+          <button class="pattern-btn" data-pattern="glatt">Glatt</button>
+          <button class="pattern-btn" data-pattern="wellen">Wellen</button>
+          <button class="pattern-btn active" data-pattern="rippen">Rippen</button>
+        </div>
+        <div id="surface-sliders">
+          <label class="slider-row">
+            <span>Anzahl <output id="s-ribs-val"></output></span>
+            <input type="range" id="s-ribs" min="8" max="90" step="1" value="48">
+          </label>
+          <label class="slider-row">
+            <span>Tiefe <output id="s-depth-val"></output></span>
+            <input type="range" id="s-depth" min="0.2" max="1.6" step="0.1" value="0.9">
+          </label>
+          <label class="slider-row">
+            <span>Drall / Spirale <output id="s-twist-val"></output></span>
+            <input type="range" id="s-twist" min="-2" max="2" step="0.1" value="0">
+          </label>
+        </div>
+      </section>
+
+      <section class="ctrl">
+        <h3>Gravur <span class="opt">(optional)</span></h3>
+        <input type="text" id="i-text" maxlength="16" placeholder="z. B. JULIAN" autocomplete="off">
+        <label class="slider-row">
+          <span>Schriftgröße <output id="s-textsize-val"></output></span>
+          <input type="range" id="s-textsize" min="4" max="10" step="0.5" value="7">
+        </label>
+        <div class="warn" id="text-warn"></div>
+      </section>
+
+      <section class="ctrl">
+        <h3>Farbe <span class="opt">— mattes PLA</span></h3>
+        <div class="swatch-grid" id="swatches"></div>
+      </section>
+
+      <div class="panel-cta">
+        <div class="price-row">
+          <div><span class="price" id="price">9,90&nbsp;€</span><span class="price-unit">/ Stück</span></div>
+          <div class="price-hint" id="price-hint"></div>
+        </div>
+        <button class="btn btn-primary btn-lg" id="btn-order">In Auftrag geben</button>
+        <button class="btn btn-ghost" id="btn-download">⬇ STL-Datei herunterladen</button>
+        <div class="tiny">Druckfertige Datei in Millimetern — direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.</div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<section class="usps-band">
+  <div class="wrap grid3" id="usps"></div>
+</section>
+
+<section id="sogehts" class="steps-band">
+  <div class="wrap">
+    <h2 class="section-title">So geht's</h2>
+    <div class="grid3" id="steps"></div>
+  </div>
+</section>
+
+<section id="faq" class="faq-band">
+  <div class="wrap narrow">
+    <h2 class="section-title">Häufige Fragen</h2>
+    <div id="faq-list"></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="logo"><span class="logo-mark">🥚</span><span id="footer-brand">OVJU</span></div>
+    <p id="footer-text"></p>
+  </div>
+</footer>
+
+<!-- Bestell-Dialog -->
+<dialog id="order-modal">
+  <form id="order-form" method="dialog">
+    <h2>Bestellung</h2>
+    <div class="order-summary card" id="order-summary"></div>
+    <label>Name <input type="text" id="o-name" required placeholder="Vor- und Nachname"></label>
+    <label>E-Mail <input type="email" id="o-email" required placeholder="du@example.de"></label>
+    <label>Menge
+      <select id="o-qty">
+        <option value="1">1 Stück</option>
+        <option value="2">2 Stück (Duo-Preis)</option>
+        <option value="4">4 Stück (Familien-Set)</option>
+        <option value="6">6 Stück</option>
+      </select>
+    </label>
+    <label>Anmerkung <textarea id="o-notes" rows="2" placeholder="z. B. Geschenkverpackung"></textarea></label>
+    <div class="order-total-row">Gesamt: <b id="order-total"></b> <span class="tiny">inkl. Druck &amp; Versand (D)</span></div>
+    <div class="modal-btns">
+      <button type="button" class="btn btn-ghost" id="order-cancel">Abbrechen</button>
+      <button type="submit" class="btn btn-primary" id="order-submit">Verbindlich bestellen</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Bestätigung -->
+<dialog id="confirm-modal">
+  <div class="confirm">
+    <div class="confirm-icon">🎉</div>
+    <h2>Bestellung eingegangen!</h2>
+    <p>Deine Bestellnummer: <b id="confirm-id"></b></p>
+    <p class="tiny">Dein Design ist als druckfertige STL bei uns gespeichert. Du bekommst eine Bestätigung per E-Mail, sobald dein Eierbecher auf dem Druckbett liegt.</p>
+    <button class="btn btn-primary" id="confirm-close">Super!</button>
+  </div>
+</dialog>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+{
+  "brand": {
+    "name": "OVJU",
+    "tagline": "Dein Ei. Dein Design."
+  },
+  "hero": {
+    "headline": "Der Eierbecher, den es nur einmal gibt: deiner.",
+    "subheadline": "Gestalte deinen Eierbecher im 3D-Konfigurator – Rippen, Spiralen, Wellen, zehn matte Farben und deine persönliche Gravur. Wir drucken ihn für dich und liefern ihn direkt an deinen Frühstückstisch.",
+    "cta": "Jetzt gestalten"
+  },
+  "usps": [
+    {
+      "icon": "🎨",
+      "title": "Design in Echtzeit",
+      "text": "Forme deinen Eierbecher live im 3D-Konfigurator: Oberfläche, Farbe und Gravur – du siehst sofort, was du bekommst."
+    },
+    {
+      "icon": "🌿",
+      "title": "Nachhaltig gedruckt",
+      "text": "Gedruckt aus PLA auf Pflanzenbasis, on demand statt auf Lager. Keine Überproduktion, kein Wegwerf-Plastik-Gefühl – nur dein Stück."
+    },
+    {
+      "icon": "✨",
+      "title": "Skandinavisch matt",
+      "text": "Feine Riffelung, samtmatte Oberfläche, klare Formen. Sieht nach Designladen aus – kommt aber aus deinem Kopf."
+    }
+  ],
+  "steps": [
+    {
+      "num": 1,
+      "title": "Designen",
+      "text": "Wähle Form, Oberflächenstruktur und Farbe im 3D-Konfigurator. Füge auf Wunsch einen Namen oder eine kurze Gravur hinzu."
+    },
+    {
+      "num": 2,
+      "title": "Bestellen",
+      "text": "Leg dein Design in den Warenkorb – einzeln, im Duo oder als 4er-Familienset. Bezahlt ist in unter einer Minute."
+    },
+    {
+      "num": 3,
+      "title": "Gedruckt geliefert",
+      "text": "Wir drucken deinen Eierbecher Schicht für Schicht in matter Qualität und schicken ihn dir innerhalb weniger Tage nach Hause."
+    }
+  ],
+  "faq": [
+    {
+      "q": "Ist der Eierbecher lebensmittelecht und spülmaschinenfest?",
+      "a": "Der Eierbecher kommt nur mit der Eierschale in Kontakt und ist dafür bestens geeignet. Bitte per Hand mit lauwarmem Wasser spülen – PLA mag keine Spülmaschine und keine Hitze über 50 °C."
+    },
+    {
+      "q": "Wie lange dauert es, bis mein Eierbecher ankommt?",
+      "a": "Jeder Eierbecher wird erst nach deiner Bestellung gedruckt. In der Regel geht dein Paket innerhalb von 2–4 Werktagen raus und ist nach 3–6 Werktagen bei dir."
+    },
+    {
+      "q": "Kann ich einen Namen oder Text gravieren lassen?",
+      "a": "Ja! Im Konfigurator kannst du einen Namen oder kurzen Text direkt ins Design einarbeiten – erhaben oder vertieft. Perfekt für Familien-Sets oder als persönliches Geschenk."
+    },
+    {
+      "q": "Aus welchem Material wird gedruckt?",
+      "a": "Wir drucken mit hochwertigem, mattem PLA – einem Biokunststoff auf Pflanzenbasis (z. B. Maisstärke). Die matte Oberfläche fühlt sich samtig an und versteckt Druckschichten fast vollständig."
+    },
+    {
+      "q": "Was ist, wenn mir mein Eierbecher nicht gefällt oder er beschädigt ankommt?",
+      "a": "Kommt dein Eierbecher beschädigt an, drucken wir kostenlos einen neuen. Da jedes Stück ein Unikat nach deinem Design ist, ist ein klassischer Umtausch ausgeschlossen – melde dich aber einfach, wir finden immer eine Lösung."
+    }
+  ],
+  "colors": [
+    { "id": "elfenbein", "name": "Elfenbein", "hex": "#efe9dc" },
+    { "id": "graphit", "name": "Graphit", "hex": "#3a3b3c" },
+    { "id": "salbei", "name": "Salbei", "hex": "#9caf88" },
+    { "id": "terrakotta", "name": "Terrakotta", "hex": "#c86f4a" },
+    { "id": "mokka", "name": "Mokka", "hex": "#8a6f57" },
+    { "id": "sand", "name": "Sand", "hex": "#d9c7a7" },
+    { "id": "staubblau", "name": "Staubblau", "hex": "#7d9bb0" },
+    { "id": "senf", "name": "Senf", "hex": "#d4a940" },
+    { "id": "lavendel", "name": "Lavendel", "hex": "#a58fb8" },
+    { "id": "kirschrot", "name": "Kirschrot", "hex": "#a8383e" }
+  ],
+  "footer": {
+    "text": "OVJU – individuell designte Eierbecher, 3D-gedruckt in Deutschland. Mit Liebe entworfen von dir, Schicht für Schicht gedruckt von uns."
+  },
+  "pricing": {
+    "single": 9.90,
+    "duo": 17.90,
+    "family4": 29.90,
+    "currency": "EUR"
+  }
+}

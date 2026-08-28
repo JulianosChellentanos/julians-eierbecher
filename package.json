@@ -1,0 +1,12 @@
+{
+  "name": "julians-eierbecher",
+  "version": "1.0.0",
+  "description": "OVJU — individuell designbare 3D-gedruckte Eierbecher: 3D-Konfigurator, STL-Export, Bestellsystem",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node tools/generate-stl.mjs /tmp/ovju-check.stl && node tools/check-stl.mjs /tmp/ovju-check.stl",
+    "setup": "mkdir -p node_modules/three && ln -sf \"$(pwd)/public/vendor/three.module.js\" node_modules/three/three.module.js && printf '{\"name\":\"three\",\"version\":\"0.160.0\",\"type\":\"module\",\"exports\":\"./three.module.js\"}' > node_modules/three/package.json"
+  },
+  "license": "MIT"
+}
