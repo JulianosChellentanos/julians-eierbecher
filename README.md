@@ -18,7 +18,12 @@
 - **Untersetzer-Extra** (+4,90 €): Schale mit Sitz-Mulde für den Becher, fängt Eierschalen auf; wandert als zweites Teil mit in die STL (nebeneinander auf dem Bett)
 - **STL-Export** direkt im Browser: binär, Millimeter, **wasserdicht/manifold** — slicebar in Bambu Studio, PrusaSlicer & Co.
 - **Shop-System**: Warenkorb mit konfigurierbaren **Mengenrabatten** (gleiches Design mehrfach → z. B. −35 % ab 4 Stück), Checkout mit Lieferadresse, **Rechnungserstellung** (Firmendaten, § 19 UStG oder USt, fortlaufende Nummern), Vorkasse + **PayPal-Anbindung** (REST, Sandbox/Live — nur Zugangsdaten eintragen)
-- **Admin** (`/admin`, Standard-Passwort `ovju-admin` — bitte ändern!): Bestellübersicht mit Status-Workflow (neu → bezahlt → im-druck → versendet), STL- & Rechnungs-Downloads, Einstellungen für Preise/Rabatte/Versand/Firma/PayPal — gespeichert in `data/settings.json` (nicht im Git)
+- **Admin-Zentrale** (`/admin`, Standard-Passwort `ovju-admin` — bitte ändern!):
+  - 📊 Dashboard: Umsatz (gesamt/30 Tage), offene Drucke, Ø Bestellwert, meistbestellte Farben & Produkte
+  - 📦 Bestellungen: Suche & Status-Filter, aufklappbare Details, Sendungsnummer, interne Notizen, E-Mail-Vorlagen (Zahlungserinnerung/Druckstart/Versand), CSV-Export
+  - 🎨 Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
+  - 💰 Preise & Mengenrabatt-Stufen, 🎟️ Gutscheine (%- oder €-Codes, Mindestbestellwert)
+  - 🏢 Firma (Rechnungsdaten), 💙 PayPal, ⚙️ Passwort & JSON-Backup — alles in `data/settings.json` (nicht im Git)
 - Kein Build-Schritt, keine Runtime-Dependencies — alles lokal gevendort (Three.js, Fonts)
 
 ## Starten

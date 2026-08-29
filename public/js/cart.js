@@ -140,15 +140,50 @@ function renderCart() {
 // Checkout
 // ---------------------------------------------------------------------------
 let paypalReady = false;
-function openCheckout() {
-  $('#cart-modal').close();
+let coupon = null; // { code, off } — vom Server bestätigt
+
+function checkoutTotals() {
   const t = totals();
+  if (!coupon) return t;
+  const after = Math.round((t.subtotal - coupon.off) * 100) / 100;
+  const shipping = after >= pricing.shipping.freeFrom ? 0 : pricing.shipping.flat;
+  return { ...t, shipping, total: Math.round((after + shipping) * 100) / 100 };
+}
+
+function renderCheckoutSummary() {
+  const t = checkoutTotals();
   $('#co-summary').innerHTML = cart.map((it) => {
     const { off, line } = linePrice(it);
     return `<div><span>${it.qty}× ${itemTitle(it)}${off ? ` <em>(−${off} %)</em>` : ''}</span><b>${fmt(line)}</b></div>`;
   }).join('') + `
+    ${coupon ? `<div><span>🎟️ Gutschein „${coupon.code}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
     <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>`;
+}
+
+async function applyCoupon() {
+  const code = $('#co-coupon').value.trim();
+  const msg = $('#co-coupon-msg');
+  if (!code) { coupon = null; msg.textContent = ''; renderCheckoutSummary(); return; }
+  const r = await (await fetch('/api/quote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items: cartPayload(), couponCode: code }),
+  })).json();
+  if (r.coupon) {
+    coupon = { code: r.coupon.code, off: r.coupon.off };
+    msg.textContent = `✅ Gutschein „${r.coupon.code}“ eingelöst: −${fmt(r.coupon.off)}`;
+    msg.className = 'tiny ok-msg';
+  } else {
+    coupon = null;
+    msg.textContent = '❌ Code ungültig oder Mindestbestellwert nicht erreicht.';
+    msg.className = 'tiny warn-msg';
+  }
+  renderCheckoutSummary();
+}
+
+function openCheckout() {
+  $('#cart-modal').close();
+  renderCheckoutSummary();
   const pp = pricing.paypal?.enabled;
   $('#pay-paypal-row').hidden = !pp;
   if (!pp) $('#pay-vorkasse').checked = true;
@@ -165,7 +200,7 @@ function setupPayPal() {
       createOrder: async () => {
         const r = await (await fetch('/api/paypal/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: cartPayload() }),
+          body: JSON.stringify({ items: cartPayload(), couponCode: coupon?.code || null }),
         })).json();
         if (!r.ok) throw new Error(r.error);
         return r.id;
@@ -200,7 +235,7 @@ async function submitOrder(payment, paypalOrderId = null) {
     };
     const r = await (await fetch('/api/checkout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customer, items: cartPayload(), payment, paypalOrderId }),
+      body: JSON.stringify({ customer, items: cartPayload(), payment, paypalOrderId, couponCode: coupon?.code || null }),
     })).json();
     if (!r.ok) throw new Error(r.error);
 
@@ -218,6 +253,9 @@ async function submitOrder(payment, paypalOrderId = null) {
     const done = await (await fetch(`/api/order/${r.orderId}/complete`, { method: 'POST' })).json();
 
     cart = [];
+    coupon = null;
+    $('#co-coupon').value = '';
+    $('#co-coupon-msg').textContent = '';
     saveCart();
     $('#checkout-modal').close();
     $('#confirm-id').textContent = r.orderId;
@@ -243,6 +281,7 @@ export async function initCart() {
   $('#cart-close').addEventListener('click', () => $('#cart-modal').close());
   $('#cart-checkout').addEventListener('click', openCheckout);
   $('#co-back').addEventListener('click', () => { $('#checkout-modal').close(); openCart(); });
+  $('#co-coupon-btn').addEventListener('click', applyCoupon);
   $('#checkout-form').addEventListener('submit', (e) => {
     e.preventDefault();
     submitOrder('vorkasse');

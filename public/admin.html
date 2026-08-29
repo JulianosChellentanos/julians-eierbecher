@@ -4,31 +4,50 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OVJU Admin</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>">
 <style>
-  :root{--bg:#f4efe7;--card:#fbf8f2;--ink:#211d18;--soft:#6b6257;--line:#ddd3c3;--acc:#a8563a}
+  :root{--bg:#f4efe7;--card:#fbf8f2;--ink:#211d18;--soft:#6b6257;--line:#ddd3c3;--acc:#a8563a;--green:#3c7a3c}
   *{box-sizing:border-box;margin:0}
-  body{font-family:system-ui;background:var(--bg);color:var(--ink);padding:34px 22px;max-width:1180px;margin:0 auto}
-  h1{font-size:1.5rem;margin-bottom:4px} h2{font-size:1.1rem;margin:26px 0 12px}
+  body{font-family:system-ui;background:var(--bg);color:var(--ink);padding:30px 22px;max-width:1240px;margin:0 auto}
+  h1{font-size:1.5rem;margin-bottom:4px} h2{font-size:1.08rem;margin:0 0 14px} h3{font-size:.95rem;margin:16px 0 8px}
   .muted{color:var(--soft);font-size:.88rem}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-top:14px}
   table{width:100%;border-collapse:collapse}
-  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #eee5d5;vertical-align:top;font-size:.9rem}
-  th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)}
-  input,select{padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font:inherit;background:#fff;max-width:100%}
-  input[type=number]{width:90px} input[type=text],input[type=email],input[type=password]{width:220px}
-  button{padding:9px 18px;border-radius:999px;border:none;background:var(--ink);color:var(--bg);font-weight:600;cursor:pointer;font-size:.9rem}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid #eee5d5;vertical-align:top;font-size:.88rem}
+  th{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)}
+  input,select,textarea{padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font:inherit;background:#fff;max-width:100%}
+  input[type=number]{width:88px} input[type=color]{padding:2px;width:44px;height:36px;cursor:pointer}
+  textarea{width:100%;resize:vertical}
+  button{padding:9px 18px;border-radius:999px;border:none;background:var(--ink);color:var(--bg);font-weight:600;cursor:pointer;font-size:.88rem}
   button.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+  button.mini{padding:5px 12px;font-size:.78rem}
   a{color:var(--acc);font-weight:600;text-decoration:none} a:hover{text-decoration:underline}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
-  label{display:flex;flex-direction:column;gap:4px;font-size:.8rem;font-weight:600;color:var(--soft)}
-  .tabs{display:flex;gap:8px;margin-top:18px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  label{display:flex;flex-direction:column;gap:4px;font-size:.78rem;font-weight:600;color:var(--soft)}
+  label.inline{flex-direction:row;align-items:center;gap:8px}
+  .tabs{display:flex;gap:6px;margin-top:18px;flex-wrap:wrap}
   .tabs button{background:transparent;color:var(--soft);border:1.5px solid var(--line)}
   .tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-  .tier{display:flex;gap:8px;align-items:center;margin-bottom:6px}
-  .ok{color:#3c7a3c;font-weight:600} .warn{color:var(--acc)} .badge{font-size:.72rem;padding:2px 9px;border-radius:99px;border:1px solid var(--line)}
+  .ok{color:var(--green);font-weight:600} .warn{color:var(--acc)}
+  .badge{font-size:.7rem;padding:2px 9px;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
+  .badge.st-neu{background:#fff3d6}.badge.st-bezahlt{background:#e3f0e3}.badge.st-im-druck{background:#e3ecf6}.badge.st-versendet{background:#eee}.badge.st-storniert{background:#f6e3e3}
   #login{max-width:380px;margin:80px auto;text-align:center}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   small.h{color:var(--soft);font-weight:400}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .kpi b{font-size:1.5rem;display:block} .kpi span{font-size:.76rem;color:var(--soft);text-transform:uppercase;letter-spacing:.05em}
+  .bar{height:8px;border-radius:5px;background:var(--acc);min-width:3px}
+  .toplist div{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:.85rem}
+  .toplist span.n{min-width:110px}
+  .sw{width:22px;height:22px;border-radius:50%;border:1px solid rgba(0,0,0,.15);display:inline-block;vertical-align:middle}
+  .order-detail{background:#f8f3ea;border-radius:10px;padding:14px 16px;margin:4px 0 10px}
+  .order-detail .grid{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  tr.o-row{cursor:pointer} tr.o-row:hover td{background:#f8f3ea}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .filters input[type=text]{flex:1;min-width:200px}
+  .save-bar{position:sticky;bottom:0;background:var(--bg);padding:14px 0;display:flex;gap:14px;align-items:center}
+  .save-bar[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -36,27 +55,61 @@
   <h1>🥚 OVJU Admin</h1>
   <p class="muted" style="margin:10px 0 16px">Bitte Admin-Passwort eingeben</p>
   <div class="row" style="justify-content:center">
-    <input type="password" id="pw" placeholder="Passwort">
+    <input type="password" id="pw" placeholder="Passwort" onkeydown="if(event.key==='Enter')login()">
     <button onclick="login()">Anmelden</button>
   </div>
   <p id="login-err" class="warn" style="margin-top:10px"></p>
 </div>
 
 <div id="app" hidden>
-  <div style="display:flex;justify-content:space-between;align-items:center">
-    <div><h1>🥚 OVJU Admin</h1><div class="muted" id="stats"></div></div>
-    <button class="ghost" onclick="logout()">Abmelden</button>
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div><h1>🥚 OVJU Admin</h1><div class="muted" id="subline"></div></div>
+    <div class="row">
+      <button class="ghost mini" onclick="downloadCSV()">⬇ CSV-Export</button>
+      <button class="ghost mini" onclick="downloadBackup()">💾 Backup</button>
+      <button class="ghost mini" onclick="logout()">Abmelden</button>
+    </div>
   </div>
-  <div class="tabs">
-    <button id="tab-orders" class="on" onclick="showTab('orders')">📦 Bestellungen</button>
-    <button id="tab-settings" onclick="showTab('settings')">⚙️ Einstellungen</button>
+  <div class="tabs" id="tabs"></div>
+
+  <!-- 📊 Dashboard -->
+  <div id="pane-dash">
+    <div class="kpis" id="kpis"></div>
+    <div class="row" style="align-items:stretch">
+      <div class="card" style="flex:1;min-width:260px"><h2>🎨 Meistbestellte Farben</h2><div class="toplist" id="top-colors"></div></div>
+      <div class="card" style="flex:1;min-width:260px"><h2>🏺 Produkte</h2><div class="toplist" id="top-products"></div></div>
+      <div class="card" style="flex:1.4;min-width:300px"><h2>🕑 Letzte Bestellungen</h2><div id="recent"></div></div>
+    </div>
   </div>
 
-  <div id="pane-orders"></div>
-
-  <div id="pane-settings" hidden>
+  <!-- 📦 Bestellungen -->
+  <div id="pane-orders" hidden>
     <div class="card">
-      <h2 style="margin-top:0">💰 Preise</h2>
+      <div class="filters">
+        <input type="text" id="f-search" placeholder="🔍 Suche: Name, E-Mail, Bestell-/Rechnungsnummer …" oninput="renderOrders()">
+        <select id="f-status" onchange="renderOrders()">
+          <option value="">Alle Status</option>
+          <option>neu</option><option>bezahlt</option><option>im-druck</option><option>versendet</option><option>storniert</option>
+        </select>
+      </div>
+      <div style="overflow-x:auto"><table id="orders-table"></table></div>
+    </div>
+  </div>
+
+  <!-- 🎨 Farben -->
+  <div id="pane-colors" hidden>
+    <div class="card">
+      <h2>🎨 Filament-Farben <small class="h">— was hier aktiv ist, können Kunden im Konfigurator wählen</small></h2>
+      <p class="muted" style="margin-bottom:12px">Neues Filament gekauft? Farbe anlegen. Rolle leer? Haken raus (Farbe verschwindet sofort aus dem Shop) oder ganz löschen.</p>
+      <table id="colors-table"></table>
+      <button class="ghost" style="margin-top:12px" onclick="addColor()">+ Farbe hinzufügen</button>
+    </div>
+  </div>
+
+  <!-- 💰 Preise -->
+  <div id="pane-pricing" hidden>
+    <div class="card">
+      <h2>💰 Preise</h2>
       <div class="grid">
         <label>Eierbecher (€/Stück)<input type="number" step="0.1" id="s-egg-single"></label>
         <label>Untersetzer (€/Stück)<input type="number" step="0.1" id="s-egg-saucer"></label>
@@ -64,20 +117,28 @@
         <label>Versand pauschal (€)<input type="number" step="0.1" id="s-ship-flat"></label>
         <label>Versandfrei ab (€)<input type="number" step="1" id="s-ship-free"></label>
       </div>
-      <h2>🏷️ Mengenrabatte <small class="h">— gleicher Artikel mehrfach bestellt</small></h2>
+      <h3>🏷️ Mengenrabatte <small class="h">— gleicher Artikel mehrfach</small></h3>
       <div class="row" style="align-items:flex-start;gap:40px">
-        <div><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost" onclick="addTier('egg')">+ Stufe</button></div>
-        <div><b>Vasen</b><div id="tiers-vase"></div><button class="ghost" onclick="addTier('vase')">+ Stufe</button></div>
+        <div><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost mini" onclick="addTier('egg')">+ Stufe</button></div>
+        <div><b>Vasen</b><div id="tiers-vase"></div><button class="ghost mini" onclick="addTier('vase')">+ Stufe</button></div>
       </div>
     </div>
-
     <div class="card">
-      <h2 style="margin-top:0">🏢 Mein Unternehmen <small class="h">— erscheint auf jeder Rechnung</small></h2>
+      <h2>🎟️ Gutscheine</h2>
+      <table id="coupons-table"></table>
+      <button class="ghost" style="margin-top:12px" onclick="addCoupon()">+ Gutschein anlegen</button>
+    </div>
+  </div>
+
+  <!-- 🏢 Firma -->
+  <div id="pane-company" hidden>
+    <div class="card">
+      <h2>🏢 Mein Unternehmen <small class="h">— erscheint auf jeder Rechnung</small></h2>
       <div class="grid">
         <label>Firmenname<input id="c-name"></label>
         <label>Inhaber:in<input id="c-owner"></label>
         <label>Straße &amp; Nr.<input id="c-street"></label>
-        <label>PLZ<input id="c-zip" style="width:90px"></label>
+        <label>PLZ<input id="c-zip" style="width:100px"></label>
         <label>Ort<input id="c-city"></label>
         <label>E-Mail<input id="c-email"></label>
         <label>Telefon (optional)<input id="c-phone"></label>
@@ -85,39 +146,54 @@
         <label>IBAN (für Vorkasse)<input id="c-iban"></label>
         <label>BIC<input id="c-bic"></label>
         <label>Bank<input id="c-bank"></label>
-        <label>Rechnungs-Präfix<input id="c-prefix" style="width:130px"></label>
+        <label>Rechnungs-Präfix<input id="c-prefix" style="width:140px"></label>
       </div>
-      <label style="flex-direction:row;align-items:center;gap:8px;margin-top:12px">
-        <input type="checkbox" id="c-klein" style="width:auto"> Kleinunternehmer nach § 19 UStG (keine USt ausweisen)
-      </label>
+      <label class="inline" style="margin-top:12px"><input type="checkbox" id="c-klein" style="width:auto"> Kleinunternehmer nach § 19 UStG (keine USt ausweisen)</label>
     </div>
+  </div>
 
+  <!-- 💙 PayPal -->
+  <div id="pane-paypal" hidden>
     <div class="card">
-      <h2 style="margin-top:0">💙 PayPal <small class="h">— Zugangsdaten aus dem PayPal-Developer-Dashboard (REST-App)</small></h2>
+      <h2>💙 PayPal <small class="h">— REST-App-Zugangsdaten aus dem <a href="https://developer.paypal.com" target="_blank">PayPal-Developer-Dashboard</a></small></h2>
       <div class="grid">
-        <label>Client-ID<input id="pp-id" style="width:100%"></label>
-        <label>Secret<input type="password" id="pp-secret" style="width:100%"></label>
+        <label>Client-ID<input id="pp-id"></label>
+        <label>Secret<input type="password" id="pp-secret"></label>
       </div>
       <div class="row" style="margin-top:12px">
-        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="pp-enabled" style="width:auto"> PayPal im Checkout anbieten</label>
-        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="pp-sandbox" style="width:auto"> Sandbox-Modus (Testzahlungen)</label>
+        <label class="inline"><input type="checkbox" id="pp-enabled" style="width:auto"> PayPal im Checkout anbieten</label>
+        <label class="inline"><input type="checkbox" id="pp-sandbox" style="width:auto"> Sandbox-Modus (Testzahlungen)</label>
       </div>
     </div>
+  </div>
 
+  <!-- ⚙️ System -->
+  <div id="pane-system" hidden>
     <div class="card">
-      <h2 style="margin-top:0">🔐 Admin-Passwort</h2>
-      <label>Neues Passwort (leer = unverändert)<input type="password" id="s-adminkey" placeholder="••••••"></label>
+      <h2>🔐 Admin-Passwort</h2>
+      <label>Neues Passwort (leer = unverändert)<input type="password" id="s-adminkey" placeholder="••••••" style="max-width:260px"></label>
     </div>
+    <div class="card">
+      <h2>💾 Datensicherung</h2>
+      <p class="muted">Backup lädt Einstellungen + alle Bestelldaten als JSON herunter. Die STL-Dateien liegen auf dem Server unter <code>orders/</code>.</p>
+      <button class="ghost" style="margin-top:10px" onclick="downloadBackup()">💾 Backup herunterladen</button>
+      <button class="ghost" style="margin-top:10px" onclick="downloadCSV()">⬇ Bestellungen als CSV</button>
+    </div>
+  </div>
 
-    <div style="margin:20px 0"><button onclick="saveSettings()">💾 Einstellungen speichern</button> <span id="save-msg" class="ok"></span></div>
+  <div class="save-bar" id="save-bar" hidden>
+    <button onclick="saveSettings()">💾 Einstellungen speichern</button><span id="save-msg" class="ok"></span>
   </div>
 </div>
 
 <script>
 const KEY = () => localStorage.getItem('ovju-admin-key') || '';
 let DATA = null;
+let tiers = { egg: [], vase: [] };
+let colors = [];
+let coupons = [];
 const $ = (s) => document.querySelector(s);
-const money = (v) => v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+const money = (v) => (v ?? 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 async function api(path, opts = {}) {
@@ -131,54 +207,186 @@ async function login() {
   try { await load(); } catch { $('#login-err').textContent = 'Falsches Passwort'; }
 }
 function logout() { localStorage.removeItem('ovju-admin-key'); showLogin(); }
+
+const TABS = [
+  ['dash', '📊 Dashboard'], ['orders', '📦 Bestellungen'], ['colors', '🎨 Farben'],
+  ['pricing', '💰 Preise & Gutscheine'], ['company', '🏢 Firma'], ['paypal', '💙 PayPal'], ['system', '⚙️ System'],
+];
+const SETTINGS_TABS = ['colors', 'pricing', 'company', 'paypal', 'system'];
+function renderTabs() {
+  $('#tabs').innerHTML = TABS.map(([id, l]) => `<button id="tab-${id}" onclick="showTab('${id}')">${l}</button>`).join('');
+}
 function showTab(t) {
-  $('#pane-orders').hidden = t !== 'orders';
-  $('#pane-settings').hidden = t !== 'settings';
-  $('#tab-orders').classList.toggle('on', t === 'orders');
-  $('#tab-settings').classList.toggle('on', t === 'settings');
+  for (const [id] of TABS) {
+    $(`#pane-${id}`).hidden = id !== t;
+    $(`#tab-${id}`).classList.toggle('on', id === t);
+  }
+  $('#save-bar').hidden = !SETTINGS_TABS.includes(t);
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+function renderDash() {
+  const orders = DATA.orders.filter(o => o.status !== 'storniert');
+  const now = Date.now(), d30 = 30 * 864e5;
+  const rev = orders.reduce((s, o) => s + (o.total || 0), 0);
+  const rev30 = orders.filter(o => now - new Date(o.createdAt) < d30).reduce((s, o) => s + (o.total || 0), 0);
+  const open = DATA.orders.filter(o => ['neu', 'bezahlt', 'im-druck'].includes(o.status || 'neu')).length;
+  const pieces = orders.flatMap(o => o.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
+  const avg = orders.length ? rev / orders.length : 0;
+  $('#kpis').innerHTML = `
+    <div class="kpi"><span>Umsatz gesamt</span><b>${money(rev)}</b></div>
+    <div class="kpi"><span>Umsatz 30 Tage</span><b>${money(rev30)}</b></div>
+    <div class="kpi"><span>Bestellungen</span><b>${DATA.orders.length}</b></div>
+    <div class="kpi"><span>Offen / zu drucken</span><b>${open}</b></div>
+    <div class="kpi"><span>Ø Bestellwert</span><b>${money(avg)}</b></div>
+    <div class="kpi"><span>Gedruckte Stücke</span><b>${pieces}</b></div>`;
+  $('#subline').textContent = `${DATA.orders.length} Bestellungen · ${open} offen · ${money(rev)} Umsatz`;
+
+  const count = (fn) => {
+    const m = {};
+    for (const o of orders) for (const l of (o.lines || [])) { const k = fn(l); if (k) m[k] = (m[k] || 0) + l.qty; }
+    return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  };
+  const toplist = (entries) => {
+    const max = entries[0]?.[1] || 1;
+    return entries.map(([n, c]) => `<div><span class="n">${esc(n)}</span><div class="bar" style="width:${Math.round(c / max * 130)}px"></div><b>${c}</b></div>`).join('') || '<p class="muted">Noch keine Daten.</p>';
+  };
+  $('#top-colors').innerHTML = toplist(count(l => l.colorName));
+  $('#top-products').innerHTML = toplist(count(l => l.product === 'vase' ? 'Vase' : 'Eierbecher'));
+  $('#recent').innerHTML = DATA.orders.slice(0, 5).map(o => `
+    <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee5d5;font-size:.85rem">
+      <span><b>${o.orderId}</b> · ${esc(o.customer?.name || o.name || '')}</span>
+      <span>${o.total ? money(o.total) : '—'} <span class="badge st-${o.status || 'neu'}">${o.status || 'neu'}</span></span>
+    </div>`).join('') || '<p class="muted">Noch keine Bestellungen.</p>';
+}
+
+// ---------------------------------------------------------------------------
+// Bestellungen
+// ---------------------------------------------------------------------------
 const STATI = ['neu', 'bezahlt', 'im-druck', 'versendet', 'storniert'];
-function renderOrders() {
-  const orders = DATA.orders;
-  const open = orders.filter(o => !['versendet','storniert'].includes(o.status || 'neu')).length;
-  const rev = orders.filter(o => o.status !== 'storniert').reduce((s, o) => s + (o.total || 0), 0);
-  $('#stats').textContent = `${orders.length} Bestellungen · ${open} offen · Umsatz ${money(rev)}`;
-  const rows = orders.map(o => {
-    const lines = (o.lines || []).map((l, i) =>
-      `<div>${l.qty}× ${esc(l.product)} ${l.off ? `<span class="badge">−${l.off}%</span>` : ''} ${esc((l.config||{}).text ? '„'+(l.config.text)+'“' : '')}
-       — <a href="/orders/${o.orderId}/${encodeURIComponent(l.stlFile)}" download>⬇ STL</a></div>`).join('');
-    const legacy = !o.lines && o.stlFile ? `<a href="/orders/${o.orderId}/${encodeURIComponent(o.stlFile)}" download>⬇ STL (Alt-Format)</a>` : '';
-    return `<tr>
-      <td><b>${o.orderId}</b><br><small class="muted">${new Date(o.createdAt).toLocaleString('de-DE')}</small>
-        ${o.invoiceNo ? `<br><a href="/orders/${o.orderId}/rechnung.html" target="_blank">🧾 ${esc(o.invoiceNo)}</a>` : ''}</td>
-      <td>${esc(o.customer?.name || o.name || '')}<br><small class="muted">${esc(o.customer?.email || o.email || '')}</small>
-        ${o.customer?.street ? `<br><small class="muted">${esc(o.customer.street)}, ${esc(o.customer.zip)} ${esc(o.customer.city)}</small>` : ''}</td>
-      <td>${lines}${legacy}</td>
-      <td>${o.total ? money(o.total) : '—'}<br><small class="muted">${esc(o.payment || '')} ${o.paymentStatus === 'bezahlt' ? '✅' : ''}</small></td>
-      <td><select onchange="setStatus('${o.orderId}', this.value)">
-        ${STATI.map(s => `<option ${((o.status||'neu')===s)?'selected':''}>${s}</option>`).join('')}</select></td>
-    </tr>`;
-  }).join('');
-  $('#pane-orders').innerHTML = `<div class="card" style="overflow-x:auto"><table>
-    <tr><th>Bestellung</th><th>Kunde</th><th>Positionen</th><th>Summe</th><th>Status</th></tr>${rows ||
-    '<tr><td colspan="5" class="muted">Noch keine Bestellungen.</td></tr>'}</table></div>`;
+let openDetail = null;
+function lineLabel(l) {
+  const c = l.config || {};
+  return `${l.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${c.pattern || ''} · ${c.height} mm · ${esc(l.colorName || '')}` +
+    (c.text ? ` · Gravur „${esc(c.text)}“` : '') + (l.saucer ? ' · 🍽️ Untersetzer' : '');
 }
-async function setStatus(orderId, status) {
-  await api('/api/admin/order-status', { method: 'POST', body: JSON.stringify({ orderId, status }) });
+function renderOrders() {
+  const q = ($('#f-search').value || '').toLowerCase();
+  const st = $('#f-status').value;
+  const list = DATA.orders.filter(o => {
+    if (st && (o.status || 'neu') !== st) return false;
+    if (!q) return true;
+    return JSON.stringify([o.orderId, o.invoiceNo, o.customer?.name, o.customer?.email, o.customer?.city, o.name, o.email]).toLowerCase().includes(q);
+  });
+  $('#orders-table').innerHTML = `<tr><th>Bestellung</th><th>Kunde</th><th>Summe</th><th>Zahlung</th><th>Status</th></tr>` +
+    (list.map(o => {
+      const detail = openDetail === o.orderId ? `<tr><td colspan="5"><div class="order-detail">${orderDetail(o)}</div></td></tr>` : '';
+      return `<tr class="o-row" onclick="toggleDetail('${o.orderId}')">
+        <td><b>${o.orderId}</b><br><small class="muted">${new Date(o.createdAt).toLocaleString('de-DE')}</small>
+          ${o.invoiceNo ? `<br><a href="/orders/${o.orderId}/rechnung.html" target="_blank" onclick="event.stopPropagation()">🧾 ${esc(o.invoiceNo)}</a>` : ''}</td>
+        <td>${esc(o.customer?.name || o.name || '')}<br><small class="muted">${esc(o.customer?.email || o.email || '')}</small></td>
+        <td>${o.total ? money(o.total) : '—'}${o.coupon ? `<br><small class="muted">🎟️ ${esc(o.coupon.code)}</small>` : ''}</td>
+        <td><small>${esc(o.payment || '—')}</small> ${o.paymentStatus === 'bezahlt' ? '✅' : ''}</td>
+        <td><span class="badge st-${o.status || 'neu'}">${o.status || 'neu'}</span>${o.trackingNo ? `<br><small class="muted">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
+      </tr>${detail}`;
+    }).join('') || '<tr><td colspan="5" class="muted">Keine Treffer.</td></tr>');
+}
+function toggleDetail(id) {
+  openDetail = openDetail === id ? null : id;
+  renderOrders();
+}
+function orderDetail(o) {
+  const mail = (subject, body) =>
+    `mailto:${encodeURIComponent(o.customer?.email || o.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const name = (o.customer?.name || o.name || '').split(' ')[0];
+  const lines = (o.lines || []).map(l => `<div>• ${l.qty}× ${lineLabel(l)} ${l.off ? `<span class="badge">−${l.off} %</span>` : ''}
+    — <a href="/orders/${o.orderId}/${encodeURIComponent(l.stlFile)}" download onclick="event.stopPropagation()">⬇ STL</a></div>`).join('')
+    || (o.stlFile ? `<a href="/orders/${o.orderId}/${encodeURIComponent(o.stlFile)}" download onclick="event.stopPropagation()">⬇ STL (Alt-Format)</a>` : '');
+  return `<div onclick="event.stopPropagation()">
+    <div class="grid">
+      <div><h3>📍 Lieferadresse</h3>${esc(o.customer?.name || '')}<br>${esc(o.customer?.street || '')}<br>${esc(o.customer?.zip || '')} ${esc(o.customer?.city || '')}
+        ${o.customer?.note ? `<br><small class="muted">📝 ${esc(o.customer.note)}</small>` : ''}</div>
+      <div><h3>🖨️ Positionen</h3>${lines}</div>
+      <div><h3>📮 Versand &amp; Status</h3>
+        <div class="row"><select id="st-${o.orderId}">${STATI.map(s => `<option ${((o.status||'neu')===s)?'selected':''}>${s}</option>`).join('')}</select></div>
+        <div class="row" style="margin-top:8px"><input type="text" id="tr-${o.orderId}" placeholder="Sendungsnummer" value="${esc(o.trackingNo || '')}" style="width:200px"></div>
+        <div class="row" style="margin-top:8px"><textarea id="nt-${o.orderId}" rows="2" placeholder="Interne Notiz …">${esc(o.adminNote || '')}</textarea></div>
+        <div class="row" style="margin-top:8px"><button class="mini" onclick="saveOrder('${o.orderId}')">💾 Speichern</button><span id="om-${o.orderId}" class="ok"></span></div>
+      </div>
+      <div><h3>✉️ E-Mail-Vorlagen</h3>
+        <a href="${mail(`Deine OVJU-Bestellung ${o.orderId}`, `Hallo ${name},\n\nvielen Dank für deine Bestellung! Sobald deine Zahlung eingeht, legen wir los.\n\nRechnung: http://${location.host}/orders/${o.orderId}/rechnung.html\n\nLiebe Grüße\nOVJU`)}">📧 Zahlungserinnerung</a><br>
+        <a href="${mail(`Dein OVJU-Druck läuft! (${o.orderId})`, `Hallo ${name},\n\ndein Design liegt gerade auf dem Druckbett — Schicht für Schicht entsteht dein Unikat! 🖨️\n\nLiebe Grüße\nOVJU`)}">📧 Druck gestartet</a><br>
+        <a href="${mail(`Deine OVJU-Bestellung ist unterwegs 📦`, `Hallo ${name},\n\ndein Paket ist unterwegs!${o.trackingNo ? `\nSendungsnummer: ${o.trackingNo}` : ''}\n\nViel Freude damit!\nOVJU`)}">📧 Versandbestätigung</a>
+      </div>
+    </div>
+  </div>`;
+}
+async function saveOrder(id) {
+  await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({
+    orderId: id, status: $(`#st-${id}`).value, trackingNo: $(`#tr-${id}`).value, adminNote: $(`#nt-${id}`).value,
+  })});
+  const o = DATA.orders.find(x => x.orderId === id);
+  o.status = $(`#st-${id}`).value; o.trackingNo = $(`#tr-${id}`).value; o.adminNote = $(`#nt-${id}`).value;
+  $(`#om-${id}`).textContent = '✅';
+  setTimeout(() => { const el = $(`#om-${id}`); if (el) el.textContent = ''; }, 2000);
+  renderDash();
 }
 
-let tiers = { egg: [], vase: [] };
+// ---------------------------------------------------------------------------
+// Farben (Filament-Verwaltung)
+// ---------------------------------------------------------------------------
+function renderColors() {
+  $('#colors-table').innerHTML = `<tr><th></th><th>Name</th><th>Farbwert</th><th>Notiz (z. B. Hersteller, Restmenge)</th><th>Im Shop</th><th></th></tr>` +
+    colors.map((c, i) => `<tr>
+      <td><span class="sw" style="background:${esc(c.hex)}"></span></td>
+      <td><input type="text" value="${esc(c.name)}" onchange="colors[${i}].name=this.value" style="width:150px"></td>
+      <td><input type="color" value="${esc(c.hex)}" onchange="colors[${i}].hex=this.value;renderColors()"> <code>${esc(c.hex)}</code></td>
+      <td><input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA matt, 600 g übrig" style="width:100%"></td>
+      <td style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"></td>
+      <td><button class="ghost mini" onclick="colors.splice(${i},1);renderColors()">🗑</button></td>
+    </tr>`).join('');
+}
+function addColor() {
+  colors.push({ id: 'farbe-' + Date.now().toString(36), name: 'Neue Farbe', hex: '#a0a0a0', note: '', active: true });
+  renderColors();
+}
+
+// ---------------------------------------------------------------------------
+// Preise, Rabatte, Gutscheine
+// ---------------------------------------------------------------------------
 function renderTiers() {
   for (const [k, sel] of [['egg', '#tiers-egg'], ['vase', '#tiers-vase']]) {
-    $(sel).innerHTML = tiers[k].map((t, i) => `<div class="tier">
+    $(sel).innerHTML = tiers[k].map((t, i) => `<div class="row" style="margin:6px 0">
       ab <input type="number" min="2" value="${t.qty}" onchange="tiers['${k}'][${i}].qty=+this.value">
       Stück → <input type="number" min="0" max="90" value="${t.off}" onchange="tiers['${k}'][${i}].off=+this.value"> % Rabatt
-      <button class="ghost" onclick="tiers['${k}'].splice(${i},1);renderTiers()">✕</button></div>`).join('');
+      <button class="ghost mini" onclick="tiers['${k}'].splice(${i},1);renderTiers()">✕</button></div>`).join('');
   }
 }
 function addTier(k) { tiers[k].push({ qty: 2, off: 10 }); renderTiers(); }
 
+function renderCoupons() {
+  $('#coupons-table').innerHTML = `<tr><th>Code</th><th>Art</th><th>Wert</th><th>Mindestbestellwert (€)</th><th>Aktiv</th><th></th></tr>` +
+    coupons.map((c, i) => `<tr>
+      <td><input type="text" value="${esc(c.code)}" onchange="coupons[${i}].code=this.value.toUpperCase()" style="width:140px;text-transform:uppercase"></td>
+      <td><select onchange="coupons[${i}].type=this.value">
+        <option value="percent" ${c.type === 'percent' ? 'selected' : ''}>% Rabatt</option>
+        <option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>€ Betrag</option></select></td>
+      <td><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value"></td>
+      <td><input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value"></td>
+      <td style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="coupons[${i}].active=this.checked"></td>
+      <td><button class="ghost mini" onclick="coupons.splice(${i},1);renderCoupons()">🗑</button></td>
+    </tr>`).join('');
+}
+function addCoupon() {
+  coupons.push({ code: 'OSTERN10', type: 'percent', value: 10, minOrder: 0, active: true });
+  renderCoupons();
+}
+
+// ---------------------------------------------------------------------------
+// Einstellungen befüllen & speichern
+// ---------------------------------------------------------------------------
 function fillSettings() {
   const s = DATA.settings;
   $('#s-egg-single').value = s.pricing.eierbecher.single;
@@ -186,9 +394,11 @@ function fillSettings() {
   $('#s-vase-single').value = s.pricing.vase.single;
   $('#s-ship-flat').value = s.pricing.shipping.flat;
   $('#s-ship-free').value = s.pricing.shipping.freeFrom;
-  tiers.egg = JSON.parse(JSON.stringify(s.pricing.eierbecher.discounts));
-  tiers.vase = JSON.parse(JSON.stringify(s.pricing.vase.discounts));
-  renderTiers();
+  tiers.egg = structuredClone(s.pricing.eierbecher.discounts);
+  tiers.vase = structuredClone(s.pricing.vase.discounts);
+  colors = structuredClone(s.colors || []);
+  coupons = structuredClone(s.coupons || []);
+  renderTiers(); renderColors(); renderCoupons();
   const c = s.company;
   $('#c-name').value = c.name; $('#c-owner').value = c.owner; $('#c-street').value = c.street;
   $('#c-zip').value = c.zip; $('#c-city').value = c.city; $('#c-email').value = c.email;
@@ -217,18 +427,43 @@ async function saveSettings() {
       clientId: $('#pp-id').value, secret: $('#pp-secret').value,
     },
     invoicePrefix: $('#c-prefix').value,
+    colors, coupons,
   };
   if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
   await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
   if (patch.adminKey) localStorage.setItem('ovju-admin-key', patch.adminKey);
-  $('#save-msg').textContent = '✅ Gespeichert';
-  setTimeout(() => $('#save-msg').textContent = '', 2500);
+  DATA.settings = { ...DATA.settings, ...patch };
+  $('#save-msg').textContent = '✅ Gespeichert — wirkt sofort im Shop';
+  setTimeout(() => $('#save-msg').textContent = '', 3000);
+}
+
+// ---------------------------------------------------------------------------
+// Export & Backup
+// ---------------------------------------------------------------------------
+async function downloadCSV() {
+  const r = await fetch('/api/admin/orders.csv', { headers: { 'x-admin-key': KEY() } });
+  if (r.status === 401) return showLogin();
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ovju-bestellungen.csv';
+  a.click();
+}
+async function downloadBackup() {
+  const data = await api('/api/admin/export');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+  a.download = `ovju-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
 }
 
 async function load() {
   DATA = await api('/api/admin/data');
   $('#login').hidden = true;
   $('#app').hidden = false;
+  renderTabs();
+  showTab('dash');
+  renderDash();
   renderOrders();
   fillSettings();
 }

@@ -422,6 +422,10 @@ footer p { color: var(--ink-soft); font-size: 0.88rem; max-width: 520px; margin:
 .pay-row input { margin-top: 3px; }
 .pay-row small { color: var(--ink-soft); }
 #co-progress { min-height: 1.2em; color: var(--accent-dark); font-weight: 600; }
+.coupon-row { display: flex; gap: 8px; }
+.coupon-row input { flex: 1; padding: 10px 14px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--bg); font-family: var(--sans); }
+.ok-msg { color: #3c7a3c !important; }
+.warn-msg { color: var(--accent-dark) !important; }
 
 /* ---------- Dialoge ---------- */
 dialog {

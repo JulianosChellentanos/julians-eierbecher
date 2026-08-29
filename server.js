@@ -51,6 +51,8 @@ const DEFAULT_SETTINGS = {
     iban: 'DE00 0000 0000 0000 0000 00', bic: '', bank: '',
   },
   paypal: { enabled: false, sandbox: true, clientId: '', secret: '' },
+  colors: null,   // wird beim ersten Start aus content.json übernommen
+  coupons: [],    // [{ code, type: 'percent'|'fixed', value, minOrder, active }]
 };
 
 let settings;
@@ -60,8 +62,16 @@ function loadSettings() {
     settings = { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) };
   } catch {
     settings = structuredClone(DEFAULT_SETTINGS);
-    saveSettings();
   }
+  // Filament-Farben einmalig aus content.json übernehmen
+  if (!Array.isArray(settings.colors)) {
+    try {
+      const content = JSON.parse(readFileSync(path.join(PUBLIC, 'content.json'), 'utf8'));
+      settings.colors = content.colors.map((c) => ({ ...c, active: true, note: '' }));
+    } catch { settings.colors = []; }
+  }
+  if (!Array.isArray(settings.coupons)) settings.coupons = [];
+  saveSettings();
 }
 async function saveSettings() {
   await mkdir(DATA, { recursive: true });
@@ -88,13 +98,24 @@ function priceItem(item) {
   const line = Math.round(lineFull * (1 - off / 100) * 100) / 100;
   return { qty, unit, off, lineFull: Math.round(lineFull * 100) / 100, line };
 }
-function computeTotals(items) {
+function computeTotals(items, couponCode) {
   const lines = items.map((it) => ({ ...it, ...priceItem(it) }));
   const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
+  // Gutschein
+  let coupon = null;
+  let afterCoupon = subtotal;
+  if (couponCode) {
+    const c = settings.coupons.find((x) => x.active && x.code.trim().toLowerCase() === String(couponCode).trim().toLowerCase());
+    if (c && subtotal >= (c.minOrder || 0)) {
+      const off = c.type === 'fixed' ? Math.min(c.value, subtotal) : subtotal * c.value / 100;
+      coupon = { code: c.code, type: c.type, value: c.value, off: Math.round(off * 100) / 100 };
+      afterCoupon = Math.round((subtotal - coupon.off) * 100) / 100;
+    }
+  }
   const ship = settings.pricing.shipping;
-  const shipping = subtotal >= ship.freeFrom ? 0 : ship.flat;
-  const total = Math.round((subtotal + shipping) * 100) / 100;
-  return { lines, subtotal, shipping, total };
+  const shipping = items.length === 0 ? 0 : (afterCoupon >= ship.freeFrom ? 0 : ship.flat);
+  const total = Math.round((afterCoupon + shipping) * 100) / 100;
+  return { lines, subtotal, coupon, shipping, total };
 }
 function money(v) {
   return v.toLocaleString('de-DE', { style: 'currency', currency: settings.pricing.currency });
@@ -183,6 +204,7 @@ function invoiceHTML(order) {
   <table><tr><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
   <table style="max-width:340px;margin-left:auto">
     <tr class="tot"><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
+    ${order.coupon ? `<tr class="tot"><td>Gutschein „${esc(order.coupon.code)}“</td><td class="r">−${money(order.coupon.off)}</td></tr>` : ''}
     <tr class="tot"><td>Versand</td><td class="r">${order.shipping === 0 ? 'kostenlos' : money(order.shipping)}</td></tr>
     <tr class="tot grand"><td>Gesamtbetrag</td><td class="r">${money(order.total)}</td></tr>
   </table>
@@ -226,14 +248,14 @@ async function listOrders() {
 
 async function handleCheckout(req, res) {
   const data = JSON.parse((await readBody(req)).toString('utf8'));
-  const { customer, items, payment, paypalOrderId } = data;
+  const { customer, items, payment, paypalOrderId, couponCode } = data;
   if (!customer?.name || !customer?.email || !customer?.street || !customer?.zip || !customer?.city) {
     return send(res, 400, { ok: false, error: 'Bitte Adresse vollständig ausfüllen' });
   }
   if (!Array.isArray(items) || !items.length || items.length > 20) {
     return send(res, 400, { ok: false, error: 'Warenkorb ist leer' });
   }
-  const totals = computeTotals(items);
+  const totals = computeTotals(items, couponCode);
   const orderId = newOrderId();
   await mkdir(path.join(ORDERS, orderId), { recursive: true });
   const order = {
@@ -249,8 +271,9 @@ async function handleCheckout(req, res) {
       colorName: l.colorName, unit: l.unit, off: l.off, line: l.line,
       stlFile: `modell-${i + 1}-${l.product}.stl`,
     })),
-    subtotal: totals.subtotal, shipping: totals.shipping, total: totals.total,
+    subtotal: totals.subtotal, coupon: totals.coupon, shipping: totals.shipping, total: totals.total,
     invoiceNo: null, filesComplete: false,
+    trackingNo: '', adminNote: '',
   };
   await writeOrder(order);
   send(res, 200, { ok: true, orderId, itemCount: order.lines.length, total: order.total });
@@ -314,10 +337,18 @@ const server = http.createServer(async (req, res) => {
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
       });
     }
+    if (p === '/api/colors') {
+      return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex }) => ({ id, name, hex })));
+    }
     if (req.method === 'POST' && p === '/api/quote') {
-      const { items } = JSON.parse((await readBody(req)).toString('utf8'));
-      const t = computeTotals(items || []);
-      return send(res, 200, { ok: true, lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line })), subtotal: t.subtotal, shipping: t.shipping, total: t.total });
+      const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
+      const t = computeTotals(items || [], couponCode);
+      return send(res, 200, {
+        ok: true,
+        lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line })),
+        subtotal: t.subtotal, coupon: t.coupon, couponValid: couponCode ? !!t.coupon : null,
+        shipping: t.shipping, total: t.total,
+      });
     }
     if (req.method === 'POST' && p === '/api/checkout') return await handleCheckout(req, res);
     const mUp = p.match(/^\/api\/order\/([A-Z0-9-]+)\/stl\/(\d+)$/);
@@ -328,8 +359,8 @@ const server = http.createServer(async (req, res) => {
     // --- PayPal
     if (req.method === 'POST' && p === '/api/paypal/create') {
       if (!settings.paypal.enabled) return send(res, 400, { ok: false, error: 'PayPal nicht aktiviert' });
-      const { items } = JSON.parse((await readBody(req)).toString('utf8'));
-      const t = computeTotals(items);
+      const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
+      const t = computeTotals(items, couponCode);
       const token = await paypalToken();
       const r = await fetch(`${paypalBase()}/v2/checkout/orders`, {
         method: 'POST',
@@ -362,11 +393,50 @@ const server = http.createServer(async (req, res) => {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const patch = JSON.parse((await readBody(req)).toString('utf8'));
       // Nur bekannte Wurzel-Schlüssel übernehmen
-      for (const k of ['pricing', 'company', 'paypal', 'invoicePrefix', 'adminKey']) {
+      for (const k of ['pricing', 'company', 'paypal', 'invoicePrefix', 'adminKey', 'colors', 'coupons']) {
         if (patch[k] !== undefined) settings[k] = patch[k];
       }
       await saveSettings();
       return send(res, 200, { ok: true });
+    }
+    if (req.method === 'POST' && p === '/api/admin/order-update') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const { orderId, status, trackingNo, adminNote } = JSON.parse((await readBody(req)).toString('utf8'));
+      const order = await readOrder(orderId);
+      if (status !== undefined) {
+        if (!['neu', 'bezahlt', 'im-druck', 'versendet', 'storniert'].includes(status)) {
+          return send(res, 400, { ok: false, error: 'Ungültiger Status' });
+        }
+        order.status = status;
+        if (status === 'bezahlt') order.paymentStatus = 'bezahlt';
+      }
+      if (trackingNo !== undefined) order.trackingNo = trackingNo;
+      if (adminNote !== undefined) order.adminNote = adminNote;
+      await writeOrder(order);
+      return send(res, 200, { ok: true });
+    }
+    if (p === '/api/admin/export') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      return send(res, 200, { exportedAt: new Date().toISOString(), settings, orders: await listOrders() });
+    }
+    if (p === '/api/admin/orders.csv') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const orders = await listOrders();
+      const csvEsc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const rows = [['Bestellung', 'Datum', 'Status', 'Zahlart', 'Rechnung', 'Name', 'E-Mail', 'Straße', 'PLZ', 'Ort', 'Positionen', 'Gutschein', 'Summe', 'Tracking'].join(';')];
+      for (const o of orders) {
+        rows.push([
+          csvEsc(o.orderId), csvEsc(new Date(o.createdAt).toLocaleString('de-DE')), csvEsc(o.status || 'neu'),
+          csvEsc(o.payment || ''), csvEsc(o.invoiceNo || ''), csvEsc(o.customer?.name || o.name || ''),
+          csvEsc(o.customer?.email || o.email || ''), csvEsc(o.customer?.street || ''), csvEsc(o.customer?.zip || ''),
+          csvEsc(o.customer?.city || ''),
+          csvEsc((o.lines || []).map((l) => `${l.qty}x ${itemLabel(l)}`).join(' | ')),
+          csvEsc(o.coupon ? o.coupon.code : ''),
+          csvEsc((o.total ?? 0).toFixed(2).replace('.', ',')), csvEsc(o.trackingNo || ''),
+        ].join(';'));
+      }
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="ovju-bestellungen.csv"' });
+      return res.end('﻿' + rows.join('\n'));
     }
     if (req.method === 'POST' && p === '/api/admin/order-status') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });

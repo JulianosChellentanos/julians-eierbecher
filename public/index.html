@@ -197,6 +197,12 @@
       <label>Ort <input type="text" id="co-city" required></label>
       <label class="wide">Anmerkung <input type="text" id="co-note" placeholder="z. B. Geschenkverpackung (optional)"></label>
     </div>
+    <div class="coupon-row">
+      <input type="text" id="co-coupon" placeholder="🎟️ Gutscheincode (optional)" autocomplete="off">
+      <button type="button" class="btn btn-ghost" id="co-coupon-btn">Einlösen</button>
+    </div>
+    <div class="tiny" id="co-coupon-msg" style="text-align:left"></div>
+
     <h3>Bezahlung</h3>
     <div class="pay-rows">
       <label class="pay-row"><input type="radio" name="pay" id="pay-vorkasse" checked>

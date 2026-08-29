@@ -57,11 +57,18 @@ async function loadContent() {
   $('#faq-list').innerHTML = content.faq.map((f) => `
     <details class="card"><summary>${f.q}</summary><p>${f.a}</p></details>`).join('');
 
-  $('#swatches').innerHTML = content.colors.map((c) => `
+  // Verfügbare Filament-Farben kommen live vom Server (Admin: 🎨 Farben)
+  let colors = content.colors;
+  try {
+    const live = await (await fetch('/api/colors')).json();
+    if (Array.isArray(live) && live.length) colors = live;
+  } catch { /* Fallback: content.json */ }
+  content.colors = colors;
+  $('#swatches').innerHTML = colors.map((c) => `
     <button class="swatch" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}"
       style="--sw:${c.hex}" title="${c.name}"><span></span></button>`).join('');
   $$('.swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
-  setColor({ id: content.colors[0].id, hex: content.colors[0].hex, name: content.colors[0].name });
+  setColor({ id: colors[0].id, hex: colors[0].hex, name: colors[0].name });
 }
 
 function renderPrices() {
