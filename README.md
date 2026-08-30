@@ -24,6 +24,9 @@
   - 🎨 Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
   - 💰 Preise & Mengenrabatt-Stufen, 🎟️ Gutscheine (%- oder €-Codes, Mindestbestellwert)
   - 🏢 Firma (Rechnungsdaten), 💙 PayPal, ⚙️ Passwort & JSON-Backup — alles in `data/settings.json` (nicht im Git)
+- **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, Sessions in `data/`), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung
+- **Darkmode**: Umschalter im Header (🌙/☀️), merkt sich die Wahl, folgt sonst der Systemeinstellung
+- **Druckbarkeits-Ampel**: analysiert live die Flächennormalen des Meshes (Überhangwinkel) — ✅/⚠️/🔶 direkt im Konfigurator; Querwellen werden serverseitig auf druckbare Wellenlängen/Tiefen geklemmt (`tools/check-printability.mjs` für Offline-Analysen)
 - Kein Build-Schritt, keine Runtime-Dependencies — alles lokal gevendort (Three.js, Fonts)
 
 ## Starten
@@ -69,6 +72,13 @@ node tools/check-stl.mjs orders/<ID>/<datei>.stl   # Bestellung prüfen
 
 Der Validator prüft: Dateikonsistenz, degenerierte Dreiecke, NaN, Bounding Box,
 Watertightness (jede Kante exakt gepaart) und positives Volumen.
+
+## Druckbarkeit der Muster (gemessen mit tools/check-printability.mjs)
+
+| Muster | ohne Drall | mit starkem Drall |
+|---|---|---|
+| Rippen/Wellen/Zickzack | ✅ max. ~34° Überhang | ⚠️ Flanken bis ~60° — Ampel warnt |
+| Querwellen | ✅ durch Server-Klemme ≤ ~50° | ✅ (Drall wirkt nur als Versatz) |
 
 ## Druck-Empfehlung (Bambu Studio)
 

@@ -79,6 +79,35 @@ async function saveSettings() {
 }
 
 // ---------------------------------------------------------------------------
+// Kundenkonten (data/users.json) & Sessions (data/sessions.json)
+// ---------------------------------------------------------------------------
+const USERS_FILE = path.join(DATA, 'users.json');
+const SESS_FILE = path.join(DATA, 'sessions.json');
+let users = [];
+let sessions = {};
+function loadUsers() {
+  try { users = JSON.parse(readFileSync(USERS_FILE, 'utf8')).users || []; } catch { users = []; }
+  try { sessions = JSON.parse(readFileSync(SESS_FILE, 'utf8')); } catch { sessions = {}; }
+  // alte Sessions (> 90 Tage) aufräumen
+  const cutoff = Date.now() - 90 * 864e5;
+  for (const [t, s] of Object.entries(sessions)) if (s.createdAt < cutoff) delete sessions[t];
+}
+const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2));
+const saveSessions = () => writeFile(SESS_FILE, JSON.stringify(sessions));
+const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
+function createSession(userId) {
+  const token = crypto.randomBytes(24).toString('hex');
+  sessions[token] = { userId, createdAt: Date.now() };
+  saveSessions();
+  return token;
+}
+function userFromReq(req) {
+  const s = sessions[req.headers['x-auth'] || ''];
+  return s ? users.find((u) => u.id === s.userId) : null;
+}
+const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address || null });
+
+// ---------------------------------------------------------------------------
 // Preisberechnung (Server = einzige Wahrheit)
 // ---------------------------------------------------------------------------
 function discountFor(product, qty) {
@@ -258,8 +287,10 @@ async function handleCheckout(req, res) {
   const totals = computeTotals(items, couponCode);
   const orderId = newOrderId();
   await mkdir(path.join(ORDERS, orderId), { recursive: true });
+  const account = userFromReq(req);
   const order = {
     orderId,
+    userId: account?.id || null,
     createdAt: new Date().toISOString(),
     status: 'neu',
     payment: payment === 'paypal' ? 'paypal' : 'vorkasse',
@@ -337,6 +368,52 @@ const server = http.createServer(async (req, res) => {
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
       });
     }
+    // --- Kundenkonten
+    if (req.method === 'POST' && p === '/api/auth/register') {
+      const { name, email, password } = JSON.parse((await readBody(req)).toString('utf8'));
+      const mail = String(email || '').trim().toLowerCase();
+      if (!name?.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return send(res, 400, { ok: false, error: 'Bitte Name und gültige E-Mail angeben' });
+      if (String(password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
+      if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto — bitte anmelden' });
+      const salt = crypto.randomBytes(16).toString('hex');
+      const user = { id: crypto.randomUUID(), name: name.trim(), email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString() };
+      users.push(user);
+      await saveUsers();
+      return send(res, 200, { ok: true, token: createSession(user.id), user: publicUser(user) });
+    }
+    if (req.method === 'POST' && p === '/api/auth/login') {
+      const { email, password } = JSON.parse((await readBody(req)).toString('utf8'));
+      const u = users.find((x) => x.email === String(email || '').trim().toLowerCase());
+      const ok = u && crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(hashPw(password || '', u.salt), 'hex'));
+      if (!ok) return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
+      return send(res, 200, { ok: true, token: createSession(u.id), user: publicUser(u) });
+    }
+    if (req.method === 'POST' && p === '/api/auth/logout') {
+      delete sessions[req.headers['x-auth'] || ''];
+      await saveSessions();
+      return send(res, 200, { ok: true });
+    }
+    if (p === '/api/auth/me') {
+      const u = userFromReq(req);
+      if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const orders = (await listOrders())
+        .filter((o) => o.userId === u.id || (o.customer?.email || '').toLowerCase() === u.email)
+        .map((o) => ({
+          orderId: o.orderId, createdAt: o.createdAt, status: o.status || 'neu',
+          total: o.total, invoiceNo: o.invoiceNo, trackingNo: o.trackingNo || '',
+          pieces: (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+        }));
+      return send(res, 200, { ok: true, user: publicUser(u), orders });
+    }
+    if (req.method === 'POST' && p === '/api/auth/address') {
+      const u = userFromReq(req);
+      if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const { street, zip, city } = JSON.parse((await readBody(req)).toString('utf8'));
+      u.address = { street: street || '', zip: zip || '', city: city || '' };
+      await saveUsers();
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/api/colors') {
       return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex }) => ({ id, name, hex })));
     }
@@ -477,6 +554,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 loadSettings();
+loadUsers();
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🥚 OVJU Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);
 });

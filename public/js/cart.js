@@ -1,6 +1,7 @@
 // OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing)
 import { makeSTL } from './modelfactory.js';
 import { PRODUCTS, PATTERNS, FONTS } from './geometry.js';
+import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -184,6 +185,17 @@ async function applyCoupon() {
 function openCheckout() {
   $('#cart-modal').close();
   renderCheckoutSummary();
+  // Angemeldet? → Adresse & Kontakt vorbefüllen
+  const u = getUser();
+  if (u) {
+    if (!$('#co-name').value) $('#co-name').value = u.name;
+    if (!$('#co-email').value) $('#co-email').value = u.email;
+    if (u.address && !$('#co-street').value) {
+      $('#co-street').value = u.address.street || '';
+      $('#co-zip').value = u.address.zip || '';
+      $('#co-city').value = u.address.city || '';
+    }
+  }
   const pp = pricing.paypal?.enabled;
   $('#pay-paypal-row').hidden = !pp;
   if (!pp) $('#pay-vorkasse').checked = true;
@@ -234,7 +246,7 @@ async function submitOrder(payment, paypalOrderId = null) {
       note: $('#co-note').value,
     };
     const r = await (await fetch('/api/checkout', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ customer, items: cartPayload(), payment, paypalOrderId, couponCode: coupon?.code || null }),
     })).json();
     if (!r.ok) throw new Error(r.error);
@@ -264,6 +276,7 @@ async function submitOrder(payment, paypalOrderId = null) {
       ? 'Deine Zahlung ist eingegangen — wir starten den Druck!'
       : 'Alle Zahlungsdaten (IBAN & Betrag) findest du auf deiner Rechnung.';
     $('#confirm-modal').showModal();
+    refreshOrders(); // Bestellhistorie im Konto aktualisieren
   } catch (err) {
     alert('Bestellung fehlgeschlagen: ' + err.message);
   } finally {

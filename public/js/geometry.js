@@ -197,10 +197,12 @@ export function buildModel(params) {
   const amp = p.pattern === 'glatt' ? 0 : p.depth;
   const twistAngle = p.twist * Math.PI;
   const isQuer = p.pattern === 'querwellen';
-  // Querwellen: vertikale Wellenanzahl aus dem Rippen-Regler, Drall = ganzzahliger
-  // Umlauf-Versatz (muss ganzzahlig sein, damit die Naht bei θ=2π schließt)
-  const quersV = Math.max(2, Math.round(p.ribs / 5));
+  // Querwellen: vertikale Wellenanzahl aus dem Rippen-Regler, aber druckbar gehalten:
+  // Wellenlänge ≥ ~10 mm und Amplitude so geklemmt, dass der Überhang ≤ ~50° bleibt
+  // (Steigung dr/dy = amp·2π·n/H → amp_max = tan(50°)·H/(2π·n)).
+  const quersV = Math.min(Math.max(2, Math.round(p.ribs / 5)), Math.max(2, Math.floor(p.height / 10)));
   const querK = Math.round(p.twist * 2);
+  const querAmpMax = 1.19 * p.height / (2 * Math.PI * quersV);
 
   const q = Math.min(1, Math.max(0.4, p.quality));
   const RS = Math.round(Math.min(640, Math.max(200, p.ribs * 9)) * q);
@@ -220,9 +222,12 @@ export function buildModel(params) {
 
   // Oberflächen-Versatz an Position (θ, t)
   const offset = (theta, t) => {
-    const a = ampAt(t);
+    let a = ampAt(t);
     if (a < 1e-4) return 0;
-    if (isQuer) return a * Math.sin(2 * Math.PI * quersV * t + querK * theta);
+    if (isQuer) {
+      a = Math.min(a, querAmpMax);
+      return a * Math.sin(2 * Math.PI * quersV * t + querK * theta);
+    }
     return a * waveTheta(p.pattern, p.ribs * (theta + twistAngle * t));
   };
 

@@ -11,6 +11,7 @@ import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { makeSTL, loadFont } from './modelfactory.js';
 import { initCart, addToCart, getPricing, fmt, discountTeaser } from './cart.js';
+import { initAuth } from './auth.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -272,6 +273,51 @@ function activePoints() {
   return PRODUCTS[state.product].presets[state.preset].points;
 }
 
+// Druckbarkeits-Ampel: analysiert die echten Flächennormalen des Meshes
+// (Überhangwinkel: 0° = senkrechte Wand, 90° = horizontale Unterseite)
+function overhangStats(geometry) {
+  const pos = geometry.getAttribute('position').array;
+  const idx = geometry.index.array;
+  let worst = 0, total = 0, over55 = 0;
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
+    const cy = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
+    const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-12) continue;
+    total += len;
+    if (cy < 0.4) continue; // Bodenfläche liegt auf dem Druckbett
+    const nyN = ny / len;
+    if (nyN < -1e-6) {
+      const al = Math.asin(Math.min(1, -nyN)) * 180 / Math.PI;
+      if (al > worst) worst = al;
+      if (al > 55) over55 += len;
+    }
+  }
+  return { worst, frac55: total ? over55 / total : 0 };
+}
+
+function updatePrintBadge(geometry) {
+  const el = $('#print-badge');
+  const { worst, frac55 } = overhangStats(geometry);
+  let cls, txt, tip;
+  if (worst <= 50 || frac55 < 0.0005) {
+    cls = 'p-ok'; txt = '✅ Druckbar ohne Stützen';
+    tip = `Max. Überhang ${worst.toFixed(0)}° — problemlos.`;
+  } else if (worst <= 62 && frac55 < 0.02) {
+    cls = 'p-warn'; txt = '⚠️ Steile Stellen — wir drucken mit extra Kühlung';
+    tip = `Max. Überhang ${worst.toFixed(0)}° — druckt mit feinen Schichten sauber.`;
+  } else {
+    cls = 'p-bad'; txt = '🔶 Sehr steil — Tiefe/Drall etwas reduzieren';
+    tip = `Max. Überhang ${worst.toFixed(0)}° — Muster flacher stellen für ein sauberes Druckbild.`;
+  }
+  el.className = 'stage-print ' + cls;
+  el.textContent = txt;
+  el.title = tip;
+}
+
 let saucerMesh = null;
 let saucerInfo = null;
 function saucerLift() {
@@ -305,6 +351,7 @@ function rebuild() {
     cupGroup.add(saucerMesh);
   }
   cupMesh.position.y = saucerLift();
+  updatePrintBadge(geometry);
   rebuildText();
   updateProps();
   if (!userInteracted) frameCamera();
@@ -597,6 +644,17 @@ function initControls() {
     $('#konfigurator').scrollIntoView({ behavior: 'smooth' });
   });
 
+  // Hell/Dunkel-Modus
+  const themeBtn = $('#theme-btn');
+  const syncThemeBtn = () => {
+    themeBtn.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+  };
+  themeBtn.addEventListener('click', () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('ovju-theme', dark ? 'dark' : 'light');
+    syncThemeBtn();
+  });
+  syncThemeBtn();
 }
 
 function syncControls() {
@@ -771,6 +829,7 @@ async function renderShowcase() {
 (async () => {
   await loadContent();
   await initCart();
+  await initAuth();
   renderProductTabs();
   renderPresetButtons();
   renderFontRow();

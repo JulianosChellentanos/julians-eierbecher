@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OVJU — Dein Ei. Dein Design.</title>
   <meta name="description" content="Designe deinen eigenen Eierbecher im 3D-Konfigurator — Rippen, Spiralen, Wellen, 10 matte Farben, persönliche Gravur. 3D-gedruckt und geliefert.">
+  <script>
+    // Darkmode früh setzen (kein Aufblitzen)
+    (function () {
+      const t = localStorage.getItem('ovju-theme');
+      if (t === 'dark' || (!t && matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="css/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>">
   <script type="importmap">
@@ -22,7 +31,11 @@
       <a href="#sogehts">So geht's</a>
       <a href="#faq">FAQ</a>
     </nav>
-    <button class="cart-btn" id="cart-btn" title="Warenkorb">🛒<span id="cart-count">0</span></button>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="theme-btn" title="Hell/Dunkel umschalten">🌙</button>
+      <button class="icon-btn account-btn" id="account-btn" title="Mein Konto">👤 Anmelden</button>
+      <button class="cart-btn" id="cart-btn" title="Warenkorb">🛒<span id="cart-count">0</span></button>
+    </div>
   </div>
 </header>
 
@@ -51,6 +64,7 @@
       <div id="loading" class="loading"><div class="egg-spin">🥚</div>Lade 3D-Studio …</div>
       <canvas id="viewer"></canvas>
       <div class="stage-badge" id="dim-info"></div>
+      <div class="stage-print p-ok" id="print-badge"></div>
       <div class="stage-color"><span id="color-name">Elfenbein</span></div>
       <div class="scene-chips" id="scene-chips"></div>
       <button class="stage-foto" id="btn-foto" title="Dein Design in mehreren Szenen rendern">📸 Foto-Shooting</button>
@@ -228,6 +242,50 @@
     <p><a class="btn btn-ghost" id="confirm-invoice" href="#" target="_blank">🧾 Rechnung ansehen</a></p>
     <p class="tiny" id="confirm-pay-hint"></p>
     <button class="btn btn-primary" id="confirm-close">Super!</button>
+  </div>
+</dialog>
+
+<!-- Anmelden / Registrieren -->
+<dialog id="auth-modal">
+  <div class="auth-wrap">
+    <div class="cart-head"><h2>Mein Konto</h2><button class="btn btn-ghost" id="auth-close">✕</button></div>
+    <div class="seg auth-tabs">
+      <button type="button" class="pattern-btn active" id="at-login">Anmelden</button>
+      <button type="button" class="pattern-btn" id="at-register">Konto anlegen</button>
+    </div>
+    <form id="auth-login">
+      <label>E-Mail <input type="email" id="al-email" required autocomplete="email"></label>
+      <label>Passwort <input type="password" id="al-pw" required autocomplete="current-password"></label>
+      <button class="btn btn-primary btn-lg" type="submit">Anmelden</button>
+    </form>
+    <form id="auth-register" hidden>
+      <label>Name <input type="text" id="ar-name" required autocomplete="name"></label>
+      <label>E-Mail <input type="email" id="ar-email" required autocomplete="email"></label>
+      <label>Passwort <input type="password" id="ar-pw" required minlength="6" placeholder="mind. 6 Zeichen" autocomplete="new-password"></label>
+      <button class="btn btn-primary btn-lg" type="submit">Konto anlegen</button>
+      <p class="tiny">Deine Daten werden nur für Bestellungen genutzt — kein Newsletter, kein Spam.</p>
+    </form>
+    <div class="warn" id="auth-err"></div>
+  </div>
+</dialog>
+
+<!-- Mein Konto -->
+<dialog id="account-modal">
+  <div class="auth-wrap">
+    <div class="cart-head"><h2 id="acc-greeting"></h2><button class="btn btn-ghost" id="account-close">✕</button></div>
+    <p class="tiny" style="text-align:left" id="acc-email"></p>
+    <h3>📦 Meine Bestellungen</h3>
+    <div id="acc-orders"></div>
+    <h3>📍 Standard-Lieferadresse</h3>
+    <div class="co-grid">
+      <label class="wide">Straße &amp; Hausnummer <input type="text" id="acc-street"></label>
+      <label>PLZ <input type="text" id="acc-zip"></label>
+      <label>Ort <input type="text" id="acc-city"></label>
+    </div>
+    <div class="modal-btns" style="justify-content:space-between">
+      <button class="btn btn-ghost" id="acc-logout">Abmelden</button>
+      <span><span class="tiny" id="acc-addr-msg"></span> <button class="btn btn-primary" id="acc-addr-save">💾 Adresse speichern</button></span>
+    </div>
   </div>
 </dialog>
 
