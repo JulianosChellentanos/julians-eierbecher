@@ -597,6 +597,12 @@ function initControls() {
     state.pattern = b.dataset.pattern;
     $$('.pattern-btn').forEach((x) => x.classList.toggle('active', x === b));
     $('#surface-sliders').classList.toggle('disabled', state.pattern === 'glatt');
+    // Zickzack braucht ≥ 24 Facetten (sonst liest jede einzeln als Treppe)
+    if (state.pattern === 'zickzack' && state.ribs < 24) {
+      state.ribs = 24;
+      $('#s-ribs').value = 24;
+      $('#s-ribs-val').textContent = '24';
+    }
     rebuild();
   }));
 
@@ -883,4 +889,17 @@ async function renderShowcase() {
   animate();
   $('#loading').classList.add('hidden');
   setTimeout(renderShowcase, 400); // Produkt-Showcase mit echten Engine-Renders
+
+  // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
+  window.__ovju = {
+    apply(cfg) {
+      if (cfg.product && cfg.product !== state.product) setProduct(cfg.product);
+      Object.assign(state, cfg);
+      syncControls();
+      userInteracted = true; // Auto-Rotation stoppen für reproduzierbare Shots
+      cupGroup.rotation.y = cfg.viewAngle ?? 0.5;
+      rebuild();
+      frameCamera();
+    },
+  };
 })();

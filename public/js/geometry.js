@@ -204,25 +204,44 @@ export function buildModel(params) {
   const rMax = product.maxRadius * p.width;
   const R = (t) => Math.max(0.08, curve(t)) * rMax; // glatter Außenradius, gegen 0 geklemmt
 
-  const amp = p.pattern === 'glatt' ? 0 : p.depth;
+  // Ästhetik-Klemmen (aus dem Design-Judge-Panel abgeleitet):
+  // (a) Zickzack-Muster braucht ≥ 24 Facetten, sonst liest jede einzeln als Treppe.
+  const ribs = p.pattern === 'zickzack' ? Math.max(24, p.ribs) : p.ribs;
+  // (b) Tiefe an Rippenzahl koppeln: zu tief bei groben Rippen = klobig,
+  //     zu tief bei feinen Rippen = Moiré-Flirren.
+  const depthCap = ribs < 24 ? 1.1 : ribs > 56 ? 1.0 : 1.6;
+  const amp = p.pattern === 'glatt' ? 0 : Math.min(p.depth, depthCap);
   const twistAngle = p.twist * Math.PI;
   // Verlauf des Musters über die Höhe: Phasenverschiebung φ(t).
   // Wichtig: φ hängt nur von t ab (nicht von θ) → Naht bei θ=2π bleibt geschlossen.
-  const waves = Math.min(8, Math.max(2, Math.round(p.flowWaves ?? 3)));
+  // (c) Richtungswechsel begrenzen: Wellenfluss flirrt auf dichten Rippen
+  //     (waves ≤ 160/ribs), Zickzack-Bänder brauchen genug Höhe (≥ ~22 mm/Band).
+  const wavesCapRibs = p.flow === 'fluss' ? Math.max(2, Math.floor(160 / Math.max(1, ribs))) : 6;
+  const wavesCapH = p.flow === 'zick' ? Math.max(2, Math.floor(H / 22)) : 6;
+  const waves = Math.min(6, wavesCapRibs, wavesCapH, Math.max(2, Math.round(p.flowWaves ?? 3)));
+  // (d) Rippenlinien-Neigung β = atan(R·dφ/dy) klemmen: Spirale/Wellenfluss ≤ 62°,
+  //     Umkehr-Verläufe ≤ 55° (die Umkehrzonen vertragen weniger Steilheit).
+  const ZK = 1.35; // Trapez-Faktor: sanft verrundetes Zickzack (kein „Reifenprofil“)
+  const dphiMax = {
+    spirale: Math.abs(twistAngle),
+    gegen: Math.abs(twistAngle) * Math.PI,
+    fluss: Math.abs(twistAngle) * Math.PI * waves,
+    zick: Math.abs(twistAngle) * Math.PI * waves * ZK,
+  }[p.flow] ?? Math.abs(twistAngle);
+  let tanLimit = (p.flow === 'gegen' || p.flow === 'zick') ? 1.43 : 1.88; // tan55° / tan62°
+  if (p.flow === 'zick' && H < 100) tanLimit = 1.0; // kleine Objekte: subtileres Fischgrät (≤45°)
+  const slopeLimit = tanLimit * H / rMax;
+  const A = twistAngle * (dphiMax > 1e-9 ? Math.min(1, slopeLimit / dphiMax) : 1);
   const flowPhase = (t) => {
     switch (p.flow) {
-      case 'gegen': // hoch- und wieder zurückdrehen → V-/Chevron-Optik
-        return twistAngle * (t < 0.5 ? t : 1 - t) * 2;
-      case 'fluss': { // Rippen schlängeln sich sinusförmig („Wavy Vase“)
-        return (twistAngle / 2) * Math.sin(2 * Math.PI * waves * t);
-      }
-      case 'zick': { // scharfe Richtungswechsel (Dreieckswelle)
-        const x = waves * t;
-        const tri = 2 * Math.abs(2 * (x - Math.floor(x + 0.5))) - 1; // -1..1
-        return (twistAngle / 2) * tri;
-      }
+      case 'gegen': // sanft hoch- und zurückdrehen (Sinus-Halbwelle, kein Knick)
+        return A * Math.sin(Math.PI * t);
+      case 'fluss': // Rippen schlängeln sich sinusförmig („Wavy Vase“)
+        return (A / 2) * Math.sin(2 * Math.PI * waves * t);
+      case 'zick': // Fischgrät: diagonale Bänder mit verrundeten Umkehrzonen
+        return (A / 2) * Math.max(-1, Math.min(1, ZK * Math.sin(2 * Math.PI * waves * t)));
       default: // 'spirale' — klassischer linearer Drall
-        return twistAngle * t;
+        return A * t;
     }
   };
   const flowOsc = (p.flow === 'fluss' || p.flow === 'zick') ? waves : 1;
@@ -235,17 +254,19 @@ export function buildModel(params) {
   const querAmpMax = 1.19 * p.height / (2 * Math.PI * quersV);
 
   const q = Math.min(1, Math.max(0.4, p.quality));
-  const RS = Math.round(Math.min(640, Math.max(200, p.ribs * 9)) * q);
+  // Zickzack braucht mehr radiale Auflösung, sonst wirken die Facettenkanten körnig
+  const RS = Math.round(Math.min(720, Math.max(200, ribs * (p.pattern === 'zickzack' ? 14 : 9))) * q);
   const wallBase = isVase ? Math.max(140, H * 1.1) : 110;
   const querExtra = isQuer ? quersV * 14 : 0;
   const WALL_STEPS = Math.round(Math.min(340, wallBase + Math.abs(twistAngle) * 30 * Math.min(3, flowOsc) + querExtra) * q);
   const CAVITY_STEPS = Math.round(36 * q);
   const INNER_STEPS = Math.round(44 * q);
 
-  // Rippen-Fade: unten glatt (Druckbett); Querwellen auch oben glatt (sauberer Rand)
+  // Rippen-Fade: unten glatt (Druckbett), oben sanft auslaufend — ausgefranste
+  // Ränder waren der meistgenannte Kritikpunkt im Design-Panel.
   const fade = (t) => {
     let f = smoothstep(0.02, 0.12, t);
-    if (isQuer) f *= smoothstep(1.0, 0.93, t);
+    f *= smoothstep(1.0, isQuer ? 0.93 : 0.96, t);
     return f;
   };
   const ampAt = (t) => amp * fade(t);
@@ -258,7 +279,7 @@ export function buildModel(params) {
       a = Math.min(a, querAmpMax);
       return a * Math.sin(2 * Math.PI * quersV * t + querK * theta);
     }
-    return a * waveTheta(p.pattern, p.ribs * (theta + flowPhase(t)));
+    return a * waveTheta(p.pattern, ribs * (theta + flowPhase(t)));
   };
 
   // --- Stationen: Kontur von Bodenmitte → außen hoch → Rand → innen → Achse
