@@ -234,6 +234,18 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.12; }
 }
 .pattern-btn.active { background: var(--card); color: var(--ink); box-shadow: 0 2px 8px rgba(60,45,30,0.12); }
 
+.flow-block { margin: 4px 0 10px; }
+.flow-label { display: block; font-size: 0.85rem; font-weight: 500; color: var(--ink-soft); margin-bottom: 5px; }
+.seg-flow { margin-bottom: 0; }
+.flow-btn {
+  flex: 1 1 40%;
+  border: none; background: transparent; padding: 8px 4px; border-radius: 9px;
+  font-family: var(--sans); font-weight: 600; font-size: 0.8rem; color: var(--ink-soft);
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.flow-btn.active { background: var(--card); color: var(--ink); box-shadow: 0 2px 8px rgba(60,45,30,0.12); }
+.dark .flow-btn.active { box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+
 #surface-sliders { transition: opacity 0.2s; }
 #surface-sliders.disabled { opacity: 0.35; pointer-events: none; }
 

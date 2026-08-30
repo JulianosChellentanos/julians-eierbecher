@@ -10,7 +10,7 @@
 
 - **Zwei Produktwelten**: Eierbecher (Kelch/Schale/Tulpe) und Vasen (Flasche/Kugel/Tropfen/Zylinder/Kurve), Höhe & Breite frei ziehbar
 - **Formen-Editor „Eigene"**: Silhouetten-Punkte per Drag ziehen — komplett eigene Formen
-- **Oberflächen**: Glatt, Rippen, Wellen, Zickzack (Facetten), Querwellen — mit Anzahl, Tiefe und **Drall** (→ Spiralen / diagonale Wellen)
+- **Oberflächen**: Glatt, Rippen, Wellen, Zickzack (Facetten), Querwellen — mit Anzahl, Tiefe und **Verlauf**: Spirale, Gegenläufig (V-Optik), Wellenfluss (schlängelnde Rippen) oder Zickzack, jeweils mit Stärke und Anzahl Richtungswechsel
 - **Gravur**: 7 Schriftarten (inkl. „Edel" Marcellus & „Kalligrafie" Great Vibes, OFL → Lizenzen in docs/LICENSES.md), Größe & Höhen-Position einstellbar; der Text folgt der Silhouette (Taille/Bauch) und wird um die Wand gebogen
 - **10 matte PLA-Farben** (Bambu-Lab-Palette, definiert in `public/content.json`)
 - **Szenen-Vorschau**: Studio + 4 fotoreale CC0-HDRI-Szenen von Poly Haven (Esstisch mit echter Holztisch-Textur, Fensterbrett mit Ausblick, Café, Abend) — Environment-Beleuchtung, Ei im Becher bzw. Trockengräser in der Vase
@@ -75,10 +75,9 @@ Watertightness (jede Kante exakt gepaart) und positives Volumen.
 
 ## Druckbarkeit der Muster (gemessen mit tools/check-printability.mjs)
 
-| Muster | ohne Drall | mit starkem Drall |
-|---|---|---|
-| Rippen/Wellen/Zickzack | ✅ max. ~34° Überhang | ⚠️ Flanken bis ~60° — Ampel warnt |
-| Querwellen | ✅ durch Server-Klemme ≤ ~50° | ✅ (Drall wirkt nur als Versatz) |
+Bewertung (UI-Ampel und `tools/check-printability.mjs`): **Silhouette** (Grundform) streng — >50° ⚠️, >62° ❌;
+**Muster-Flanken** sind selbsttragende Mikro-Features (Tiefe ≤ 1,6 mm < 2-mm-Faustregel) und höchstens ⚠️.
+Querwellen werden zusätzlich serverseitig auf druckbare Wellenlänge/Amplitude geklemmt.
 
 ## Druck-Empfehlung (Bambu Studio)
 

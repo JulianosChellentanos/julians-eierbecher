@@ -101,6 +101,14 @@ export const PATTERNS = {
   querwellen: 'Querwellen',
 };
 
+// Verlauf: wie das Muster über die Höhe „fließt“ (Phasenverschiebung φ(t))
+export const FLOWS = {
+  spirale: 'Spirale',
+  gegen: 'Gegenläufig',
+  fluss: 'Wellenfluss',
+  zick: 'Zickzack',
+};
+
 export const DEFAULTS = {
   product: 'eierbecher',
   preset: 'kelch',
@@ -109,7 +117,9 @@ export const DEFAULTS = {
   pattern: 'rippen',
   ribs: 48,          // Anzahl Rippen/Wellen
   depth: 0.9,        // Amplitude in mm (0..1.6)
-  twist: 0,          // -2..2 — Drall (→ Spiralen / diagonale Querwellen)
+  twist: 0,          // -2..2 — Stärke des Verlaufs (0 = gerade)
+  flow: 'spirale',   // 'spirale' | 'gegen' | 'fluss' | 'zick'
+  flowWaves: 3,      // Richtungswechsel bei fluss/zick (2..8)
   text: '',
   textSize: 7,       // mm
   textPos: 0.55,     // Gravur-Höhe als Anteil der Gesamthöhe (0.15..0.8)
@@ -196,6 +206,26 @@ export function buildModel(params) {
 
   const amp = p.pattern === 'glatt' ? 0 : p.depth;
   const twistAngle = p.twist * Math.PI;
+  // Verlauf des Musters über die Höhe: Phasenverschiebung φ(t).
+  // Wichtig: φ hängt nur von t ab (nicht von θ) → Naht bei θ=2π bleibt geschlossen.
+  const waves = Math.min(8, Math.max(2, Math.round(p.flowWaves ?? 3)));
+  const flowPhase = (t) => {
+    switch (p.flow) {
+      case 'gegen': // hoch- und wieder zurückdrehen → V-/Chevron-Optik
+        return twistAngle * (t < 0.5 ? t : 1 - t) * 2;
+      case 'fluss': { // Rippen schlängeln sich sinusförmig („Wavy Vase“)
+        return (twistAngle / 2) * Math.sin(2 * Math.PI * waves * t);
+      }
+      case 'zick': { // scharfe Richtungswechsel (Dreieckswelle)
+        const x = waves * t;
+        const tri = 2 * Math.abs(2 * (x - Math.floor(x + 0.5))) - 1; // -1..1
+        return (twistAngle / 2) * tri;
+      }
+      default: // 'spirale' — klassischer linearer Drall
+        return twistAngle * t;
+    }
+  };
+  const flowOsc = (p.flow === 'fluss' || p.flow === 'zick') ? waves : 1;
   const isQuer = p.pattern === 'querwellen';
   // Querwellen: vertikale Wellenanzahl aus dem Rippen-Regler, aber druckbar gehalten:
   // Wellenlänge ≥ ~10 mm und Amplitude so geklemmt, dass der Überhang ≤ ~50° bleibt
@@ -208,7 +238,7 @@ export function buildModel(params) {
   const RS = Math.round(Math.min(640, Math.max(200, p.ribs * 9)) * q);
   const wallBase = isVase ? Math.max(140, H * 1.1) : 110;
   const querExtra = isQuer ? quersV * 14 : 0;
-  const WALL_STEPS = Math.round(Math.min(320, wallBase + Math.abs(twistAngle) * 30 + querExtra) * q);
+  const WALL_STEPS = Math.round(Math.min(340, wallBase + Math.abs(twistAngle) * 30 * Math.min(3, flowOsc) + querExtra) * q);
   const CAVITY_STEPS = Math.round(36 * q);
   const INNER_STEPS = Math.round(44 * q);
 
@@ -228,7 +258,7 @@ export function buildModel(params) {
       a = Math.min(a, querAmpMax);
       return a * Math.sin(2 * Math.PI * quersV * t + querK * theta);
     }
-    return a * waveTheta(p.pattern, p.ribs * (theta + twistAngle * t));
+    return a * waveTheta(p.pattern, p.ribs * (theta + flowPhase(t)));
   };
 
   // --- Stationen: Kontur von Bodenmitte → außen hoch → Rand → innen → Achse

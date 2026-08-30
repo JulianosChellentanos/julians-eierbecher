@@ -4,7 +4,7 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
   buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
-  DEFAULTS, PRODUCTS, PATTERNS, FONTS,
+  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS,
 } from './geometry.js';
 import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
@@ -299,19 +299,40 @@ function overhangStats(geometry) {
   return { worst, frac55: total ? over55 / total : 0 };
 }
 
-function updatePrintBadge(geometry) {
+// Silhouetten-Überhang: max. Auskrag-Winkel der glatten Außenkontur (analytisch).
+// Das ist beim FDM-Druck das harte Kriterium — Mustertiefen ≤ 1,6 mm sind dagegen
+// selbsttragende Mikro-Features (Faustregel: < 2 mm horizontale Ausdehnung).
+function silhouetteOverhang(info) {
+  let worst = 0;
+  const N = 160;
+  let prev = info.radiusAt(0);
+  for (let i = 1; i <= N; i++) {
+    const t = i / N;
+    const r = info.radiusAt(t);
+    const drdy = (r - prev) / (info.height / N);
+    if (drdy > 0) worst = Math.max(worst, Math.atan(drdy) * 180 / Math.PI);
+    prev = r;
+  }
+  return worst;
+}
+
+function updatePrintBadge(geometry, info) {
   const el = $('#print-badge');
+  const sil = silhouetteOverhang(info);
   const { worst, frac55 } = overhangStats(geometry);
   let cls, txt, tip;
-  if (worst <= 50 || frac55 < 0.0005) {
-    cls = 'p-ok'; txt = '✅ Druckbar ohne Stützen';
-    tip = `Max. Überhang ${worst.toFixed(0)}° — problemlos.`;
-  } else if (worst <= 62 && frac55 < 0.02) {
-    cls = 'p-warn'; txt = '⚠️ Steile Stellen — wir drucken mit extra Kühlung';
-    tip = `Max. Überhang ${worst.toFixed(0)}° — druckt mit feinen Schichten sauber.`;
+  if (sil > 62) {
+    cls = 'p-bad'; txt = '🔶 Form kragt stark aus — Silhouette flacher ziehen';
+    tip = `Die Grundform hängt bis ${sil.toFixed(0)}° über — im Formen-Editor sanftere Übergänge wählen.`;
+  } else if (sil > 50) {
+    cls = 'p-warn'; txt = '⚠️ Ausladende Form — wir drucken mit extra Kühlung';
+    tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung — druckt mit feinen Schichten sauber.`;
+  } else if (worst > 75 && frac55 > 0.15) {
+    cls = 'p-warn'; txt = '⚠️ Markante Struktur — druckt mit extra Kühlung';
+    tip = 'Steile Muster-Flanken (selbsttragende Mikro-Struktur) — feine Schichten empfohlen.';
   } else {
-    cls = 'p-bad'; txt = '🔶 Sehr steil — Tiefe/Drall etwas reduzieren';
-    tip = `Max. Überhang ${worst.toFixed(0)}° — Muster flacher stellen für ein sauberes Druckbild.`;
+    cls = 'p-ok'; txt = '✅ Druckbar ohne Stützen';
+    tip = `Silhouette max. ${sil.toFixed(0)}° — problemlos.`;
   }
   el.className = 'stage-print ' + cls;
   el.textContent = txt;
@@ -351,7 +372,7 @@ function rebuild() {
     cupGroup.add(saucerMesh);
   }
   cupMesh.position.y = saucerLift();
-  updatePrintBadge(geometry);
+  updatePrintBadge(geometry, info);
   rebuildText();
   updateProps();
   if (!userInteracted) frameCamera();
@@ -584,6 +605,21 @@ function initControls() {
   bindSlider('#s-ribs', 'ribs', (v) => `${v}`, rebuildSoon);
   bindSlider('#s-depth', 'depth', (v) => `${v.toFixed(1)} mm`, rebuildSoon);
   bindSlider('#s-twist', 'twist', (v) => v === 0 ? 'gerade' : `${v > 0 ? '+' : ''}${Math.round(v * 180)}°`, rebuildSoon);
+  bindSlider('#s-flowwaves', 'flowWaves', (v) => `${v}×`, rebuildSoon);
+
+  // Verlaufsart (wie das Muster über die Höhe fließt)
+  $$('.flow-btn').forEach((b) => b.addEventListener('click', () => {
+    state.flow = b.dataset.flow;
+    $$('.flow-btn').forEach((x) => x.classList.toggle('active', x === b));
+    $('#flowwaves-row').hidden = !(state.flow === 'fluss' || state.flow === 'zick');
+    // Verlauf ohne Stärke ist unsichtbar → sanft eine Vorgabe setzen
+    if (state.twist === 0 && state.flow !== 'spirale') {
+      state.twist = 1;
+      $('#s-twist').value = 1;
+      $('#s-twist-val').textContent = '+180°';
+    }
+    rebuild();
+  }));
   bindSlider('#s-textsize', 'textSize', (v) => `${v} mm`, rebuildTextSoon);
   bindSlider('#s-textpos', 'textPos', (v) => `${Math.round(v * 100)} %`, rebuildTextSoon);
 
@@ -601,6 +637,9 @@ function initControls() {
     state.ribs = 14 + Math.floor(Math.random() * 70);
     state.depth = 0.5 + Math.random() * 1.1;
     state.twist = Math.random() < 0.35 ? 0 : (Math.random() * 3 - 1.5);
+    const flows = Object.keys(FLOWS);
+    state.flow = flows[Math.floor(Math.random() * flows.length)];
+    state.flowWaves = 2 + Math.floor(Math.random() * 4);
     const [hMin, hMax] = PRODUCTS[state.product].heightRange;
     state.height = hMin + Math.floor(Math.random() * (hMax - hMin));
     syncControls();
@@ -666,6 +705,10 @@ function syncControls() {
   $('#s-depth').value = state.depth; $('#s-depth-val').textContent = `${state.depth.toFixed(1)} mm`;
   $('#s-twist').value = state.twist;
   $('#s-twist-val').textContent = state.twist === 0 ? 'gerade' : `${state.twist > 0 ? '+' : ''}${Math.round(state.twist * 180)}°`;
+  $$('.flow-btn').forEach((x) => x.classList.toggle('active', x.dataset.flow === state.flow));
+  $('#flowwaves-row').hidden = !(state.flow === 'fluss' || state.flow === 'zick');
+  $('#s-flowwaves').value = state.flowWaves;
+  $('#s-flowwaves-val').textContent = `${state.flowWaves}×`;
 }
 
 function stlFilename() {

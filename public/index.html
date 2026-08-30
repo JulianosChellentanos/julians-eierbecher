@@ -113,9 +113,22 @@
             <span>Tiefe <output id="s-depth-val"></output></span>
             <input type="range" id="s-depth" min="0.2" max="1.6" step="0.1" value="0.9">
           </label>
+          <div class="flow-block">
+            <span class="flow-label">Verlauf</span>
+            <div class="seg seg-flow">
+              <button class="flow-btn active" data-flow="spirale" title="Klassischer Drall">🌀 Spirale</button>
+              <button class="flow-btn" data-flow="gegen" title="Dreht hoch und wieder zurück — V-Optik">⋀ Gegenläufig</button>
+              <button class="flow-btn" data-flow="fluss" title="Rippen schlängeln sich wie Wellen">〜 Wellen</button>
+              <button class="flow-btn" data-flow="zick" title="Scharfe Richtungswechsel">⚡ Zickzack</button>
+            </div>
+          </div>
           <label class="slider-row">
-            <span>Drall / Spirale <output id="s-twist-val"></output></span>
+            <span>Stärke <output id="s-twist-val"></output></span>
             <input type="range" id="s-twist" min="-2" max="2" step="0.1" value="0">
+          </label>
+          <label class="slider-row" id="flowwaves-row" hidden>
+            <span>Richtungswechsel <output id="s-flowwaves-val"></output></span>
+            <input type="range" id="s-flowwaves" min="2" max="8" step="1" value="3">
           </label>
         </div>
       </section>

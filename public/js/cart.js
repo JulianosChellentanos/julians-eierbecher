@@ -1,6 +1,6 @@
 // OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing)
 import { makeSTL } from './modelfactory.js';
-import { PRODUCTS, PATTERNS, FONTS } from './geometry.js';
+import { PRODUCTS, PATTERNS, FLOWS, FONTS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
 
 const $ = (s) => document.querySelector(s);
@@ -57,7 +57,8 @@ function itemTitle(it) {
 }
 function itemSub(it) {
   const c = it.config;
-  return `${PATTERNS[c.pattern] || c.pattern} · ${c.height} mm · ${it.colorName}` +
+  const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` (${FLOWS[c.flow] || 'Spirale'})` : '';
+  return `${PATTERNS[c.pattern] || c.pattern}${flow} · ${c.height} mm · ${it.colorName}` +
     (c.text ? ` · „${c.text}“ (${FONTS[c.font]?.label || ''})` : '') +
     (it.saucer ? ' · 🍽️ Untersetzer' : '');
 }
