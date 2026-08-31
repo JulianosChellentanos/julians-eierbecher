@@ -41,12 +41,19 @@
 </header>
 
 <section class="hero">
-  <div class="wrap">
-    <p class="eyebrow" id="brand-tagline">Dein Ei. Dein Design.</p>
-    <h1 id="hero-headline">Der Eierbecher, den es nur einmal gibt: deiner.</h1>
-    <p class="sub" id="hero-sub"></p>
-    <button class="btn btn-primary btn-lg" id="hero-cta">Jetzt gestalten</button>
-    <div class="hero-hint">↓ Live-3D-Vorschau · STL für deinen Drucker · Eierbecher ab 9,90&nbsp;€ · Vasen ab 24,90&nbsp;€</div>
+  <div class="wrap hero-grid" id="hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow" id="brand-tagline">Dein Ei. Dein Design.</p>
+      <h1 id="hero-headline">Der Eierbecher, den es nur einmal gibt: deiner.</h1>
+      <p class="sub" id="hero-sub"></p>
+      <button class="btn btn-primary btn-lg" id="hero-cta">Jetzt gestalten</button>
+      <div class="hero-hint">↓ Live-3D-Vorschau · STL für deinen Drucker · Eierbecher ab 9,90&nbsp;€ · Vasen ab 24,90&nbsp;€</div>
+      <div class="trust-row" id="trust-row"></div>
+    </div>
+    <div class="hero-photo" id="hero-photo" hidden>
+      <img id="hero-photo-img" alt="OVJU Unikat auf dem Frühstückstisch">
+      <div class="hero-photo-badge">Jedes Stück ein Unikat ✨</div>
+    </div>
   </div>
 </section>
 
@@ -78,6 +85,7 @@
       </div>
 
       <div class="product-tabs" id="product-tabs"></div>
+      <div class="note-box" id="vase-note" hidden></div>
 
       <section class="ctrl">
         <h3>Form</h3>
@@ -85,6 +93,7 @@
         <div id="shape-editor" hidden>
           <svg id="profile-svg" viewBox="0 0 150 200"></svg>
           <p class="tiny editor-hint">✏️ Zieh die Punkte zur Seite — deine ganz eigene Silhouette.</p>
+          <div class="note-box" id="eigene-note"></div>
         </div>
         <label class="slider-row">
           <span>Höhe <output id="s-height-val"></output></span>
@@ -213,9 +222,23 @@
 </section>
 
 <footer>
-  <div class="wrap">
-    <div class="logo"><span class="logo-mark">🥚</span><span id="footer-brand">OVJU</span></div>
-    <p id="footer-text"></p>
+  <div class="wrap footer-grid">
+    <div>
+      <div class="logo"><span class="logo-mark">🥚</span><span id="footer-brand">OVJU</span></div>
+      <p id="footer-text"></p>
+    </div>
+    <div class="footer-col">
+      <h4>Gut zu wissen</h4>
+      <p>🌱 Pflanzenbasiertes PLA, individuell gedruckt</p>
+      <p>🌾 Vasen für Trockenblumen — imprägniert &amp; i.&nbsp;d.&nbsp;R. wasserfest, ohne Gewähr</p>
+      <p>⚖️ Bei frei gestalteten Formen keine Garantie für Standfestigkeit</p>
+    </div>
+    <div class="footer-col">
+      <h4>Direkt hin</h4>
+      <p><a href="#konfigurator">Konfigurator</a></p>
+      <p><a href="#galerie">Galerie</a></p>
+      <p><a href="#faq">Häufige Fragen</a></p>
+    </div>
   </div>
 </footer>
 
@@ -257,6 +280,7 @@
         <span><b>PayPal</b><br><small>Sofort bezahlen, Druck startet direkt.</small></span></label>
     </div>
     <div id="paypal-buttons" hidden></div>
+    <div class="note-box" id="checkout-note"></div>
     <div class="modal-btns">
       <button type="button" class="btn btn-ghost" id="co-back">← Warenkorb</button>
       <button type="submit" class="btn btn-primary" id="co-submit">Zahlungspflichtig bestellen</button>

@@ -62,6 +62,18 @@
     {
       "q": "Was ist, wenn mir mein Eierbecher nicht gefällt oder er beschädigt ankommt?",
       "a": "Kommt dein Eierbecher beschädigt an, drucken wir kostenlos einen neuen. Da jedes Stück ein Unikat nach deinem Design ist, ist ein klassischer Umtausch ausgeschlossen – melde dich aber einfach, wir finden immer eine Lösung."
+    },
+    {
+      "q": "Sind die Vasen wasserdicht?",
+      "a": "Unsere Vasen sind für Trockenblumen und Gräser konzipiert. Wir imprägnieren das PLA zusätzlich, sodass es in der Regel wasserfest ist — eine Garantie für dauerhafte Wasserdichtigkeit können wir bei 3D-Druck aber nicht übernehmen. Für frische Blumen empfehlen wir ein Glas- oder Kunststoffröhrchen als Einsatz."
+    },
+    {
+      "q": "Woraus bestehen die Produkte?",
+      "a": "Aus PLA — einem Biokunststoff auf Pflanzenbasis (Maisstärke/Zuckerrohr). Matt, robust und langlebig. Bitte nicht in die Spülmaschine geben und nicht dauerhaft über 50 °C aussetzen (z. B. Auto im Sommer)."
+    },
+    {
+      "q": "Gibt es Einschränkungen bei eigenen Formen?",
+      "a": "Du kannst die Silhouette frei gestalten — bei sehr ausgefallenen individuellen Formen (z. B. sehr schmaler Fuß, starker Überhang) können wir für die Standfestigkeit jedoch keine Garantie übernehmen. Unsere Druck-Ampel im Konfigurator warnt dich vor kritischen Formen."
     }
   ],
   "colors": [
@@ -145,5 +157,15 @@
       "text": "Vom Japandi-Klassiker bis zur Skulptur mit eigener Silhouette: bis 22 cm hoch, echte Hohlform, bereit für Trockenblumen.",
       "cta": "Vase designen"
     }
+  },
+  "hinweise": {
+    "vase": "🌾 Für Trockenblumen konzipiert. Das PLA wird imprägniert und ist in der Regel wasserfest — eine Garantie übernehmen wir dafür nicht.",
+    "eigene": "⚖️ Individuelle Form: Du gestaltest frei — für die Standfestigkeit sehr ausgefallener Silhouetten übernehmen wir keine Garantie.",
+    "checkout": "Alle Stücke bestehen aus pflanzenbasiertem PLA und werden individuell für dich gedruckt. Vasen sind für Trockenblumen konzipiert (imprägniert, i. d. R. wasserfest — ohne Gewähr). Bei frei gestalteten Formen keine Garantie für Standfestigkeit.",
+    "trust": [
+      "🌱 Pflanzenbasiertes PLA",
+      "🖨️ Individuell gedruckt in Deutschland",
+      "📦 In 5–8 Werktagen bei dir"
+    ]
   }
 }

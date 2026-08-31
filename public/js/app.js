@@ -58,6 +58,13 @@ async function loadContent() {
   $('#faq-list').innerHTML = content.faq.map((f) => `
     <details class="card"><summary>${f.q}</summary><p>${f.a}</p></details>`).join('');
 
+  // Rechtliche Hinweise & Trust-Row
+  const h = content.hinweise || {};
+  if (h.trust) $('#trust-row').innerHTML = h.trust.map((t) => `<span>${t}</span>`).join('');
+  if (h.vase) $('#vase-note').textContent = h.vase;
+  if (h.eigene) $('#eigene-note').textContent = h.eigene;
+  if (h.checkout) $('#checkout-note').textContent = h.checkout;
+
   // Verfügbare Filament-Farben kommen live vom Server (Admin: 🎨 Farben)
   let colors = content.colors;
   try {
@@ -570,6 +577,7 @@ function setProduct(id) {
   renderPresetButtons();
   renderPrices();
   $('#extras-section').style.display = id === 'eierbecher' ? '' : 'none';
+  $('#vase-note').hidden = id !== 'vase'; // Trockenblumen-Hinweis nur bei Vasen
   userInteracted = false; // neu einrahmen
   rebuild();
 }
@@ -898,6 +906,13 @@ async function loadGallery() {
   // Produktfotos ergänzen, bis das Grid gut gefüllt ist
   const rest = galleryPhotos.filter((g) => g.cat !== 'galerie');
   const items = [...galerie, ...(galerie.length < 4 ? rest : [])];
+  // Hero-Foto: das Eierbecher-Produktfoto (oder erstes Galerie-Bild)
+  const heroPic = galleryPhotos.find((g) => g.cat === 'eierbecher') || galleryPhotos[0];
+  if (heroPic) {
+    $('#hero-photo-img').src = heroPic.file;
+    $('#hero-photo').hidden = false;
+    $('#hero-grid').classList.add('has-photo');
+  }
   if (!items.length) return;
   $('#galerie').hidden = false;
   $('#galerie-grid').innerHTML = items.slice(0, 8).map((g, i) => `

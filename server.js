@@ -265,6 +265,9 @@ function invoiceHTML(order) {
   <p class="muted">${vatNote}</p>
   <div class="note">${payNote}</div>
   <p class="muted" style="margin-top:26px">Vielen Dank für deine Bestellung! Jedes Stück wird individuell für dich gedruckt — Lieferzeit ca. 5–8 Werktage.</p>
+  <p class="muted" style="font-size:11px">Produkthinweise: Alle Artikel bestehen aus pflanzenbasiertem PLA (nicht spülmaschinengeeignet, nicht dauerhaft über 50 °C aussetzen).
+  Vasen sind für Trockenblumen konzipiert; das Material wird imprägniert und ist in der Regel wasserfest — eine Garantie für Wasserdichtigkeit wird nicht übernommen.
+  Bei individuell gestalteten Formen (Formen-Editor) wird keine Garantie für die Standfestigkeit übernommen.</p>
   <div class="noprint"><button onclick="print()">🖨️ Drucken / als PDF speichern</button></div>
   </body></html>`;
 }
