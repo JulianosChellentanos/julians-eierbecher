@@ -10,7 +10,7 @@ import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { makeSTL, loadFont } from './modelfactory.js';
-import { initCart, addToCart, getPricing, fmt, discountTeaser } from './cart.js';
+import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge } from './cart.js';
 import { initAuth } from './auth.js';
 
 // ---------------------------------------------------------------------------
@@ -74,8 +74,16 @@ async function loadContent() {
 
 function renderPrices() {
   const pp = getPricing().products[state.product];
-  $('#price').textContent = fmt(pp.single);
+  const size = volumeSurcharge(state.product, { height: state.height, width: state.width });
+  $('#price').textContent = fmt(pp.single + size);
   $('#price-hint').textContent = discountTeaser(state.product);
+  const badge = $('#price-size');
+  if (size > 0) {
+    badge.hidden = false;
+    badge.textContent = `inkl. ${fmt(size)} Größenaufschlag (XL-Format = mehr Filament & Druckzeit)`;
+  } else {
+    badge.hidden = true;
+  }
 }
 
 function setColor({ id, hex, name }) {
@@ -634,8 +642,9 @@ function initControls() {
     rebuild();
   }));
 
-  bindSlider('#s-height', 'height', (v) => `${v} mm`, rebuildSoon);
-  bindSlider('#s-width', 'width', (v) => `${Math.round(v * 100)} %`, rebuildSoon);
+  const sizeChanged = () => { renderPrices(); rebuildSoon(); };
+  bindSlider('#s-height', 'height', (v) => `${v} mm`, sizeChanged);
+  bindSlider('#s-width', 'width', (v) => `${Math.round(v * 100)} %`, sizeChanged);
   bindSlider('#s-ribs', 'ribs', (v) => `${v}`, rebuildSoon);
   bindSlider('#s-depth', 'depth', (v) => `${v.toFixed(1)} mm`, rebuildSoon);
   bindSlider('#s-twist', 'twist', (v) => v === 0 ? 'gerade' : `${v > 0 ? '+' : ''}${Math.round(v * 180)}°`, rebuildSoon);

@@ -340,6 +340,14 @@ input[type=range]::-moz-range-thumb {
 .price { font-family: var(--serif); font-size: 2rem; font-weight: 700; }
 .price-unit { color: var(--ink-soft); font-size: 0.85rem; margin-left: 6px; }
 .price-hint { font-size: 0.78rem; color: var(--ink-soft); text-align: right; }
+.price-size {
+  font-size: 0.76rem; font-weight: 600; color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 9px; padding: 6px 11px; margin-top: -2px;
+  animation: ctrlIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.price-size[hidden] { display: none; }
 .tiny { font-size: 0.76rem; color: var(--ink-soft); text-align: center; }
 
 /* ---------- Produkt-Showcase ---------- */

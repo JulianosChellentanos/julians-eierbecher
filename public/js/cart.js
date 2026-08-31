@@ -36,11 +36,24 @@ function discountFor(product, qty) {
   for (const t of (pricing.products[product]?.discounts || [])) if (qty >= t.qty && t.off > off) off = t.off;
   return off;
 }
+/** Größenaufschlag (identische Formel wie auf dem Server) */
+export function volumeSurcharge(product, config) {
+  const vol = pricing?.volumen || {};
+  const h0 = pricing?.normalHeight?.[product] || 1;
+  const h = Number(config?.height) || h0;
+  const w = Number(config?.width) || 1;
+  const extra = Math.max(0, (h / h0) * w * w - 1);
+  if (extra <= 0) return 0;
+  const base = pricing.products[product].single;
+  return Math.round(extra * ((vol.prozent || 0) / 100 * base + (vol.euro || 0)) * 100) / 100;
+}
+
 function unitPrice(item) {
   const p = pricing.products[item.product];
-  return p.single
+  return Math.round((p.single
     + (item.product === 'eierbecher' && item.saucer ? p.untersetzer : 0)
-    + (String(item.config?.text || '').trim() ? (pricing.gravur || 0) : 0);
+    + (String(item.config?.text || '').trim() ? (pricing.gravur || 0) : 0)
+    + volumeSurcharge(item.product, item.config)) * 100) / 100;
 }
 function linePrice(item) {
   const off = discountFor(item.product, item.qty);

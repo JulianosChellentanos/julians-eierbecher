@@ -186,18 +186,29 @@ function waveTheta(pattern, phase) {
   return c * 2 - 1;                                                        // weiche Wellen
 }
 
-// Gehämmert: deterministisches Dellenfeld aus interferierenden Wellen.
-// θ-Frequenzen sind ganzzahlig → die Naht bei θ=2π bleibt geschlossen.
-// |·|-Faltung erzeugt die typischen Facettenkanten zwischen den Dellen.
+// Gehämmert: echte Hammerschlag-Dellen — deterministisch gejittertes Gitter
+// runder Kugelkalotten; wo sich Dellen treffen, entstehen scharfe Facettenkanten
+// (max-Verknüpfung). Gitter läuft in θ über n Zellen → Naht bleibt geschlossen.
+const fract = (x) => x - Math.floor(x);
+const hash2 = (i, j, s) => fract(Math.sin(i * 127.1 + j * 311.7 + s * 74.7) * 43758.5453);
 function hammerField(theta, w, n, lambda) {
-  const h =
-    Math.sin(n * theta + 0.7 + 2 * Math.PI * w / lambda) *
-      Math.cos(2 * Math.PI * w / (lambda * 0.81) + 1.3) +
-    Math.sin((n + 7) * theta + 2.1 - 2 * Math.PI * w / (lambda * 1.27)) *
-      Math.cos(2 * Math.PI * w / (lambda * 1.11) + 4.2) +
-    Math.sin((n + 3) * theta + 4.6 + 2 * Math.PI * w / (lambda * 0.93)) *
-      Math.cos(n * 0.5 * theta - 2 * Math.PI * w / (lambda * 1.53));
-  return 1 - 2 * Math.min(1, Math.abs(h / 1.7)); // Dellen mit Kanten-Netz
+  const u = (theta / (2 * Math.PI)) * n; // Zellkoordinaten: u ∈ [0, n)
+  const v = w / lambda;
+  const iu = Math.floor(u), iv = Math.floor(v);
+  let best = 0;
+  for (let di = -1; di <= 1; di++) {
+    for (let dj = -1; dj <= 1; dj++) {
+      const gi = iu + di, gj = iv + dj;
+      const ci = ((gi % n) + n) % n; // θ-Wrap für den Hash (nahtlos)
+      const jx = hash2(ci, gj, 1), jy = hash2(ci, gj, 2);
+      const cx = gi + 0.5 + (jx - 0.5) * 0.75; // Schlagzentrum, gejittert
+      const cy = gj + 0.5 + (jy - 0.5) * 0.75;
+      const R = 0.82 + jx * 0.38;              // Schlaggröße variiert
+      const d2 = ((u - cx) ** 2 + (v - cy) ** 2) / (R * R);
+      if (d2 < 1) best = Math.max(best, Math.sqrt(1 - d2)); // Kugelkalotte
+    }
+  }
+  return 0.9 - 1.9 * best; // Dellen nach innen, schmale Grate zwischen den Schlägen
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +291,8 @@ export function buildModel(params) {
   const q = Math.min(1, Math.max(0.4, p.quality));
   // Radiale Auflösung: ≥ 12 Segmente pro Rippenperiode (Zickzack 16), sonst
   // zittern die Gratlinien körnig über die Ringe („zackig“ statt samtig).
-  const RS = Math.round(Math.min(1080, Math.max(240, ribs * (p.pattern === 'zickzack' ? 16 : p.pattern === 'lamellen' ? 14 : 12))) * q);
+  const rsFactor = { zickzack: 16, lamellen: 14, gehaemmert: 8 }[p.pattern] || 12;
+  const RS = Math.round(Math.min(1080, Math.max(240, ribs * rsFactor)) * q);
   const wallBase = isVase ? Math.max(160, H * 1.4) : 130;
   const querExtra = isQuer ? quersV * 14 : 0;
   const WALL_STEPS = Math.round(Math.min(430, wallBase + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);

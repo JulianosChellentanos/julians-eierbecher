@@ -45,6 +45,9 @@ const DEFAULT_SETTINGS = {
     },
     shipping: { flat: 4.90, freeFrom: 39 },
     gravur: 3.00,
+    // Größenaufschlag: mehr Volumen = mehr Filament & Druckzeit.
+    // relVol = (Höhe/Normalhöhe) · Breitenfaktor² ; Aufschlag nur oberhalb Normal.
+    volumen: { prozent: 60, euro: 0 },
   },
   company: {
     name: 'OVJU — Julians Eierbecher', owner: 'Julian Sendlhofer',
@@ -75,6 +78,7 @@ function loadSettings() {
   }
   if (!Array.isArray(settings.coupons)) settings.coupons = [];
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
+  if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
   saveSettings();
 }
 async function saveSettings() {
@@ -114,6 +118,20 @@ const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address ||
 // ---------------------------------------------------------------------------
 // Preisberechnung (Server = einzige Wahrheit)
 // ---------------------------------------------------------------------------
+// Normalgrößen (Standard-Höhe des Produkts, Breite 100 %)
+const NORMAL_HEIGHT = { eierbecher: 58, vase: 150 };
+
+/** Größenaufschlag in € — Mehrvolumen relativ zur Normalgröße, nur nach oben. */
+function volumeSurcharge(product, config, basePrice) {
+  const vol = settings.pricing.volumen || {};
+  const h = Number(config?.height) || NORMAL_HEIGHT[product] || 1;
+  const w = Number(config?.width) || 1;
+  const rel = (h / (NORMAL_HEIGHT[product] || h)) * w * w;
+  const extra = Math.max(0, rel - 1); // Mehrvolumen-Anteil (1 = +100 %)
+  if (extra <= 0) return 0;
+  return Math.round(extra * ((vol.prozent || 0) / 100 * basePrice + (vol.euro || 0)) * 100) / 100;
+}
+
 function discountFor(product, qty) {
   const tiers = settings.pricing[product]?.discounts || [];
   let off = 0;
@@ -127,6 +145,8 @@ function priceItem(item) {
   let unit = p.single;
   if (item.product === 'eierbecher' && item.saucer) unit += p.untersetzer;
   if (String(item.config?.text || '').trim()) unit += settings.pricing.gravur || 0;
+  unit += volumeSurcharge(item.product, item.config, p.single);
+  unit = Math.round(unit * 100) / 100;
   const off = discountFor(item.product, qty);
   const lineFull = unit * qty;
   const line = Math.round(lineFull * (1 - off / 100) * 100) / 100;
@@ -371,6 +391,8 @@ const server = http.createServer(async (req, res) => {
         },
         shipping: pr.shipping,
         gravur: pr.gravur,
+        volumen: pr.volumen,
+        normalHeight: NORMAL_HEIGHT,
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
       });
     }
