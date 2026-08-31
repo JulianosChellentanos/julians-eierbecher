@@ -838,6 +838,20 @@ async function productShot(params, hex, extraProp) {
   return url;
 }
 
+// Galerie & Produktfotos (im Admin unter 🖼️ Bilder gepflegt)
+let galleryPhotos = [];
+async function loadGallery() {
+  try { galleryPhotos = await (await fetch('/api/gallery')).json(); } catch { galleryPhotos = []; }
+  const galerie = galleryPhotos.filter((g) => g.cat === 'galerie');
+  // Produktfotos ohne eigenen Galerie-Eintrag auch in der Galerie zeigen
+  const rest = galleryPhotos.filter((g) => g.cat !== 'galerie');
+  const items = [...galerie, ...(galerie.length < 2 ? rest : [])];
+  if (!items.length) return;
+  $('#galerie').hidden = false;
+  $('#galerie-grid').innerHTML = items.slice(0, 8).map((g, i) => `
+    <figure class="galerie-item ${i === 0 ? 'big' : ''}"><img src="${g.file}" loading="lazy" alt="OVJU Produktfoto"></figure>`).join('');
+}
+
 async function renderShowcase() {
   const sc = content.showcase;
   if (!sc) return;
@@ -855,7 +869,11 @@ async function renderShowcase() {
       price: getPricing().products.vase.single,
     },
   ];
-  for (const d of defs) d.img = await productShot(d.params, d.hex, d.extra);
+  // Echte Produktfotos (Admin-Upload) bevorzugen, Engine-Render als Fallback
+  for (const d of defs) {
+    const photo = galleryPhotos.find((g) => g.cat === d.id);
+    d.img = photo ? photo.file : await productShot(d.params, d.hex, d.extra);
+  }
   $('#showcase').innerHTML = defs.map((d) => `
     <div class="showcase-card" data-product="${d.id}">
       <img src="${d.img}" alt="${d.c.title}">
@@ -888,7 +906,8 @@ async function renderShowcase() {
   rebuild();
   animate();
   $('#loading').classList.add('hidden');
-  setTimeout(renderShowcase, 400); // Produkt-Showcase mit echten Engine-Renders
+  await loadGallery();
+  setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders
 
   // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
   window.__ovju = {

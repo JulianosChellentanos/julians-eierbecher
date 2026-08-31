@@ -2,3 +2,4 @@ node_modules/
 orders/
 *.log
 data/
+public/img/gallery/

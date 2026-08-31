@@ -106,6 +106,28 @@
     </div>
   </div>
 
+  <!-- 🖼️ Bilder -->
+  <div id="pane-images" hidden>
+    <div class="card">
+      <h2>🖼️ Produktfotos &amp; Galerie <small class="h">— erscheinen sofort auf der Startseite</small></h2>
+      <p class="muted" style="margin-bottom:14px">
+        <b>Galerie</b>-Fotos füllen die Sektion „Zuhause bei OVJU“.
+        Ein Foto der Kategorie <b>Eierbecher</b> bzw. <b>Vase</b> ersetzt zusätzlich das Render-Bild der jeweiligen Produktkarte.
+      </p>
+      <div class="row">
+        <select id="img-cat">
+          <option value="galerie">Galerie</option>
+          <option value="eierbecher">Eierbecher (Produktkarte)</option>
+          <option value="vase">Vase (Produktkarte)</option>
+        </select>
+        <input type="file" id="img-file" accept="image/jpeg,image/png,image/webp" multiple>
+        <button onclick="uploadImages()">⬆ Hochladen</button>
+        <span id="img-msg" class="ok"></span>
+      </div>
+      <div id="img-list" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:18px"></div>
+    </div>
+  </div>
+
   <!-- 💰 Preise -->
   <div id="pane-pricing" hidden>
     <div class="card">
@@ -210,6 +232,7 @@ function logout() { localStorage.removeItem('ovju-admin-key'); showLogin(); }
 
 const TABS = [
   ['dash', '📊 Dashboard'], ['orders', '📦 Bestellungen'], ['colors', '🎨 Farben'],
+  ['images', '🖼️ Bilder'],
   ['pricing', '💰 Preise & Gutscheine'], ['company', '🏢 Firma'], ['paypal', '💙 PayPal'], ['system', '⚙️ System'],
 ];
 const SETTINGS_TABS = ['colors', 'pricing', 'company', 'paypal', 'system'];
@@ -354,6 +377,39 @@ function addColor() {
 }
 
 // ---------------------------------------------------------------------------
+// Bilder (Galerie & Produktfotos)
+// ---------------------------------------------------------------------------
+async function loadImages() {
+  const imgs = await (await fetch('/api/gallery')).json();
+  $('#img-list').innerHTML = imgs.map((g) => `
+    <div style="text-align:center">
+      <img src="${g.file}" style="width:150px;height:150px;object-fit:cover;border-radius:12px;border:1px solid var(--line)">
+      <div style="margin-top:5px"><span class="badge">${g.cat}</span>
+        <button class="ghost mini" onclick="deleteImage('${g.file.split('/').pop()}')">🗑</button></div>
+    </div>`).join('') || '<p class="muted">Noch keine Fotos — lade deine Produktbilder hoch!</p>';
+}
+async function uploadImages() {
+  const files = $('#img-file').files;
+  if (!files.length) { $('#img-msg').textContent = 'Bitte Datei(en) wählen'; return; }
+  const cat = $('#img-cat').value;
+  let done = 0;
+  for (const f of files) {
+    const r = await fetch(`/api/admin/gallery?cat=${cat}&name=${encodeURIComponent(f.name)}`, {
+      method: 'PUT', headers: { 'x-admin-key': KEY(), 'Content-Type': f.type }, body: f,
+    });
+    if (r.ok) done++;
+  }
+  $('#img-msg').textContent = `✅ ${done} Foto(s) hochgeladen — live auf der Seite`;
+  $('#img-file').value = '';
+  setTimeout(() => $('#img-msg').textContent = '', 3500);
+  loadImages();
+}
+async function deleteImage(name) {
+  await fetch(`/api/admin/gallery/${name}`, { method: 'DELETE', headers: { 'x-admin-key': KEY() } });
+  loadImages();
+}
+
+// ---------------------------------------------------------------------------
 // Preise, Rabatte, Gutscheine
 // ---------------------------------------------------------------------------
 function renderTiers() {
@@ -466,6 +522,7 @@ async function load() {
   renderDash();
   renderOrders();
   fillSettings();
+  loadImages();
 }
 load().catch(() => {});
 </script>

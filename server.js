@@ -3,7 +3,7 @@
 import http from 'node:http';
 import { createGzip, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
@@ -20,7 +20,8 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.woff2': 'font/woff2', '.stl': 'model/stl', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.hdr': 'application/octet-stream',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.hdr': 'application/octet-stream',
   '.ico': 'image/x-icon',
 };
 
@@ -415,6 +416,37 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    // --- Galerie (Produktfotos, gepflegt über den Admin)
+    if (p === '/api/gallery') {
+      const dir = path.join(PUBLIC, 'img', 'gallery');
+      if (!existsSync(dir)) return send(res, 200, []);
+      const files = (await readdir(dir)).filter((f) => /\.(jpe?g|png|webp)$/i.test(f)).sort();
+      return send(res, 200, files.map((f) => ({
+        file: `/img/gallery/${f}`,
+        cat: (f.match(/^(eierbecher|vase|galerie)-/) || [, 'galerie'])[1],
+      })));
+    }
+    const mImg = p.match(/^\/api\/admin\/gallery\/([a-zA-Z0-9._-]+)$/);
+    if (req.method === 'PUT' && p === '/api/admin/gallery') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const cat = ['eierbecher', 'vase', 'galerie'].includes(url.searchParams.get('cat')) ? url.searchParams.get('cat') : 'galerie';
+      const rawName = (url.searchParams.get('name') || 'foto.jpg').replace(/[^a-zA-Z0-9._-]/g, '_');
+      if (!/\.(jpe?g|png|webp)$/i.test(rawName)) return send(res, 400, { ok: false, error: 'Nur JPG/PNG/WebP' });
+      const body = await readBody(req, 10 * 1024 * 1024);
+      if (body.length < 100) return send(res, 400, { ok: false, error: 'Leere Datei' });
+      const dir = path.join(PUBLIC, 'img', 'gallery');
+      await mkdir(dir, { recursive: true });
+      const fname = `${cat}-${Date.now().toString(36)}-${rawName}`;
+      await writeFile(path.join(dir, fname), body);
+      return send(res, 200, { ok: true, file: `/img/gallery/${fname}` });
+    }
+    if (req.method === 'DELETE' && mImg) {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const file = path.join(PUBLIC, 'img', 'gallery', mImg[1]);
+      if (existsSync(file)) await rm(file);
+      return send(res, 200, { ok: true });
+    }
+
     if (p === '/api/colors') {
       return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex }) => ({ id, name, hex })));
     }
@@ -552,7 +584,7 @@ const server = http.createServer(async (req, res) => {
     const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
     // vendor/fonts/env ändern sich praktisch nie → lange cachen;
     // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe)
-    const isAsset = p.startsWith('/vendor/') || p.startsWith('/fonts/') || p.startsWith('/env/');
+    const isAsset = p.startsWith('/vendor/') || p.startsWith('/fonts/') || p.startsWith('/env/') || p.startsWith('/img/gallery/');
     headers['Cache-Control'] = isAsset ? 'public, max-age=2592000, immutable' : 'no-cache';
     const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
     headers.ETag = etag;
