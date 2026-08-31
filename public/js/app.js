@@ -9,6 +9,7 @@ import {
 import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
+import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { makeSTL, loadFont } from './modelfactory.js';
 import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge } from './cart.js';
 import { initAuth } from './auth.js';
@@ -72,11 +73,14 @@ async function loadContent() {
     if (Array.isArray(live) && live.length) colors = live;
   } catch { /* Fallback: content.json */ }
   content.colors = colors;
+  // Matt zuerst, dann Glanz/Metallic — mit Finish-Effekt auf dem Swatch
+  const order = { matt: 0, glanz: 1, metall: 2 };
+  colors.sort((a, b) => (order[a.finish || 'matt'] ?? 0) - (order[b.finish || 'matt'] ?? 0));
   $('#swatches').innerHTML = colors.map((c) => `
-    <button class="swatch" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}"
-      style="--sw:${c.hex}" title="${c.name}"><span></span></button>`).join('');
+    <button class="swatch sw-${c.finish || 'matt'}" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}" data-finish="${c.finish || 'matt'}"
+      style="--sw:${c.hex}" title="${c.name}${(c.finish || 'matt') !== 'matt' ? ' · ' + FINISH_LABEL[c.finish] : ''}"><span></span></button>`).join('');
   $$('.swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
-  setColor({ id: colors[0].id, hex: colors[0].hex, name: colors[0].name });
+  setColor(colors[0]);
 }
 
 function renderPrices() {
@@ -93,11 +97,14 @@ function renderPrices() {
   }
 }
 
-function setColor({ id, hex, name }) {
-  state.color = id; state.colorHex = hex; state.colorName = name;
+function setColor({ id, hex, name, finish }) {
+  const f = finish || 'matt';
+  state.color = id; state.colorHex = hex; state.colorName = name; state.colorFinish = f;
   $$('.swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
-  $('#color-name').textContent = name;
+  $('#color-name').textContent = f === 'matt' ? name : `${name} · ${FINISH_LABEL[f]}`;
   material.color.set(hex);
+  Object.assign(material, FINISH_PROPS[f] || FINISH_PROPS.matt);
+  material.needsUpdate = true;
   document.documentElement.style.setProperty('--accent-live', hex);
 }
 
@@ -147,7 +154,19 @@ const ground = new THREE.Mesh(
 ground.receiveShadow = true;
 scene.add(ground);
 
-const material = new THREE.MeshStandardMaterial({ color: state.colorHex, roughness: 0.62, metalness: 0.0 });
+// Finishes wie bei echten PLA-Sorten: matt, glossy, Silk/Metallic
+const FINISH_PROPS = {
+  matt: { roughness: 0.62, metalness: 0.0, clearcoat: 0.0, clearcoatRoughness: 0.5 },
+  glanz: { roughness: 0.16, metalness: 0.04, clearcoat: 0.75, clearcoatRoughness: 0.18 },
+  metall: { roughness: 0.28, metalness: 0.92, clearcoat: 0.0, clearcoatRoughness: 0.5 },
+};
+export const FINISH_LABEL = { matt: 'matt', glanz: 'glänzend', metall: 'metallic' };
+const material = new THREE.MeshPhysicalMaterial({ color: state.colorHex, ...FINISH_PROPS.matt });
+
+// Neutrale Studio-Umgebung → Metall & Glanz reflektieren auch ohne HDRI-Szene
+const pmrem = new THREE.PMREMGenerator(renderer);
+const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
 
 // ---------------------------------------------------------------------------
 // Szenen: Studio (clean) + fotoreale CC0-HDRI-Räume von Poly Haven
@@ -217,9 +236,9 @@ async function applyScene(key) {
     scene.backgroundIntensity = cfg.bgI;
     hemi.intensity = 0.15;
   } else {
-    scene.environment = null;
+    scene.environment = roomEnv; // neutrale Reflexionen fürs Studio
     scene.background = null;
-    hemi.intensity = cfg.hemi;
+    hemi.intensity = cfg.hemi * 0.7;
   }
   if (!userInteracted) frameCamera();
 }
@@ -708,7 +727,8 @@ function initControls() {
     renderer.render(scene, camera);
     addToCart({
       config: currentConfig(),
-      colorName: state.colorName,
+      colorName: state.colorFinish && state.colorFinish !== 'matt'
+        ? `${state.colorName} (${FINISH_LABEL[state.colorFinish]})` : state.colorName,
       colorHex: state.colorHex,
       thumb: captureThumb(),
     });

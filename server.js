@@ -79,6 +79,21 @@ function loadSettings() {
   if (!Array.isArray(settings.coupons)) settings.coupons = [];
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
+  // Migration: Finishes (matt/glanz/metall) + bekannte Silk-/Glossy-PLA-Farben
+  if (!settings.colorsV2) {
+    for (const c of settings.colors) if (!c.finish) c.finish = 'matt';
+    const have = new Set(settings.colors.map((c) => c.id));
+    const neu = [
+      { id: 'gold', name: 'Gold', hex: '#d4af37', finish: 'metall', note: 'Silk/Metallic PLA' },
+      { id: 'silber', name: 'Silber', hex: '#c7c9cc', finish: 'metall', note: 'Silk/Metallic PLA' },
+      { id: 'kupfer', name: 'Kupfer', hex: '#b87333', finish: 'metall', note: 'Silk/Metallic PLA' },
+      { id: 'feuerrot', name: 'Feuerrot', hex: '#c8102e', finish: 'glanz', note: 'Glossy PLA' },
+      { id: 'tiefschwarz', name: 'Tiefschwarz', hex: '#1a1a1c', finish: 'glanz', note: 'Glossy PLA' },
+      { id: 'perlmutt', name: 'Perlmutt', hex: '#ece6da', finish: 'metall', note: 'Silk PLA' },
+    ];
+    for (const c of neu) if (!have.has(c.id)) settings.colors.push({ ...c, active: true });
+    settings.colorsV2 = true;
+  }
   saveSettings();
 }
 async function saveSettings() {
@@ -477,7 +492,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/colors') {
-      return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex }) => ({ id, name, hex })));
+      return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish }) => ({ id, name, hex, finish: finish || 'matt' })));
     }
     if (req.method === 'POST' && p === '/api/quote') {
       const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));

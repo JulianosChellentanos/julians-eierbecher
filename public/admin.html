@@ -363,19 +363,22 @@ async function saveOrder(id) {
 // ---------------------------------------------------------------------------
 // Farben (Filament-Verwaltung)
 // ---------------------------------------------------------------------------
+const FINISHES = { matt: 'Matt', glanz: 'Glänzend', metall: 'Metallic/Silk' };
 function renderColors() {
-  $('#colors-table').innerHTML = `<tr><th></th><th>Name</th><th>Farbwert</th><th>Notiz (z. B. Hersteller, Restmenge)</th><th>Im Shop</th><th></th></tr>` +
+  $('#colors-table').innerHTML = `<tr><th></th><th>Name</th><th>Farbwert</th><th>Finish</th><th>Notiz (z. B. Hersteller, Restmenge)</th><th>Im Shop</th><th></th></tr>` +
     colors.map((c, i) => `<tr>
       <td><span class="sw" style="background:${esc(c.hex)}"></span></td>
-      <td><input type="text" value="${esc(c.name)}" onchange="colors[${i}].name=this.value" style="width:150px"></td>
+      <td><input type="text" value="${esc(c.name)}" onchange="colors[${i}].name=this.value" style="width:140px"></td>
       <td><input type="color" value="${esc(c.hex)}" onchange="colors[${i}].hex=this.value;renderColors()"> <code>${esc(c.hex)}</code></td>
-      <td><input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA matt, 600 g übrig" style="width:100%"></td>
+      <td><select onchange="colors[${i}].finish=this.value">${Object.entries(FINISHES).map(([k, l]) =>
+        `<option value="${k}" ${(c.finish || 'matt') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+      <td><input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA Silk, 600 g übrig" style="width:100%"></td>
       <td style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"></td>
       <td><button class="ghost mini" onclick="colors.splice(${i},1);renderColors()">🗑</button></td>
     </tr>`).join('');
 }
 function addColor() {
-  colors.push({ id: 'farbe-' + Date.now().toString(36), name: 'Neue Farbe', hex: '#a0a0a0', note: '', active: true });
+  colors.push({ id: 'farbe-' + Date.now().toString(36), name: 'Neue Farbe', hex: '#a0a0a0', finish: 'matt', note: '', active: true });
   renderColors();
 }
 
