@@ -99,11 +99,13 @@
       <section class="ctrl">
         <h3>Oberfläche</h3>
         <div class="seg">
-          <button class="pattern-btn" data-pattern="glatt">Glatt</button>
-          <button class="pattern-btn active" data-pattern="rippen">Rippen</button>
-          <button class="pattern-btn" data-pattern="wellen">Wellen</button>
-          <button class="pattern-btn" data-pattern="zickzack">Zickzack</button>
-          <button class="pattern-btn" data-pattern="querwellen">Querwellen</button>
+          <button class="pattern-btn" data-pattern="glatt" title="Ganz ohne Struktur">Glatt</button>
+          <button class="pattern-btn active" data-pattern="rippen" title="Feine Grate — der Klassiker">Rippen</button>
+          <button class="pattern-btn" data-pattern="wellen" title="Weiche runde Wellen">Wellen</button>
+          <button class="pattern-btn" data-pattern="lamellen" title="Tiefe Plissee-Schlitze wie bei Design-Vasen">Lamellen</button>
+          <button class="pattern-btn" data-pattern="zickzack" title="Scharfe Facetten">Zickzack</button>
+          <button class="pattern-btn" data-pattern="querwellen" title="Horizontale Wellenringe">Querwellen</button>
+          <button class="pattern-btn" data-pattern="gehaemmert" title="Organische Dellen wie gehämmertes Metall">Gehämmert</button>
         </div>
         <div id="surface-sliders">
           <label class="slider-row">
@@ -135,18 +137,25 @@
       </section>
 
       <section class="ctrl">
-        <h3>Gravur <span class="opt">(optional)</span></h3>
-        <input type="text" id="i-text" maxlength="16" placeholder="z. B. JULIAN" autocomplete="off">
-        <div class="font-row" id="font-row"></div>
-        <label class="slider-row">
-          <span>Schriftgröße <output id="s-textsize-val"></output></span>
-          <input type="range" id="s-textsize" min="4" max="10" step="0.5" value="7">
+        <h3>Gravur</h3>
+        <label class="check-row">
+          <input type="checkbox" id="c-gravur">
+          <span>✒️ <b>Persönliche Gravur</b> <span class="opt" id="gravur-price"></span><br>
+          <small>Name oder kurzer Text, plastisch in die Wand geprägt — in 7 Schriftarten.</small></span>
         </label>
-        <label class="slider-row">
-          <span>Position (Höhe) <output id="s-textpos-val"></output></span>
-          <input type="range" id="s-textpos" min="0.15" max="0.8" step="0.01" value="0.55">
-        </label>
-        <div class="warn" id="text-warn"></div>
+        <div id="gravur-options" hidden>
+          <input type="text" id="i-text" maxlength="16" placeholder="z. B. JULIAN" autocomplete="off">
+          <div class="font-row" id="font-row"></div>
+          <label class="slider-row">
+            <span>Schriftgröße <output id="s-textsize-val"></output></span>
+            <input type="range" id="s-textsize" min="4" max="10" step="0.5" value="7">
+          </label>
+          <label class="slider-row">
+            <span>Position (Höhe) <output id="s-textpos-val"></output></span>
+            <input type="range" id="s-textpos" min="0.15" max="0.8" step="0.01" value="0.55">
+          </label>
+          <div class="warn" id="text-warn"></div>
+        </div>
       </section>
 
       <section class="ctrl">

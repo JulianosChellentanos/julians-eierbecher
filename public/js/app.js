@@ -327,6 +327,9 @@ function updatePrintBadge(geometry, info) {
   } else if (sil > 50) {
     cls = 'p-warn'; txt = '⚠️ Ausladende Form — wir drucken mit extra Kühlung';
     tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung — druckt mit feinen Schichten sauber.`;
+  } else if (state.depth > 2.5 && worst > 65 && frac55 > 0.08) {
+    cls = 'p-bad'; txt = '🔶 Tiefe Struktur zu schräg — Drall reduzieren';
+    tip = `Bei ${state.depth.toFixed(1)} mm Mustertiefe sind ${worst.toFixed(0)}°-Flanken echte Überhänge.`;
   } else if (worst > 75 && frac55 > 0.15) {
     cls = 'p-warn'; txt = '⚠️ Markante Struktur — druckt mit extra Kühlung';
     tip = 'Steile Muster-Flanken (selbsttragende Mikro-Struktur) — feine Schichten empfohlen.';
@@ -566,16 +569,40 @@ function setProduct(id) {
 // ---------------------------------------------------------------------------
 // UI-Bindings
 // ---------------------------------------------------------------------------
+function sliderFill(el) {
+  const pct = ((el.value - el.min) / (el.max - el.min)) * 100;
+  el.style.setProperty('--fill', pct + '%');
+}
+
 function bindSlider(id, key, fmt, cb) {
   const el = $(id);
   const out = $(id + '-val');
   const update = () => {
     state[key] = parseFloat(el.value);
     if (out) out.textContent = fmt(state[key]);
+    sliderFill(el);
     cb();
   };
   el.addEventListener('input', update);
   update();
+}
+
+// Tiefe-Regler passt seinen Bereich dem Muster an (Lamellen dürfen richtig tief)
+const DEPTH_RANGES = {
+  lamellen: { min: 1.5, max: 6, step: 0.25, def: 4 },
+  gehaemmert: { min: 0.3, max: 1.2, step: 0.1, def: 0.8 },
+  default: { min: 0.2, max: 1.6, step: 0.1, def: 0.9 },
+};
+function applyDepthRange() {
+  const r = DEPTH_RANGES[state.pattern] || DEPTH_RANGES.default;
+  const el = $('#s-depth');
+  el.min = r.min; el.max = r.max; el.step = r.step;
+  if (state.depth < r.min || state.depth > r.max) {
+    state.depth = r.def;
+    el.value = r.def;
+  }
+  $('#s-depth-val').textContent = `${state.depth.toFixed(1)} mm`;
+  sliderFill(el);
 }
 
 function renderFontRow() {
@@ -603,6 +630,7 @@ function initControls() {
       $('#s-ribs').value = 24;
       $('#s-ribs-val').textContent = '24';
     }
+    applyDepthRange();
     rebuild();
   }));
 
@@ -677,6 +705,19 @@ function initControls() {
   $('#btn-foto').addEventListener('click', fotoShooting);
   $('#foto-close').addEventListener('click', () => $('#foto-modal').close());
 
+  // Gravur als aktivierbares Extra (Preis kommt aus dem Admin)
+  $('#gravur-price').textContent = `+ ${fmt(getPricing().gravur ?? 3)}`;
+  $('#c-gravur').addEventListener('change', (e) => {
+    $('#gravur-options').hidden = !e.target.checked;
+    if (!e.target.checked) {
+      state.text = '';
+      $('#i-text').value = '';
+      rebuildText();
+    } else {
+      $('#i-text').focus();
+    }
+  });
+
   // Untersetzer
   $('#saucer-price').textContent = `+ ${fmt(getPricing().products.eierbecher.untersetzer)}`;
   $('#c-saucer').addEventListener('change', (e) => {
@@ -709,8 +750,10 @@ function syncControls() {
   $('#s-height').value = state.height; $('#s-height-val').textContent = `${state.height} mm`;
   $('#s-ribs').value = state.ribs; $('#s-ribs-val').textContent = `${state.ribs}`;
   $('#s-depth').value = state.depth; $('#s-depth-val').textContent = `${state.depth.toFixed(1)} mm`;
+  applyDepthRange();
   $('#s-twist').value = state.twist;
   $('#s-twist-val').textContent = state.twist === 0 ? 'gerade' : `${state.twist > 0 ? '+' : ''}${Math.round(state.twist * 180)}°`;
+  $$('input[type=range]').forEach((el) => sliderFill(el));
   $$('.flow-btn').forEach((x) => x.classList.toggle('active', x.dataset.flow === state.flow));
   $('#flowwaves-row').hidden = !(state.flow === 'fluss' || state.flow === 'zick');
   $('#s-flowwaves').value = state.flowWaves;

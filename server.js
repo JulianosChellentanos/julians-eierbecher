@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS = {
       discounts: [{ qty: 2, off: 10 }, { qty: 3, off: 15 }],
     },
     shipping: { flat: 4.90, freeFrom: 39 },
+    gravur: 3.00,
   },
   company: {
     name: 'OVJU — Julians Eierbecher', owner: 'Julian Sendlhofer',
@@ -73,6 +74,7 @@ function loadSettings() {
     } catch { settings.colors = []; }
   }
   if (!Array.isArray(settings.coupons)) settings.coupons = [];
+  if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   saveSettings();
 }
 async function saveSettings() {
@@ -124,6 +126,7 @@ function priceItem(item) {
   const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
   let unit = p.single;
   if (item.product === 'eierbecher' && item.saucer) unit += p.untersetzer;
+  if (String(item.config?.text || '').trim()) unit += settings.pricing.gravur || 0;
   const off = discountFor(item.product, qty);
   const lineFull = unit * qty;
   const line = Math.round(lineFull * (1 - off / 100) * 100) / 100;
@@ -367,6 +370,7 @@ const server = http.createServer(async (req, res) => {
           vase: { single: pr.vase.single, discounts: pr.vase.discounts },
         },
         shipping: pr.shipping,
+        gravur: pr.gravur,
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
       });
     }

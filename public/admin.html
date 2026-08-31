@@ -136,6 +136,7 @@
         <label>Eierbecher (€/Stück)<input type="number" step="0.1" id="s-egg-single"></label>
         <label>Untersetzer (€/Stück)<input type="number" step="0.1" id="s-egg-saucer"></label>
         <label>Vase (€/Stück)<input type="number" step="0.1" id="s-vase-single"></label>
+        <label>Gravur-Aufpreis (€/Stück)<input type="number" step="0.5" id="s-gravur"></label>
         <label>Versand pauschal (€)<input type="number" step="0.1" id="s-ship-flat"></label>
         <label>Versandfrei ab (€)<input type="number" step="1" id="s-ship-free"></label>
       </div>
@@ -448,6 +449,7 @@ function fillSettings() {
   $('#s-egg-single').value = s.pricing.eierbecher.single;
   $('#s-egg-saucer').value = s.pricing.eierbecher.untersetzer;
   $('#s-vase-single').value = s.pricing.vase.single;
+  $('#s-gravur').value = s.pricing.gravur ?? 3;
   $('#s-ship-flat').value = s.pricing.shipping.flat;
   $('#s-ship-free').value = s.pricing.shipping.freeFrom;
   tiers.egg = structuredClone(s.pricing.eierbecher.discounts);
@@ -470,6 +472,7 @@ async function saveSettings() {
       currency: 'EUR',
       eierbecher: { single: +$('#s-egg-single').value, untersetzer: +$('#s-egg-saucer').value, discounts: tiers.egg },
       vase: { single: +$('#s-vase-single').value, discounts: tiers.vase },
+      gravur: +$('#s-gravur').value,
       shipping: { flat: +$('#s-ship-flat').value, freeFrom: +$('#s-ship-free').value },
     },
     company: {

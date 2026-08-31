@@ -97,8 +97,10 @@ export const PATTERNS = {
   glatt: 'Glatt',
   rippen: 'Rippen',
   wellen: 'Wellen',
+  lamellen: 'Lamellen',
   zickzack: 'Zickzack',
   querwellen: 'Querwellen',
+  gehaemmert: 'Gehämmert',
 };
 
 // Verlauf: wie das Muster über die Höhe „fließt“ (Phasenverschiebung φ(t))
@@ -180,7 +182,22 @@ function waveTheta(pattern, phase) {
   const c = (Math.cos(phase) + 1) / 2; // 0..1
   if (pattern === 'rippen') return Math.pow(c, 2.2) * 2 - 1;              // schmale Grate
   if (pattern === 'zickzack') return (2 / Math.PI) * Math.asin(Math.sin(phase)); // Facetten
+  if (pattern === 'lamellen') return Math.pow(c, 0.42) * 2 - 1;           // breite Stege, tiefe schmale Schlitze
   return c * 2 - 1;                                                        // weiche Wellen
+}
+
+// Gehämmert: deterministisches Dellenfeld aus interferierenden Wellen.
+// θ-Frequenzen sind ganzzahlig → die Naht bei θ=2π bleibt geschlossen.
+// |·|-Faltung erzeugt die typischen Facettenkanten zwischen den Dellen.
+function hammerField(theta, w, n, lambda) {
+  const h =
+    Math.sin(n * theta + 0.7 + 2 * Math.PI * w / lambda) *
+      Math.cos(2 * Math.PI * w / (lambda * 0.81) + 1.3) +
+    Math.sin((n + 7) * theta + 2.1 - 2 * Math.PI * w / (lambda * 1.27)) *
+      Math.cos(2 * Math.PI * w / (lambda * 1.11) + 4.2) +
+    Math.sin((n + 3) * theta + 4.6 + 2 * Math.PI * w / (lambda * 0.93)) *
+      Math.cos(n * 0.5 * theta - 2 * Math.PI * w / (lambda * 1.53));
+  return 1 - 2 * Math.min(1, Math.abs(h / 1.7)); // Dellen mit Kanten-Netz
 }
 
 // ---------------------------------------------------------------------------
@@ -207,9 +224,13 @@ export function buildModel(params) {
   // Ästhetik-Klemmen (aus dem Design-Judge-Panel abgeleitet):
   // (a) Zickzack-Muster braucht ≥ 24 Facetten, sonst liest jede einzeln als Treppe.
   const ribs = p.pattern === 'zickzack' ? Math.max(24, p.ribs) : p.ribs;
-  // (b) Tiefe an Rippenzahl koppeln: zu tief bei groben Rippen = klobig,
-  //     zu tief bei feinen Rippen = Moiré-Flirren.
-  const depthCap = ribs < 24 ? 1.1 : ribs > 56 ? 1.0 : 1.6;
+  // (b) Tiefe an Muster & Rippenzahl koppeln: zu tief bei groben Rippen = klobig,
+  //     zu tief bei feinen Rippen = Moiré. Lamellen dürfen bewusst tief sein
+  //     (senkrechte Schlitze = 0° Überhang), Gehämmert bleibt Mikro-Textur.
+  let depthCap;
+  if (p.pattern === 'lamellen') depthCap = isVase ? 6 : 3;
+  else if (p.pattern === 'gehaemmert') depthCap = 1.2;
+  else depthCap = ribs < 24 ? 1.1 : ribs > 56 ? 1.0 : 1.6;
   const amp = p.pattern === 'glatt' ? 0 : Math.min(p.depth, depthCap);
   const twistAngle = p.twist * Math.PI;
   // Verlauf des Musters über die Höhe: Phasenverschiebung φ(t).
@@ -230,6 +251,9 @@ export function buildModel(params) {
   }[p.flow] ?? Math.abs(twistAngle);
   let tanLimit = (p.flow === 'gegen' || p.flow === 'zick') ? 1.43 : 1.88; // tan55° / tan62°
   if (p.flow === 'zick' && H < 100) tanLimit = 1.0; // kleine Objekte: subtileres Fischgrät (≤45°)
+  // Tiefe Lamellen sind KEINE Mikro-Textur mehr — ihre Flanken müssen fast
+  // senkrecht bleiben, sonst entstehen echte 5-mm-Überhänge (≤ ~30°).
+  if (p.pattern === 'lamellen' && amp > 2) tanLimit = 0.58;
   const slopeLimit = tanLimit * H / rMax;
   const A = twistAngle * (dphiMax > 1e-9 ? Math.min(1, slopeLimit / dphiMax) : 1);
   const flowPhase = (t) => {
@@ -256,7 +280,7 @@ export function buildModel(params) {
   const q = Math.min(1, Math.max(0.4, p.quality));
   // Radiale Auflösung: ≥ 12 Segmente pro Rippenperiode (Zickzack 16), sonst
   // zittern die Gratlinien körnig über die Ringe („zackig“ statt samtig).
-  const RS = Math.round(Math.min(1080, Math.max(240, ribs * (p.pattern === 'zickzack' ? 16 : 12))) * q);
+  const RS = Math.round(Math.min(1080, Math.max(240, ribs * (p.pattern === 'zickzack' ? 16 : p.pattern === 'lamellen' ? 14 : 12))) * q);
   const wallBase = isVase ? Math.max(160, H * 1.4) : 130;
   const querExtra = isQuer ? quersV * 14 : 0;
   const WALL_STEPS = Math.round(Math.min(430, wallBase + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
@@ -279,6 +303,11 @@ export function buildModel(params) {
     if (isQuer) {
       a = Math.min(a, querAmpMax);
       return a * Math.sin(2 * Math.PI * quersV * t + querK * theta);
+    }
+    if (p.pattern === 'gehaemmert') {
+      const n = Math.max(6, Math.round(ribs / 3));       // Dellen-Dichte aus dem Anzahl-Regler
+      const lambda = (2 * Math.PI * rMax) / n;           // ≈ runde Dellen (λ_vertikal ≈ λ_horizontal)
+      return a * hammerField(theta + flowPhase(t), t * H, n, lambda);
     }
     return a * waveTheta(p.pattern, ribs * (theta + flowPhase(t)));
   };
@@ -427,11 +456,11 @@ export function buildSaucer(params) {
   const hRim = 9;
   const seatFloor = 2.6;
 
-  const amp = p.pattern === 'glatt' ? 0 : p.depth;
+  const amp = p.pattern === 'glatt' ? 0 : Math.min(1.6, p.depth); // Untersetzer-Rand bleibt moderat
   const q = Math.min(1, Math.max(0.4, p.quality));
   const RS = Math.round(Math.min(640, Math.max(200, p.ribs * 9)) * q);
   // Querwellen sind höhenbasiert — auf dem flachen Rand als normale Wellen zeigen
-  const patt = p.pattern === 'querwellen' ? 'wellen' : p.pattern;
+  const patt = (p.pattern === 'querwellen' || p.pattern === 'gehaemmert') ? 'wellen' : p.pattern;
 
   const stations = [];
   stations.push({ y: 0, r: 0 });

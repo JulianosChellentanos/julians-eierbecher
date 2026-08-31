@@ -38,7 +38,9 @@ function discountFor(product, qty) {
 }
 function unitPrice(item) {
   const p = pricing.products[item.product];
-  return p.single + (item.product === 'eierbecher' && item.saucer ? p.untersetzer : 0);
+  return p.single
+    + (item.product === 'eierbecher' && item.saucer ? p.untersetzer : 0)
+    + (String(item.config?.text || '').trim() ? (pricing.gravur || 0) : 0);
 }
 function linePrice(item) {
   const off = discountFor(item.product, item.qty);
@@ -59,7 +61,7 @@ function itemSub(it) {
   const c = it.config;
   const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` (${FLOWS[c.flow] || 'Spirale'})` : '';
   return `${PATTERNS[c.pattern] || c.pattern}${flow} · ${c.height} mm · ${it.colorName}` +
-    (c.text ? ` · „${c.text}“ (${FONTS[c.font]?.label || ''})` : '') +
+    (c.text ? ` · ✒️ „${c.text}“ (+${fmt(pricing.gravur || 0)})` : '') +
     (it.saucer ? ' · 🍽️ Untersetzer' : '');
 }
 
