@@ -1,6 +1,7 @@
 // OVJU — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal
 // Start: node server.js   →   http://<host>:4488   (Admin: /admin, Standard-Passwort: ovju-admin)
 import http from 'node:http';
+import { createGzip, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -541,11 +542,33 @@ const server = http.createServer(async (req, res) => {
       return createReadStream(file).pipe(res);
     }
 
+    // Statische Dateien — mit Browser-Cache & gzip für Text-Assets
     let file = path.normalize(path.join(PUBLIC, p === '/' ? 'index.html' : p));
     if (!file.startsWith(PUBLIC)) return send(res, 403, { ok: false, error: 'Verboten' });
     if (existsSync(file) && statSync(file).isDirectory()) file = path.join(file, 'index.html');
     if (!existsSync(file)) return send(res, 404, 'Nicht gefunden', 'text/plain; charset=utf-8');
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+    const ext = path.extname(file);
+    const stat = statSync(file);
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+    // vendor/fonts/env ändern sich praktisch nie → lange cachen;
+    // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe)
+    const isAsset = p.startsWith('/vendor/') || p.startsWith('/fonts/') || p.startsWith('/env/');
+    headers['Cache-Control'] = isAsset ? 'public, max-age=2592000, immutable' : 'no-cache';
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    headers.ETag = etag;
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, headers);
+      return res.end();
+    }
+    const compressible = ['.html', '.css', '.js', '.json', '.svg'].includes(ext);
+    if (compressible && /\bgzip\b/.test(req.headers['accept-encoding'] || '') && stat.size > 1024) {
+      headers['Content-Encoding'] = 'gzip';
+      headers.Vary = 'Accept-Encoding';
+      res.writeHead(200, headers);
+      return createReadStream(file).pipe(createGzip({ level: zc.Z_BEST_SPEED })).pipe(res);
+    }
+    headers['Content-Length'] = stat.size;
+    res.writeHead(200, headers);
     createReadStream(file).pipe(res);
   } catch (err) {
     console.error(err);
