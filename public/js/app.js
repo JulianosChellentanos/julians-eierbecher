@@ -843,9 +843,9 @@ let galleryPhotos = [];
 async function loadGallery() {
   try { galleryPhotos = await (await fetch('/api/gallery')).json(); } catch { galleryPhotos = []; }
   const galerie = galleryPhotos.filter((g) => g.cat === 'galerie');
-  // Produktfotos ohne eigenen Galerie-Eintrag auch in der Galerie zeigen
+  // Produktfotos ergänzen, bis das Grid gut gefüllt ist
   const rest = galleryPhotos.filter((g) => g.cat !== 'galerie');
-  const items = [...galerie, ...(galerie.length < 2 ? rest : [])];
+  const items = [...galerie, ...(galerie.length < 4 ? rest : [])];
   if (!items.length) return;
   $('#galerie').hidden = false;
   $('#galerie-grid').innerHTML = items.slice(0, 8).map((g, i) => `

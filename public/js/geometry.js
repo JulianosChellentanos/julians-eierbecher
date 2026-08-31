@@ -254,11 +254,12 @@ export function buildModel(params) {
   const querAmpMax = 1.19 * p.height / (2 * Math.PI * quersV);
 
   const q = Math.min(1, Math.max(0.4, p.quality));
-  // Zickzack braucht mehr radiale Auflösung, sonst wirken die Facettenkanten körnig
-  const RS = Math.round(Math.min(720, Math.max(200, ribs * (p.pattern === 'zickzack' ? 14 : 9))) * q);
-  const wallBase = isVase ? Math.max(140, H * 1.1) : 110;
+  // Radiale Auflösung: ≥ 12 Segmente pro Rippenperiode (Zickzack 16), sonst
+  // zittern die Gratlinien körnig über die Ringe („zackig“ statt samtig).
+  const RS = Math.round(Math.min(1080, Math.max(240, ribs * (p.pattern === 'zickzack' ? 16 : 12))) * q);
+  const wallBase = isVase ? Math.max(160, H * 1.4) : 130;
   const querExtra = isQuer ? quersV * 14 : 0;
-  const WALL_STEPS = Math.round(Math.min(340, wallBase + Math.abs(twistAngle) * 30 * Math.min(3, flowOsc) + querExtra) * q);
+  const WALL_STEPS = Math.round(Math.min(430, wallBase + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
   const CAVITY_STEPS = Math.round(36 * q);
   const INNER_STEPS = Math.round(44 * q);
 
