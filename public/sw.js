@@ -1,14 +1,15 @@
 /* OVJU Service Worker – Scope "/" */
 'use strict';
 
-const VERSION = 'ovju-v1';
+const VERSION = 'ovju-v2';
 const IMMUTABLE_CACHE = VERSION + '-immutable';
 const DYNAMIC_CACHE = VERSION + '-dynamic';
 const KNOWN_CACHES = [IMMUTABLE_CACHE, DYNAMIC_CACHE];
 
 // Unveränderliche Assets: Cache-First
 const IMMUTABLE_PREFIXES = ['/vendor/', '/fonts/', '/env/', '/img/gallery/', '/img/icons/'];
-// App-Shell: Stale-While-Revalidate
+// App-Shell, JS, CSS: Network-First (frische Version, Cache nur als Offline-Fallback —
+// sonst mischen sich nach einem Deploy alte und neue Module)
 const SWR_PATHS = ['/', '/index.html', '/content.json', '/manifest.webmanifest'];
 const SWR_PREFIXES = ['/css/', '/js/'];
 // Niemals cachen
@@ -90,27 +91,24 @@ async function cacheFirst(request) {
   }
 }
 
-async function staleWhileRevalidate(request, isNavigation) {
+async function networkFirst(request, isNavigation) {
   const cache = await caches.open(DYNAMIC_CACHE);
-  const cached = await cache.match(request);
-  const network = fetch(request)
-    .then((res) => {
-      if (isCacheable(res)) cache.put(request, res.clone()).catch(() => {});
-      return res;
-    })
-    .catch(() => null);
-
-  if (cached) {
-    // Revalidierung im Hintergrund weiterlaufen lassen
-    return cached;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(request, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (isCacheable(res)) cache.put(request, res.clone()).catch(() => {});
+    return res;
+  } catch (err) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    if (isNavigation) {
+      const shell = await cache.match('/');
+      return shell || offlineResponse();
+    }
+    return Response.error();
   }
-  const res = await network;
-  if (res) return res;
-  if (isNavigation) {
-    const shell = await cache.match('/');
-    return shell || offlineResponse();
-  }
-  return Response.error();
 }
 
 self.addEventListener('fetch', (event) => {
@@ -134,7 +132,7 @@ self.addEventListener('fetch', (event) => {
   if (isNavigation || SWR_PATHS.includes(path) || startsWithAny(path, SWR_PREFIXES)) {
     // Navigationen auf die App-Shell "/" normalisieren, Query-Strings ignorieren
     const key = isNavigation ? new Request('/', { headers: request.headers }) : request;
-    event.respondWith(staleWhileRevalidate(key, isNavigation));
+    event.respondWith(networkFirst(key, isNavigation));
     return;
   }
   // Alles andere (z. B. sonstige Bilder): Netzwerk, ohne Caching
