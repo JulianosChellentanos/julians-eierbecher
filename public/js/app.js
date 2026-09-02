@@ -136,7 +136,8 @@ controls.dampingFactor = 0.08;
 controls.minDistance = 60;
 controls.maxDistance = 900;
 controls.maxPolarAngle = Math.PI * 0.55;
-controls.addEventListener('start', () => { userInteracted = true; });
+controls.addEventListener('start', () => { userInteracted = true; $('#stage-hint')?.classList.add('gone'); });
+setTimeout(() => $('#stage-hint')?.classList.add('gone'), 9000);
 
 const hemi = new THREE.HemisphereLight(0xfff6ea, 0xb9a894, 0.9);
 scene.add(hemi);

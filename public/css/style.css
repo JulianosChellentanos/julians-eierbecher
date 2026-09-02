@@ -702,7 +702,75 @@ html.dark, .dark body { color-scheme: dark; }
 /* =========================================================================
    MOBILE APP-SHELL (≤ 980px) — Tabs, Bottom-Bar, Vollbild, Bottom-Sheets
    ========================================================================= */
-.mtabs { display: none; }
+.mtabs {
+  display: flex; gap: 4px; padding: 4px; background: var(--bg-soft);
+  border-radius: 14px; border: 1px solid var(--line);
+}
+.mtab {
+  flex: 1 1 0; min-width: 0; white-space: nowrap;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 6px; border: none; border-radius: 11px; background: transparent;
+  font-family: var(--sans); font-size: 0.72rem; font-weight: 700; color: var(--ink-soft);
+  cursor: pointer; transition: background 0.2s, color 0.2s;
+}
+.mtab-ic { font-size: 1.15rem; line-height: 1; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.mtab:hover { color: var(--ink); }
+.mtab.active { background: var(--card); color: var(--ink); box-shadow: 0 3px 12px rgba(60,45,30,0.14); }
+.mtab.active .mtab-ic { transform: scale(1.2) translateY(-1px); }
+.dark .mtab.active { box-shadow: 0 3px 12px rgba(0,0,0,0.4); }
+/* Nur der aktive Tab-Inhalt ist sichtbar, mit Slide-In (Desktop & Mobile) */
+.panel .ctrl { display: none; animation: none; min-height: 240px; }
+.panel .ctrl.active { display: block; }
+.panel .ctrl.active.from-right { animation: tabInR 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
+.panel .ctrl.active.from-left { animation: tabInL 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes tabInR { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes tabInL { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+/* Interaktions-Hinweis in der Bühne */
+.stage-hint {
+  position: absolute; z-index: 4; left: 50%; top: 58%; transform: translateX(-50%);
+  background: color-mix(in srgb, var(--ink) 78%, transparent); color: var(--bg);
+  font-size: 0.8rem; font-weight: 600; padding: 8px 16px; border-radius: 999px;
+  pointer-events: none; white-space: nowrap;
+  animation: hintIn 0.6s 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: opacity 0.4s, transform 0.4s;
+}
+.stage-hint.gone { opacity: 0; transform: translate(-50%, 8px); }
+.stage-hint .sh-mob { display: none; }
+@keyframes hintIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translateX(-50%); } }
+/* Desktop: Panel klebt neben der Bühne, alles ohne Seiten-Scroll erreichbar */
+@media (min-width: 981px) {
+  .panel {
+    position: sticky; top: 78px; overflow-y: auto;
+    height: calc(100vh - 108px); min-height: 480px; max-height: 860px; /* = Bühne → ein App-Screen */
+    scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+    padding: 20px 22px; gap: 14px;
+  }
+  .panel-cta { margin-top: auto; } /* Preis + Kauf immer unten verankert */
+  .panel > * { flex-shrink: 0; } /* Sektionen dürfen im Flex-Scroll nicht gequetscht werden */
+  .panel-head h2 { font-size: 1.3rem; }
+  .product-tab { padding: 10px 8px; font-size: 0.95rem; }
+  .panel .note-box { font-size: 0.73rem; line-height: 1.45; padding: 8px 12px; }
+  .mtabs { margin: 0; }
+  .mtab { font-size: 0.74rem; padding: 8px 6px; }
+  .ctrl h3 { margin-bottom: 10px; }
+  .panel .preset-row { grid-template-columns: repeat(auto-fit, minmax(50px, 1fr)); gap: 6px; margin-bottom: 10px; }
+  .panel .preset-btn { padding: 8px 2px 6px; font-size: 0.7rem; gap: 2px; border-radius: 12px; }
+  .panel .preset-btn svg { width: 26px; height: 34px; }
+  .panel .pattern-btn { flex-basis: 22%; padding: 8px 2px; font-size: 0.8rem; }
+  .panel .flow-btn { flex-basis: 22%; font-size: 0.76rem; padding: 7px 2px; }
+  .panel .slider-row { margin-bottom: 8px; }
+  .panel .slider-row span { margin-bottom: 3px; font-size: 0.82rem; }
+  .panel .slider-row output { padding: 1px 9px; font-size: 0.76rem; }
+  .panel .flow-block { margin: 2px 0 8px; }
+  .panel-cta { padding-top: 12px; gap: 8px; }
+  .price-row { flex-direction: column; align-items: flex-start; margin-bottom: 0; }
+  .price { font-size: 1.75rem; line-height: 1.1; }
+  .price-hint { text-align: left; }
+  .cta-btns { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .cta-btns .btn-lg { padding: 13px 16px; }
+  .panel-cta .tiny { font-size: 0.68rem; }
+}
+section[id] { scroll-margin-top: 72px; }
 .stage-full-btn { display: none; }
 .mobile-bar { display: none; }
 #toast {
@@ -784,14 +852,10 @@ html.dark, .dark body { color-scheme: dark; }
   .mtab.active .mtab-ic { transform: scale(1.22) translateY(-1px); }
   .dark .mtab.active { box-shadow: 0 3px 12px rgba(0,0,0,0.4); }
 
-  /* Nur der aktive Tab-Inhalt ist sichtbar, mit Slide-In */
-  .panel .ctrl { display: none; animation: none; min-height: 220px; }
-  .panel .ctrl.active { display: block; }
-  .panel .ctrl.active.from-right { animation: tabInR 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
-  .panel .ctrl.active.from-left { animation: tabInL 0.32s cubic-bezier(0.22, 1, 0.36, 1); }
-  @keyframes tabInR { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
-  @keyframes tabInL { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+  .panel .ctrl { min-height: 220px; }
   .panel-cta { display: none; } /* → Bottom-Bar */
+  .stage-hint { top: auto; bottom: 64px; font-size: 0.72rem; }
+  .stage-hint .sh-desk { display: none; } .stage-hint .sh-mob { display: inline; }
 
   /* Horizontale Scroll-Reihen für Daumen-Bedienung */
   .preset-row {

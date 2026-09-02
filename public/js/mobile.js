@@ -14,6 +14,7 @@ const TABS = [
 ];
 let activeTab = 'form';
 let tabOrder = TABS.map((t) => t[0]);
+let currentProduct = 'vase';
 
 /** Sanfte Vibration auf unterstützten Geräten (Android) */
 export function buzz(ms = 8) {
@@ -74,11 +75,11 @@ function renderTabs() {
       <span class="mtab-ic">${icon}</span><span>${label}</span></button>`).join('');
   bar.querySelectorAll('.mtab[data-tab]').forEach((b) => b.addEventListener('click', () => {
     buzz();
-    activateTab(b.dataset.tab);
+    activateTab(b.dataset.tab, undefined, true);
   }));
 }
 
-export function activateTab(key, dir) {
+export function activateTab(key, dir, byUser = false) {
   if (!tabOrder.includes(key)) key = tabOrder[0];
   const prevIdx = tabOrder.indexOf(activeTab);
   const nextIdx = tabOrder.indexOf(key);
@@ -91,13 +92,14 @@ export function activateTab(key, dir) {
     if (on) sec.classList.add(direction === 'right' ? 'from-right' : 'from-left');
   });
   $$('.mtab[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === key));
-  // Produkt-Umschalter (Eierbecher/Vase) gehört zur Form — nur dort zeigen
-  const pt = $('#product-tabs'); if (pt) pt.hidden = key !== 'form';
-  const vn = $('#vase-note'); if (vn && key !== 'form') vn.hidden = true;
-  // Inhalt des neuen Tabs direkt unter die Tab-Leiste holen (falls tief gescrollt)
+  // Produkt-Umschalter (Eierbecher/Vase) gehört zur Form — mobil nur dort zeigen;
+  // der Vasen-Hinweis gehört überall nur zum Form-Tab
+  if (IS_MOBILE) { const pt = $('#product-tabs'); if (pt) pt.hidden = key !== 'form'; }
+  const vn = $('#vase-note'); if (vn) vn.hidden = key !== 'form' || currentProduct !== 'vase';
+  // Mobile: Inhalt des neuen Tabs direkt unter die Tab-Leiste holen (falls tief gescrollt)
   const tabs = $('#mtabs');
   const panel = $('.panel');
-  if (tabs && panel) {
+  if (IS_MOBILE && tabs && panel) {
     const stuckBottom = tabs.getBoundingClientRect().bottom;
     const panelTop = panel.getBoundingClientRect().top;
     if (panelTop < stuckBottom - 4) {
@@ -105,13 +107,14 @@ export function activateTab(key, dir) {
     }
   }
   // Aktiven Tab in die Mitte scrollen (falls Tab-Leiste überläuft)
-  $(`.mtab[data-tab="${key}"]`)?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  // Aktiven Tab in der Leiste zentrieren — nur bei echter Nutzeraktion (sonst springt die Seite beim Laden)
+  if (byUser && IS_MOBILE) $(`.mtab[data-tab="${key}"]`)?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
 }
 
-/** Extras-Tab nur beim Eierbecher */
+/** Extras-Tab nur beim Eierbecher — Tabs gibt es auf Desktop UND Mobile */
 export function updateMobileTabs(product) {
   tabOrder = TABS.map((t) => t[0]).filter((k) => k !== 'extras' || product === 'eierbecher');
-  if (!IS_MOBILE) return;
+  currentProduct = product;
   renderTabs();
   if (!tabOrder.includes(activeTab)) activateTab(tabOrder[0]);
   else activateTab(activeTab);
@@ -135,7 +138,7 @@ function initSwipe() {
     if (Math.abs(dx) > 64 && Math.abs(dy) < 48) {
       const i = tabOrder.indexOf(activeTab);
       const next = dx < 0 ? tabOrder[i + 1] : tabOrder[i - 1];
-      if (next) { buzz(); activateTab(next, dx < 0 ? 'right' : 'left'); }
+      if (next) { buzz(); activateTab(next, dx < 0 ? 'right' : 'left', true); }
     }
   }, { passive: true });
 }
