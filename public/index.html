@@ -178,9 +178,8 @@
       </section>
 
       <section class="ctrl" data-tab="farbe">
-        <h3>Farbe <span class="opt">— PLA matt · glänzend · metallic</span></h3>
+        <h3>Farbe <span class="opt" id="farbe-name">— PLA matt · glänzend · metallic</span></h3>
         <div class="swatch-grid" id="swatches"></div>
-        <div class="farbe-name" id="farbe-name"></div>
       </section>
 
       <section class="ctrl" id="extras-section" data-tab="extras">
@@ -274,11 +273,13 @@
     <div class="co-summary" id="co-summary"></div>
     <h3>Lieferadresse</h3>
     <div class="co-grid">
-      <label>Name <input type="text" id="co-name" required placeholder="Vor- und Nachname"></label>
-      <label>E-Mail <input type="email" id="co-email" required placeholder="du@example.de"></label>
-      <label class="wide">Straße &amp; Hausnummer <input type="text" id="co-street" required></label>
-      <label>PLZ <input type="text" id="co-zip" required pattern="[0-9]{4,5}"></label>
-      <label>Ort <input type="text" id="co-city" required></label>
+      <label>Name <input type="text" id="co-name" required placeholder="Vor- und Nachname" autocomplete="name"></label>
+      <label>E-Mail <input type="email" id="co-email" required placeholder="du@example.de" autocomplete="email"></label>
+      <label class="wide">Straße &amp; Hausnummer <input type="text" id="co-street" required placeholder="Musterweg 12" autocomplete="street-address"></label>
+      <div class="co-row2 wide">
+        <label>PLZ <input type="text" id="co-zip" required pattern="[0-9]{4,5}" placeholder="12345" inputmode="numeric" autocomplete="postal-code"></label>
+        <label>Ort <input type="text" id="co-city" required placeholder="Stadt" autocomplete="address-level2"></label>
+      </div>
       <label class="wide">Anmerkung <input type="text" id="co-note" placeholder="z. B. Geschenkverpackung (optional)"></label>
     </div>
     <div class="coupon-row">
@@ -363,7 +364,7 @@
 <!-- Mobile Bottom-Bar (App-Shell) -->
 <div class="mobile-bar" id="mobile-bar" hidden>
   <div class="mb-price"><b id="mb-price">9,90 €</b><small id="mb-sub">pro Stück</small></div>
-  <button class="mb-dl" id="mb-download" title="STL-Datei herunterladen" aria-label="STL herunterladen"><span>⬇</span><small>STL</small></button>
+  <button class="mb-dl" id="mb-download" title="Druckdatei (STL) herunterladen" aria-label="Druckdatei herunterladen">⬇</button>
   <button class="mb-cart" id="mb-cart">🛒 In den Warenkorb</button>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>

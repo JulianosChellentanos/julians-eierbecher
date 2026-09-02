@@ -125,7 +125,7 @@ function renderCart() {
           <b>${itemTitle(it)}</b>
           <small>${itemSub(it)}</small>
           <div class="ci-qty">
-            <button data-i="${i}" data-d="-1">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1">+</button>
+            <span class="ci-step"><button data-i="${i}" data-d="-1">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1">+</button></span>
             ${off ? `<span class="ci-off">−${off} %</span>` : ''}
             ${nextTier ? `<small class="ci-hint">ab ${nextTier.qty} St. −${nextTier.off} %</small>` : ''}
           </div>

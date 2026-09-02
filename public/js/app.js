@@ -105,7 +105,7 @@ function setColor({ id, hex, name, finish }) {
   state.color = id; state.colorHex = hex; state.colorName = name; state.colorFinish = f;
   $$('.swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
   $('#color-name').textContent = f === 'matt' ? name : `${name} · ${FINISH_LABEL[f]}`;
-  const fn = $('#farbe-name'); if (fn) fn.textContent = f === 'matt' ? `${name} · matt` : `${name} · ${FINISH_LABEL[f]}`;
+  const fn = $('#farbe-name'); if (fn) fn.textContent = `— ${name} · ${FINISH_LABEL[f]}`;
   material.color.set(hex);
   Object.assign(material, FINISH_PROPS[f] || FINISH_PROPS.matt);
   material.needsUpdate = true;
@@ -377,8 +377,10 @@ function updatePrintBadge(geometry, info) {
     tip = `Silhouette max. ${sil.toFixed(0)}° — problemlos.`;
   }
   el.className = 'stage-print ' + cls;
-  el.textContent = txt;
-  el.title = tip;
+  // Mobile: Kurzform, Langtext als Tooltip
+  const short = { 'p-ok': '✅ Druckbar', 'p-warn': '⚠️ Steil', 'p-bad': '🔶 Zu steil' }[cls];
+  el.textContent = IS_SMALL ? short : txt;
+  el.title = IS_SMALL ? `${txt} — ${tip}` : tip;
 }
 
 let saucerMesh = null;
@@ -418,10 +420,12 @@ function rebuild() {
   rebuildText();
   updateProps();
   if (!userInteracted) frameCamera();
-  $('#dim-info').textContent = info.product === 'vase'
+  const dimLong = info.product === 'vase'
     ? `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Öffnung Ø ${info.openingDiameter.toFixed(0)} mm`
     : `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`
       + (state.saucer ? ` · Untersetzer Ø ${(saucerInfo.outerRadius * 2).toFixed(0)} mm` : '');
+  $('#dim-info').textContent = IS_SMALL ? `${info.height} × Ø ${info.topDiameter.toFixed(0)} mm` : dimLong;
+  $('#dim-info').title = dimLong;
 }
 
 let textBuildId = 0;

@@ -528,7 +528,8 @@ footer p { color: var(--ink-soft); font-size: 0.86rem; margin: 0 0 8px; }
 .cart-item img { width: 74px; height: 74px; border-radius: 12px; object-fit: cover; background: var(--bg-soft); }
 .ci-main { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .ci-main small { color: var(--ink-soft); font-size: 0.78rem; }
-.ci-qty { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+.ci-qty { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
+.ci-step { display: inline-flex; align-items: center; gap: 8px; }
 .ci-qty button {
   width: 26px; height: 26px; border-radius: 8px; border: 1.5px solid var(--line);
   background: transparent; cursor: pointer; font-weight: 700; color: var(--ink);
@@ -549,6 +550,7 @@ footer p { color: var(--ink-soft); font-size: 0.86rem; margin: 0 0 8px; }
 .co-wrap h3 { font-size: 1rem; }
 .co-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .co-grid .wide { grid-column: 1 / -1; }
+.co-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .pay-rows { display: flex; flex-direction: column; gap: 8px; }
 .pay-row {
   display: flex; gap: 12px; align-items: flex-start; border: 1.5px solid var(--line);
@@ -736,7 +738,7 @@ html.dark, .dark body { color-scheme: dark; }
 
   /* --- Konfigurator als App-Screen --- */
   .configurator { padding-bottom: 0; }
-  body.has-mbar .configurator { padding-bottom: calc(120px + env(safe-area-inset-bottom)); }
+  body.has-mbar .panel { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
   .panel .ctrl { scroll-margin-bottom: 120px; }
   .panel { padding: 14px 14px 22px; gap: 12px; }
   .panel-head { display: none; }
@@ -768,8 +770,17 @@ html.dark, .dark body { color-scheme: dark; }
   }
   .mtab-ic { font-size: 1.15rem; line-height: 1; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
   .mtab.active { background: var(--card); color: var(--ink); box-shadow: 0 3px 12px rgba(60,45,30,0.14); }
-  .mtab-dice { flex: 0 0 44px; padding: 8px 0; justify-content: center; }
-  .mtab-dice .mtab-ic { font-size: 1.25rem; }
+  html, body { overflow-x: hidden; } /* Hard-Guard gegen Randbreiten-Überlauf */
+  .mtabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 100%; min-width: 0; }
+  .mtab { padding: 8px 2px; }
+  .stage-dice-btn {
+    position: absolute; z-index: 5; top: calc(56px + env(safe-area-inset-top, 0px)); right: 10px;
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--card) 85%, transparent); backdrop-filter: blur(8px);
+    font-size: 1.1rem; cursor: pointer; transition: transform 0.15s;
+  }
+  .stage-dice-btn:active { transform: rotate(25deg) scale(0.92); }
+  .stage.stage-full .stage-dice-btn { top: calc(66px + env(safe-area-inset-top)); width: 44px; height: 44px; }
   .mtab.active .mtab-ic { transform: scale(1.22) translateY(-1px); }
   .dark .mtab.active { box-shadow: 0 3px 12px rgba(0,0,0,0.4); }
 
@@ -829,29 +840,29 @@ html.dark, .dark body { color-scheme: dark; }
 
   /* Bottom-Bar */
   .mobile-bar {
-    display: flex; align-items: center; gap: 10px;
+    display: grid; grid-template-columns: auto 44px minmax(0, 1fr); align-items: center; gap: 8px;
     position: fixed; left: 0; right: 0; bottom: 0;
-    z-index: 150; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)) 16px;
+    z-index: 150; padding: 10px max(12px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) 14px;
     background: var(--card);
     border: 1px solid var(--line); border-bottom: none; border-radius: 22px 22px 0 0;
     box-shadow: 0 14px 40px rgba(60, 45, 30, 0.22);
-    animation: barIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transform: translateY(115%); transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
   }
+  .mobile-bar.show { transform: none; }
+  .mobile-bar::before { content: ''; position: absolute; left: 0; right: 0; top: -22px; height: 22px;
+    background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 80%, transparent)); pointer-events: none; }
   .dark .mobile-bar { box-shadow: 0 14px 40px rgba(0,0,0,0.5); }
-  .mobile-bar[hidden] { display: none; }
-  @keyframes barIn { from { transform: translateY(90px); opacity: 0; } to { transform: none; opacity: 1; } }
-  .mb-price { display: flex; flex-direction: column; line-height: 1.15; min-width: 74px; }
+  .mb-price { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
   .mb-price b { font-family: var(--serif); font-size: 1.25rem; font-variant-numeric: tabular-nums; min-height: 1.25em; }
   .mb-price small { font-size: 0.66rem; color: var(--ink-soft); white-space: nowrap; }
   .mb-dl {
-    width: 48px; height: 48px; border-radius: 14px; border: 1.5px solid var(--line);
-    background: transparent; color: var(--ink); cursor: pointer; flex: 0 0 auto;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
+    width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid var(--line);
+    background: transparent; color: var(--ink); cursor: pointer; font-size: 1.05rem;
+    display: grid; place-items: center;
   }
-  .mb-dl span { font-size: 1rem; }
-  .mb-dl small { font-size: 0.58rem; font-weight: 700; letter-spacing: 0.04em; margin-top: 2px; }
   .mb-cart {
-    flex: 1; height: 48px; border: none; border-radius: 16px; cursor: pointer;
+    min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    height: 48px; border: none; border-radius: 16px; cursor: pointer;
     background: var(--ink); color: var(--bg); font-family: var(--sans); font-weight: 700; font-size: 0.98rem;
     box-shadow: 0 6px 18px rgba(33, 29, 24, 0.3); transition: transform 0.12s;
   }
@@ -873,7 +884,8 @@ html.dark, .dark body { color-scheme: dark; }
   #foto-modal { max-width: 100vw; }
   .foto-grid { grid-template-columns: 1fr 1fr; }
   /* Formulare im Sheet: einspaltig, volle Breite, nichts läuft über */
-  dialog input, dialog select, dialog textarea { width: 100%; min-width: 0; font-size: 16px; /* kein iOS-Zoom */ }
+  dialog input, dialog select, dialog textarea { width: 100%; min-width: 0; font-size: 16px; min-height: 48px; border-radius: 12px; /* kein iOS-Zoom, Touch-Ziel */ }
+  .co-row2 { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; }
   .co-grid { grid-template-columns: 1fr; gap: 10px; }
   .co-grid .wide { grid-column: auto; }
   .coupon-row { flex-wrap: nowrap; }
@@ -887,7 +899,8 @@ html.dark, .dark body { color-scheme: dark; }
   .auth-wrap form .btn { width: 100%; }
   .cart-item { gap: 10px; }
   .cart-item img { width: 64px; height: 64px; }
-  .ci-qty { border: 1.5px solid var(--line); border-radius: 999px; padding: 2px; gap: 4px; flex-wrap: wrap; }
+  .ci-qty { gap: 8px; }
+  .ci-step { border: 1.5px solid var(--line); border-radius: 999px; padding: 2px; gap: 4px; }
   .ci-qty button { width: 40px; height: 40px; border: none; border-radius: 999px; font-size: 1.1rem; }
   .ci-qty span { min-width: 24px; }
   .ci-off { white-space: nowrap; }
@@ -931,5 +944,8 @@ html.dark, .dark body { color-scheme: dark; }
   .showcase-price { white-space: nowrap; }
   .mtab { min-width: 56px; padding: 8px 6px; font-size: 0.66rem; }
   .mb-price b { font-size: 1.1rem; }
+  .mb-price small { display: none; }
   .mb-cart { font-size: 0.9rem; }
+  .product-tab { flex-direction: column; gap: 2px; padding: 8px 6px; }
+  .product-tab small { font-size: 0.7rem; }
 }

@@ -71,13 +71,11 @@ function renderTabs() {
   const bar = $('#mtabs');
   bar.innerHTML = TABS.filter(([k]) => tabOrder.includes(k)).map(([k, icon, label]) => `
     <button class="mtab ${k === activeTab ? 'active' : ''}" data-tab="${k}">
-      <span class="mtab-ic">${icon}</span><span>${label}</span></button>`).join('') +
-    `<button class="mtab mtab-dice" id="mtab-dice" title="Überrasch mich" aria-label="Zufälliges Design"><span class="mtab-ic">🎲</span></button>`;
+      <span class="mtab-ic">${icon}</span><span>${label}</span></button>`).join('');
   bar.querySelectorAll('.mtab[data-tab]').forEach((b) => b.addEventListener('click', () => {
     buzz();
     activateTab(b.dataset.tab);
   }));
-  bar.querySelector('#mtab-dice').addEventListener('click', () => { buzz(12); $('#btn-random').click(); });
 }
 
 export function activateTab(key, dir) {
@@ -147,13 +145,14 @@ function initSwipe() {
 // ---------------------------------------------------------------------------
 function initBottomBar() {
   const bar = $('#mobile-bar');
-  const sec = $('#konfigurator');
+  bar.hidden = false; // Sichtbarkeit steuert die CSS-Klasse .show (Slide-In)
+  // Erst einblenden, wenn die 3D-Bühne wirklich im oberen Bereich des Screens ist
   const io = new IntersectionObserver(([en]) => {
     const on = en.isIntersecting;
-    bar.hidden = !on;
+    bar.classList.toggle('show', on);
     document.body.classList.toggle('has-mbar', on);
-  }, { threshold: 0.05 });
-  io.observe(sec);
+  }, { threshold: 0.2, rootMargin: '0px 0px -35% 0px' });
+  io.observe($('.stage'));
   $('#mb-cart').addEventListener('click', () => { buzz(14); $('#btn-order').click(); });
   $('#mb-download').addEventListener('click', () => { buzz(); $('#btn-download').click(); });
 }
@@ -185,6 +184,14 @@ export function initMobileShell({ product }) {
   initSwipe();
   initBottomBar();
   initFullscreen();
+  // 🎲 als Floating-Button in der Bühne (unter dem Vollbild-Button)
+  const dice = document.createElement('button');
+  dice.className = 'stage-dice-btn';
+  dice.textContent = '🎲';
+  dice.title = 'Überrasch mich';
+  dice.setAttribute('aria-label', 'Zufälliges Design');
+  dice.addEventListener('click', () => { buzz(12); $('#btn-random').click(); });
+  $('.stage').appendChild(dice);
   // Haptik auf allen Auswahl-Buttons
   $('.panel').addEventListener('click', (e) => {
     if (e.target.closest('.pattern-btn, .flow-btn, .preset-btn, .product-tab, .font-chip, .swatch, .check-row')) buzz();
