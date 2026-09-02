@@ -403,6 +403,12 @@ export const buildEggcup = buildModel;
 // Stationen: { y, r } | { y, rFn(θ) }; r === 0 → degenerierter Punkt (Fächer).
 // ---------------------------------------------------------------------------
 function revolve(stations, RS) {
+  // Muster-Rotation der gemusterten Ringe auf die glatten Nachbarn (Rand, Innenwand, Boden, Mulde)
+  // übertragen: sonst verbinden die Bänder dazwischen verdrehte Punkte → Sliver-Dreiecke, die
+  // als feine Radialstreifen auf dem Rand sichtbar werden. Ein kreisrunder Ring ändert sich
+  // durch die Rotation nicht.
+  let rot = stations.find((st) => st.rot !== undefined)?.rot ?? 0;
+  for (const st of stations) { if (st.rot === undefined) st.rot = rot; else rot = st.rot; }
   const positions = [];
   const ringStart = [];
   const pointIdx = [];
