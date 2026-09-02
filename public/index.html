@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>OVJU — Dein Ei. Dein Design.</title>
   <meta name="description" content="Designe deinen eigenen Eierbecher im 3D-Konfigurator — Rippen, Spiralen, Wellen, 10 matte Farben, persönliche Gravur. 3D-gedruckt und geliefert.">
   <script>
@@ -15,6 +15,14 @@
     })();
   </script>
   <link rel="stylesheet" href="css/style.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#f4efe7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17130f" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="OVJU">
+  <link rel="apple-touch-icon" href="/img/icons/apple-touch-icon.png">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>">
   <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js" } }
@@ -75,6 +83,7 @@
       <div class="stage-print p-ok" id="print-badge"></div>
       <div class="stage-color"><span id="color-name">Elfenbein</span></div>
       <div class="scene-chips" id="scene-chips"></div>
+      <button class="stage-full-btn" id="btn-fullscreen" title="Vollbild">⤢</button>
       <button class="stage-foto" id="btn-foto" title="Dein Design in mehreren Szenen rendern">📸 Foto-Shooting</button>
     </div>
 
@@ -86,8 +95,9 @@
 
       <div class="product-tabs" id="product-tabs"></div>
       <div class="note-box" id="vase-note" hidden></div>
+      <div class="mtabs" id="mtabs"></div>
 
-      <section class="ctrl">
+      <section class="ctrl" data-tab="form">
         <h3>Form</h3>
         <div class="preset-row" id="preset-row"></div>
         <div id="shape-editor" hidden>
@@ -105,7 +115,7 @@
         </label>
       </section>
 
-      <section class="ctrl">
+      <section class="ctrl" data-tab="muster">
         <h3>Oberfläche</h3>
         <div class="seg">
           <button class="pattern-btn" data-pattern="glatt" title="Ganz ohne Struktur">Glatt</button>
@@ -145,7 +155,7 @@
         </div>
       </section>
 
-      <section class="ctrl">
+      <section class="ctrl" data-tab="gravur">
         <h3>Gravur</h3>
         <label class="check-row">
           <input type="checkbox" id="c-gravur">
@@ -167,12 +177,13 @@
         </div>
       </section>
 
-      <section class="ctrl">
+      <section class="ctrl" data-tab="farbe">
         <h3>Farbe <span class="opt">— PLA matt · glänzend · metallic</span></h3>
         <div class="swatch-grid" id="swatches"></div>
+        <div class="farbe-name" id="farbe-name"></div>
       </section>
 
-      <section class="ctrl" id="extras-section">
+      <section class="ctrl" id="extras-section" data-tab="extras">
         <h3>Extras</h3>
         <label class="check-row">
           <input type="checkbox" id="c-saucer">
@@ -255,7 +266,11 @@
 <!-- Checkout -->
 <dialog id="checkout-modal">
   <form id="checkout-form" class="co-wrap">
-    <h2>Kasse</h2>
+    <div class="cart-head co-head">
+      <button type="button" class="btn btn-ghost" id="co-back-top">‹ Warenkorb</button>
+      <h2>Kasse</h2>
+      <button type="button" class="btn btn-ghost" id="co-close">✕</button>
+    </div>
     <div class="co-summary" id="co-summary"></div>
     <h3>Lieferadresse</h3>
     <div class="co-grid">
@@ -345,6 +360,14 @@
   </div>
 </dialog>
 
+<!-- Mobile Bottom-Bar (App-Shell) -->
+<div class="mobile-bar" id="mobile-bar" hidden>
+  <div class="mb-price"><b id="mb-price">9,90 €</b><small id="mb-sub">pro Stück</small></div>
+  <button class="mb-dl" id="mb-download" title="STL-Datei herunterladen" aria-label="STL herunterladen"><span>⬇</span><small>STL</small></button>
+  <button class="mb-cart" id="mb-cart">🛒 In den Warenkorb</button>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
 <!-- Foto-Shooting -->
 <dialog id="foto-modal">
   <div class="foto-wrap">
@@ -356,5 +379,6 @@
 </dialog>
 
 <script type="module" src="js/app.js"></script>
+<script src="/js/pwa.js" defer></script>
 </body>
 </html>

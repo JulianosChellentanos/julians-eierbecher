@@ -310,6 +310,8 @@ export async function initCart() {
   $('#cart-close').addEventListener('click', () => $('#cart-modal').close());
   $('#cart-checkout').addEventListener('click', openCheckout);
   $('#co-back').addEventListener('click', () => { $('#checkout-modal').close(); openCart(); });
+  $('#co-back-top').addEventListener('click', () => { $('#checkout-modal').close(); openCart(); });
+  $('#co-close').addEventListener('click', () => $('#checkout-modal').close());
   $('#co-coupon-btn').addEventListener('click', applyCoupon);
   $('#checkout-form').addEventListener('submit', (e) => {
     e.preventDefault();

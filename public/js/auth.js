@@ -15,7 +15,7 @@ const STATUS_LABEL = {
 
 function renderButton() {
   const btn = $('#account-btn');
-  btn.textContent = currentUser ? `👤 ${currentUser.name.split(' ')[0]}` : '👤 Anmelden';
+  btn.innerHTML = `👤 <span class="ab-txt">${currentUser ? currentUser.name.split(' ')[0] : 'Anmelden'}</span>`;
   btn.classList.toggle('logged-in', !!currentUser);
 }
 

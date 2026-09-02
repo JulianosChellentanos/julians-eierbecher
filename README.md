@@ -27,6 +27,8 @@
   - 💰 Preise & Mengenrabatt-Stufen, 🎟️ Gutscheine (%- oder €-Codes, Mindestbestellwert)
   - 🏢 Firma (Rechnungsdaten), 💙 PayPal, ⚙️ Passwort & JSON-Backup — alles in `data/settings.json` (nicht im Git)
 - **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, Sessions in `data/`), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung
+- **Mobile App-Shell** (≤ 980 px): klebende 3D-Bühne + Tab-Leiste (Form/Muster/Gravur/Farbe/Extras, mit 🎲) statt Endlos-Scroll, Swipe zwischen Tabs, angedockte Bottom-Bar mit Live-Preis & Warenkorb, Vollbild-3D, Bottom-Sheet-Dialoge, Toasts, Haptik, animierte Preise; Layout per Multi-Device-UX-Panel (4 Geräte × 8 Screens) geprüft
+- **PWA**: Manifest, Service Worker (Cache-First für Assets, offline-Fallback), Install-Banner „OVJU als App installieren" (Android) bzw. iOS-Hinweis, Home-Screen-Icons, Theme-Color folgt dem Darkmode
 - **Darkmode**: Umschalter im Header (🌙/☀️), merkt sich die Wahl, folgt sonst der Systemeinstellung
 - **Druckbarkeits-Ampel**: analysiert live die Flächennormalen des Meshes (Überhangwinkel) — ✅/⚠️/🔶 direkt im Konfigurator; Querwellen werden serverseitig auf druckbare Wellenlängen/Tiefen geklemmt (`tools/check-printability.mjs` für Offline-Analysen)
 - **Rechtliche Produkthinweise** an fünf Stellen (Konfigurator bei Vase & Eigener Form, Checkout, FAQ, Footer, Rechnung): Trockenblumen-Zweck, imprägniert/i. d. R. wasserfest ohne Gewähr, keine Standfestigkeits-Garantie bei freien Formen, pflanzenbasiertes PLA

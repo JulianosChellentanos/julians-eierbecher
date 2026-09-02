@@ -13,6 +13,7 @@ import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { makeSTL, loadFont } from './modelfactory.js';
 import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge } from './cart.js';
 import { initAuth } from './auth.js';
+import { initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -86,7 +87,9 @@ async function loadContent() {
 function renderPrices() {
   const pp = getPricing().products[state.product];
   const size = volumeSurcharge(state.product, { height: state.height, width: state.width });
-  $('#price').textContent = fmt(pp.single + size);
+  animateMoney($('#price'), pp.single + size, fmt);
+  animateMoney($('#mb-price'), pp.single + size, fmt);
+  setMobilePrice(undefined, size > 0 ? `inkl. ${fmt(size)} Größe` : 'pro Stück');
   $('#price-hint').textContent = discountTeaser(state.product);
   const badge = $('#price-size');
   if (size > 0) {
@@ -102,6 +105,7 @@ function setColor({ id, hex, name, finish }) {
   state.color = id; state.colorHex = hex; state.colorName = name; state.colorFinish = f;
   $$('.swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
   $('#color-name').textContent = f === 'matt' ? name : `${name} · ${FINISH_LABEL[f]}`;
+  const fn = $('#farbe-name'); if (fn) fn.textContent = f === 'matt' ? `${name} · matt` : `${name} · ${FINISH_LABEL[f]}`;
   material.color.set(hex);
   Object.assign(material, FINISH_PROPS[f] || FINISH_PROPS.matt);
   material.needsUpdate = true;
@@ -267,7 +271,8 @@ function frameCamera() {
   if (saucerInfo && state.saucer) rM = Math.max(rM, saucerInfo.outerRadius * 0.82);
   // Ei ragt über den Becher hinaus, wenn Deko-Props sichtbar sind
   const eggExtra = (propsGroup.visible && currentInfo?.product === 'eierbecher') ? 40 : 0;
-  const halfH = H * 0.62 + 8 + eggExtra, halfW = rM * 1.65;
+  // Mobile: mehr Luft oben/unten, damit Badges & Chips das Modell nicht verdecken
+  const halfH = (H * 0.62 + 8 + eggExtra) * (IS_SMALL ? 1.22 : 1), halfW = rM * 1.65;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const dist = Math.max(halfH / t, halfW / (t * camera.aspect));
   controls.target.set(0, H * 0.5, 0);
@@ -597,6 +602,7 @@ function setProduct(id) {
   renderPrices();
   $('#extras-section').style.display = id === 'eierbecher' ? '' : 'none';
   $('#vase-note').hidden = id !== 'vase'; // Trockenblumen-Hinweis nur bei Vasen
+  updateMobileTabs(id);
   userInteracted = false; // neu einrahmen
   rebuild();
 }
@@ -732,6 +738,8 @@ function initControls() {
       colorHex: state.colorHex,
       thumb: captureThumb(),
     });
+    bumpCart();
+    if (IS_MOBILE) showToast('✓ Im Warenkorb — weiter gestalten oder zur Kasse');
   });
 
   // Szenen-Chips + Foto-Shooting
@@ -770,7 +778,10 @@ function initControls() {
   // Hell/Dunkel-Modus
   const themeBtn = $('#theme-btn');
   const syncThemeBtn = () => {
-    themeBtn.textContent = document.documentElement.classList.contains('dark') ? '☀️' : '🌙';
+    const dark = document.documentElement.classList.contains('dark');
+    themeBtn.textContent = dark ? '☀️' : '🌙';
+    // Browser-Chrome (Adressleiste/Statusbar) mitfärben
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#17130f' : '#f4efe7'));
   };
   themeBtn.addEventListener('click', () => {
     const dark = document.documentElement.classList.toggle('dark');
@@ -817,7 +828,11 @@ function captureThumb() {
   const c = document.createElement('canvas');
   c.width = c.height = 260;
   const m = Math.min(src.width, src.height);
-  c.getContext('2d').drawImage(src, (src.width - m) / 2, (src.height - m) / 2, m, m, 0, 0, 260, 260);
+  const ctx = c.getContext('2d');
+  // Canvas ist transparent → für JPEG erst den Studio-Hintergrund füllen
+  ctx.fillStyle = document.documentElement.classList.contains('dark') ? '#231d17' : '#efe7d9';
+  ctx.fillRect(0, 0, 260, 260);
+  ctx.drawImage(src, (src.width - m) / 2, (src.height - m) / 2, m, m, 0, 0, 260, 260);
   return c.toDataURL('image/jpeg', 0.82);
 }
 
@@ -995,6 +1010,7 @@ async function renderShowcase() {
   $('#loading').classList.add('hidden');
   await loadGallery();
   setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders
+  initMobileShell({ product: state.product });
 
   // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
   window.__ovju = {

@@ -22,7 +22,7 @@ const MIME = {
   '.woff2': 'font/woff2', '.stl': 'model/stl', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.hdr': 'application/octet-stream',
-  '.ico': 'image/x-icon',
+  '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json; charset=utf-8',
 };
 
 // ---------------------------------------------------------------------------
