@@ -91,7 +91,10 @@
     <aside class="panel">
       <div class="panel-head">
         <h2>Dein Design</h2>
-        <button class="btn btn-ghost" id="btn-random" title="Zufälliges Design">🎲 Überrasch mich</button>
+        <div class="panel-head-btns">
+          <button class="btn btn-ghost" id="btn-random" title="Zufälliges Design">🎲 Überrasch mich</button>
+          <button class="btn btn-ghost" id="btn-code" data-open-code="show" title="Design-Code anzeigen, teilen oder eingeben">🔖 Code</button>
+        </div>
       </div>
 
       <div class="product-tabs" id="product-tabs"></div>
@@ -202,7 +205,8 @@
           <button class="btn btn-primary btn-lg" id="btn-order">🛒 In den Warenkorb</button>
           <button class="btn btn-ghost" id="btn-download" title="STL-Datei herunterladen — druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer &amp; Co.">⬇ STL</button>
         </div>
-        <div class="tiny">Druckfertige STL in Millimetern — direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.</div>
+        <div class="tiny">Druckfertige STL in Millimetern — direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.<br>
+          <button class="linkbtn" data-open-code="show">🔖 Design-Code anzeigen</button> · <button class="linkbtn" data-open-code="enter">Code eingeben</button></div>
       </div>
     </aside>
   </div>
@@ -262,6 +266,7 @@
     <div id="cart-items"></div>
     <div class="cart-totals" id="cart-totals"></div>
     <button class="btn btn-primary btn-lg" id="cart-checkout">Zur Kasse</button>
+    <div class="tiny">Design gespeichert? <button class="linkbtn" data-open-code="enter">🔖 Design-Code eingeben</button> und weiter gestalten.</div>
   </div>
 </dialog>
 
@@ -365,8 +370,33 @@
 </dialog>
 
 <!-- Mobile Bottom-Bar (App-Shell) -->
+<dialog id="code-modal">
+  <div class="confirm dc">
+    <div class="co-head"><h2>🔖 Design-Code</h2><button class="btn btn-ghost" id="dc-close">✕</button></div>
+    <p class="dc-lead">Dein aktuelles Design — Form, Muster, Gravur und Farbe — als kurzer Code. Notieren, teilen oder später wieder laden.</p>
+    <div class="dc-codebox">
+      <output id="dc-code" class="dc-code">…</output>
+      <div class="dc-actions">
+        <button class="btn btn-primary" id="dc-copy">Code kopieren</button>
+        <button class="btn btn-ghost" id="dc-copylink">🔗 Link kopieren</button>
+        <button class="btn btn-ghost" id="dc-share">📤 Teilen</button>
+      </div>
+      <input id="dc-link" class="dc-link" readonly aria-label="Link zum Design">
+    </div>
+    <div class="dc-enter">
+      <label for="dc-input" class="dc-enter-label">Code eingeben &amp; Design laden</label>
+      <div class="dc-enter-row">
+        <input id="dc-input" placeholder="z. B. K7P-3QX" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="14">
+        <button class="btn btn-primary" id="dc-load">Laden</button>
+      </div>
+      <div class="tiny err-msg" id="dc-err"></div>
+      <div class="tiny ok-msg" id="dc-msg"></div>
+    </div>
+  </div>
+</dialog>
 <div class="mobile-bar" id="mobile-bar" hidden>
   <div class="mb-price"><b id="mb-price">9,90 €</b><small id="mb-sub">pro Stück</small></div>
+  <button class="mb-dl mb-code" data-open-code="show" title="Design-Code" aria-label="Design-Code anzeigen">🔖</button>
   <button class="mb-dl" id="mb-download" title="Druckdatei (STL) herunterladen" aria-label="Druckdatei herunterladen">⬇</button>
   <button class="mb-cart" id="mb-cart">🛒 In den Warenkorb</button>
 </div>

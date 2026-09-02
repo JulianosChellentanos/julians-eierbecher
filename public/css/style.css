@@ -747,7 +747,8 @@ html.dark, .dark body { color-scheme: dark; }
   }
   .panel-cta { margin-top: auto; } /* Preis + Kauf immer unten verankert */
   .panel > * { flex-shrink: 0; } /* Sektionen dürfen im Flex-Scroll nicht gequetscht werden */
-  .panel-head h2 { font-size: 1.3rem; }
+  .panel-head h2 { font-size: 1.25rem; white-space: nowrap; }
+  .panel-head .btn { padding: 7px 10px; font-size: 0.76rem; white-space: nowrap; }
   .product-tab { padding: 10px 8px; font-size: 0.95rem; }
   .panel .note-box { font-size: 0.73rem; line-height: 1.45; padding: 8px 12px; }
   .mtabs { margin: 0; }
@@ -771,6 +772,50 @@ html.dark, .dark body { color-scheme: dark; }
   .panel-cta .tiny { font-size: 0.68rem; }
 }
 section[id] { scroll-margin-top: 72px; }
+
+/* ---------- Design-Codes ---------- */
+.panel-head-btns { display: flex; gap: 6px; }
+.linkbtn {
+  background: none; border: none; padding: 0; font: inherit; color: var(--ink-soft);
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer;
+}
+.linkbtn:hover { color: var(--ink); }
+.ci-code {
+  margin-top: 4px; align-self: flex-start; font-family: var(--sans); font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.06em; color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 8px; padding: 3px 8px; cursor: pointer;
+}
+.dc { gap: 16px; text-align: left; }
+.dc .co-head { display: flex; align-items: center; justify-content: space-between; text-align: left; }
+.dc .co-head h2 { margin: 0; }
+.dc-enter-row input::placeholder { text-transform: none; letter-spacing: normal; font-weight: 500; color: var(--ink-soft); opacity: 0.8; }
+.dc-lead { font-size: 0.88rem; color: var(--ink-soft); line-height: 1.5; }
+.dc-codebox {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 18px; padding: 18px;
+  display: flex; flex-direction: column; gap: 12px; align-items: center;
+}
+.dc-code {
+  font-family: var(--serif); font-size: 2.3rem; font-weight: 700; letter-spacing: 0.12em;
+  color: var(--ink); text-align: center; min-height: 1.2em;
+  animation: springPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.dc-code.busy { color: var(--ink-soft); animation: dcPulse 1s infinite alternate; }
+@keyframes dcPulse { from { opacity: 0.4; } to { opacity: 1; } }
+.dc-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.dc-actions .btn { padding: 10px 14px; font-size: 0.85rem; }
+.dc-actions .btn.ok { background: var(--ok, #3a9d5d); color: #fff; border-color: transparent; }
+.dc-link { width: 100%; min-width: 0; font-size: 0.72rem; color: var(--ink-soft); background: transparent; border: none; text-align: center; }
+.dc-enter { display: flex; flex-direction: column; gap: 8px; }
+.dc-enter-label { font-weight: 700; font-size: 0.9rem; }
+.dc-enter-row { display: flex; gap: 8px; }
+.dc-enter-row input {
+  flex: 1; min-width: 0; font-family: var(--sans); font-size: 1.05rem; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--bg); color: var(--ink);
+}
+.dc-enter-row input:focus { outline: none; border-color: var(--ink); }
+.err-msg { color: #b3261e; text-align: left; }
+.ok-msg { color: #2e7d4f; text-align: left; }
+.mb-code { font-size: 1.1rem; }
 .stage-full-btn { display: none; }
 .mobile-bar { display: none; }
 #toast {
@@ -904,7 +949,7 @@ section[id] { scroll-margin-top: 72px; }
 
   /* Bottom-Bar */
   .mobile-bar {
-    display: grid; grid-template-columns: auto 44px minmax(0, 1fr); align-items: center; gap: 8px;
+    display: grid; grid-template-columns: auto 44px 44px minmax(0, 1fr); align-items: center; gap: 8px;
     position: fixed; left: 0; right: 0; bottom: 0;
     z-index: 150; padding: 10px max(12px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) 14px;
     background: var(--card);

@@ -1,0 +1,104 @@
+// OVJU — Design-Codes: kurzer Code ⇄ komplettes Design (Form, Muster, Gravur, Farbe …)
+// Server vergibt den Code deterministisch (gleiches Design → gleicher Code), speichert die Konfiguration.
+const $ = (s) => document.querySelector(s);
+
+export const formatCode = (c) => c ? String(c).replace(/(.{3})(?=.)/g, '$1-') : '';
+export const normalizeCode = (raw) => String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^OVJU/, '');
+
+/** Design speichern → Code */
+export async function saveDesign(config) {
+  const r = await (await fetch('/api/design', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }),
+  })).json();
+  if (!r.ok) throw new Error(r.error || 'Design konnte nicht gespeichert werden');
+  return r.code;
+}
+
+/** Code → Konfiguration */
+export async function loadDesign(code) {
+  const c = normalizeCode(code);
+  if (c.length < 4) throw new Error('Bitte einen Design-Code eingeben (z. B. K7P-3QX).');
+  const r = await (await fetch(`/api/design/${encodeURIComponent(c)}`)).json();
+  if (!r.ok) throw new Error(r.error || 'Code unbekannt');
+  return { code: r.code, config: r.config };
+}
+
+export const designLink = (code) => `${location.origin}${location.pathname}?d=${code}`;
+
+let getConfig = null;   // () => config des aktuellen Designs
+let applyConfig = null; // (config) => Design in den Konfigurator laden
+let lastCode = null;
+let lastSig = null;
+
+async function showCurrent() {
+  const cfg = getConfig();
+  const sig = JSON.stringify(cfg);
+  const out = $('#dc-code'); const link = $('#dc-link');
+  if (sig !== lastSig) {
+    out.textContent = '…'; out.classList.add('busy');
+    try { lastCode = await saveDesign(cfg); lastSig = sig; }
+    catch (e) { out.textContent = '—'; $('#dc-err').textContent = e.message; return; }
+  }
+  out.classList.remove('busy');
+  out.textContent = formatCode(lastCode);
+  link.value = designLink(lastCode);
+}
+
+export function openCodeDialog(mode = 'show') {
+  $('#dc-err').textContent = '';
+  $('#dc-msg').textContent = '';
+  $('#dc-input').value = '';
+  $('#code-modal').showModal();
+  if (mode === 'enter') { $('#dc-input').focus(); return; }
+  showCurrent();
+}
+
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); } catch { /* Clipboard gesperrt */ }
+  const old = btn.textContent; btn.textContent = '✓ Kopiert'; btn.classList.add('ok');
+  setTimeout(() => { btn.textContent = old; btn.classList.remove('ok'); }, 1500);
+}
+
+async function loadFromInput() {
+  const err = $('#dc-err'); err.textContent = '';
+  const btn = $('#dc-load'); btn.disabled = true;
+  try {
+    const { code, config } = await loadDesign($('#dc-input').value);
+    await applyConfig(config, code);
+    $('#code-modal').close();
+    history.replaceState(null, '', `${location.pathname}?d=${code}#konfigurator`);
+  } catch (e) { err.textContent = e.message; }
+  btn.disabled = false;
+}
+
+/** Beim Laden mit ?d=CODE bzw. #d=CODE das Design direkt öffnen */
+export async function loadFromURL() {
+  const m = (location.search + location.hash).match(/[?&#]d=([A-Za-z0-9-]{4,40})/);
+  if (!m) return false;
+  try {
+    const { code, config } = await loadDesign(m[1]);
+    await applyConfig(config, code);
+    return code;
+  } catch { return false; }
+}
+
+export function initDesignCodes(opts) {
+  getConfig = opts.getConfig; applyConfig = opts.applyConfig;
+  $('#dc-close').addEventListener('click', () => $('#code-modal').close());
+  $('#dc-copy').addEventListener('click', (e) => { if (lastCode) copy(lastCode, e.currentTarget); });
+  $('#dc-copylink').addEventListener('click', (e) => { if (lastCode) copy(designLink(lastCode), e.currentTarget); });
+  $('#dc-share').addEventListener('click', async (e) => {
+    if (!lastCode) return;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Mein OVJU-Design', text: `Design-Code ${formatCode(lastCode)}`, url: designLink(lastCode) }); } catch { /* abgebrochen */ }
+    } else copy(designLink(lastCode), e.currentTarget);
+  });
+  $('#dc-load').addEventListener('click', loadFromInput);
+  $('#dc-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); loadFromInput(); } });
+  $('#dc-input').addEventListener('input', (e) => {
+    const v = normalizeCode(e.target.value);
+    e.target.value = formatCode(v);
+  });
+  if (!navigator.share) $('#dc-share').hidden = true;
+  document.querySelectorAll('[data-open-code]').forEach((b) => b.addEventListener('click', () => openCodeDialog(b.dataset.openCode || 'show')));
+}

@@ -116,6 +116,50 @@ function loadUsers() {
   for (const [t, s] of Object.entries(sessions)) if (s.createdAt < cutoff) delete sessions[t];
 }
 const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2));
+
+// ---------------------------------------------------------------------------
+// Design-Codes (data/designs.json): kurzer Code ⇄ komplette Konfiguration.
+// Der Code ist ein Hash der kanonischen Konfiguration → gleiches Design = gleicher Code.
+// ---------------------------------------------------------------------------
+const DESIGNS_FILE = path.join(DATA, 'designs.json');
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // ohne I/L/O/0/1 (verwechselbar)
+const DESIGN_KEYS = ['product', 'preset', 'height', 'width', 'pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves',
+  'text', 'textSize', 'textPos', 'font', 'saucer', 'customPoints', 'color'];
+let designs = {};
+function loadDesigns() {
+  try { designs = JSON.parse(readFileSync(DESIGNS_FILE, 'utf8')); } catch { designs = {}; }
+}
+const saveDesigns = () => writeFile(DESIGNS_FILE, JSON.stringify(designs));
+function canonicalDesign(cfg) {
+  const out = {};
+  for (const k of DESIGN_KEYS) {
+    let v = cfg?.[k];
+    if (v === undefined || v === null || v === '' || v === false) continue;
+    if (typeof v === 'number') v = Math.round(v * 1000) / 1000;
+    if (k === 'customPoints') {
+      if (!Array.isArray(v)) continue;
+      v = v.slice(0, 40).map((pt) => [Math.round((pt[0] ?? pt.t ?? 0) * 1000) / 1000, Math.round((pt[1] ?? pt.r ?? 0) * 1000) / 1000]);
+    } else if (typeof v === 'string') v = v.slice(0, 40);
+    else if (typeof v !== 'number' && typeof v !== 'boolean') continue;
+    out[k] = v;
+  }
+  return out;
+}
+function designCode(cfg) {
+  const canon = canonicalDesign(cfg);
+  const json = JSON.stringify(canon);
+  const digest = crypto.createHash('sha256').update(json).digest();
+  const chars = [...digest].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+  // 6 Zeichen; bei Kollision mit einem ANDEREN Design verlängern
+  for (let len = 6; len <= chars.length; len++) {
+    const code = chars.slice(0, len);
+    const ex = designs[code];
+    if (!ex || JSON.stringify(ex.config) === json) return { code, canon, isNew: !ex };
+  }
+  return { code: chars, canon, isNew: !designs[chars] };
+}
+const normalizeCode = (raw) => String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^OVJU/, '');
+
 const saveSessions = () => writeFile(SESS_FILE, JSON.stringify(sessions));
 const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
 function createSession(userId) {
@@ -232,7 +276,8 @@ function itemLabel(it) {
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
     (c.text ? ` · Gravur „${c.text}“` : '') +
-    (it.saucer ? ' · mit Untersetzer' : '');
+    (it.saucer ? ' · mit Untersetzer' : '') +
+    (it.code ? ` · Design-Code ${it.code}` : '');
 }
 
 // ---------------------------------------------------------------------------
@@ -491,6 +536,28 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    // --- Design-Codes: speichern (POST) & laden (GET /api/design/CODE)
+    if (req.method === 'POST' && p === '/api/design') {
+      let cfg;
+      try { cfg = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')).config; } catch { cfg = null; }
+      if (!cfg || !['vase', 'eierbecher'].includes(cfg.product)) return send(res, 400, { ok: false, error: 'Ungültiges Design' });
+      const { code, canon, isNew } = designCode(cfg);
+      if (isNew) {
+        designs[code] = { config: canon, createdAt: Date.now(), loads: 0 };
+        await saveDesigns();
+      }
+      return send(res, 200, { ok: true, code });
+    }
+    const mDesign = p.match(/^\/api\/design\/([A-Za-z0-9-]{4,40})$/);
+    if (req.method === 'GET' && mDesign) {
+      const code = normalizeCode(mDesign[1]);
+      const d = designs[code];
+      if (!d) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht — bitte prüfen (z. B. B statt 8).' });
+      d.loads = (d.loads || 0) + 1; d.lastLoad = Date.now();
+      saveDesigns();
+      return send(res, 200, { ok: true, code, config: d.config });
+    }
+
     if (p === '/api/colors') {
       return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish }) => ({ id, name, hex, finish: finish || 'matt' })));
     }
@@ -653,6 +720,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 loadSettings();
+loadDesigns();
 loadUsers();
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🥚 OVJU Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);

@@ -11,7 +11,8 @@ import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { makeSTL, loadFont } from './modelfactory.js';
-import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge } from './cart.js';
+import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge, setCodeProvider } from './cart.js';
+import { initDesignCodes, loadFromURL, saveDesign, formatCode } from './designcode.js';
 import { initAuth } from './auth.js';
 import { initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
 
@@ -738,7 +739,7 @@ function initControls() {
   $('#btn-order').addEventListener('click', () => {
     renderer.render(scene, camera);
     addToCart({
-      config: currentConfig(),
+      config: designConfig(),
       colorName: state.colorFinish && state.colorFinish !== 'matt'
         ? `${state.colorName} (${FINISH_LABEL[state.colorFinish]})` : state.colorName,
       colorHex: state.colorHex,
@@ -826,6 +827,54 @@ function currentConfig() {
     saucer: state.product === 'eierbecher' && state.saucer, // Untersetzer gibt's nur beim Eierbecher
     customPoints: customByProduct[state.product],
   };
+}
+
+/** Konfiguration inkl. Farbe — das ist, was ein Design-Code speichert */
+function designConfig() {
+  return { ...currentConfig(), color: state.color };
+}
+
+/** Ein gespeichertes Design (aus Code/Link) in den Konfigurator laden */
+async function applyDesign(cfg, code) {
+  const product = cfg.product === 'eierbecher' ? 'eierbecher' : 'vase';
+  if (product !== state.product) setProduct(product);
+  const prod = PRODUCTS[product];
+  if (Array.isArray(cfg.customPoints) && cfg.customPoints.length >= 3) customByProduct[product] = cfg.customPoints.map((p) => [+p[0], +p[1]]);
+  const num = (k, lo, hi) => { const v = parseFloat(cfg[k]); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : DEFAULTS[k]; };
+  Object.assign(state, {
+    pattern: PATTERNS[cfg.pattern] ? cfg.pattern : 'glatt',
+    flow: FLOWS[cfg.flow] ? cfg.flow : 'spirale',
+    font: FONTS[cfg.font] ? cfg.font : DEFAULTS.font,
+    height: num('height', prod.heightRange[0], prod.heightRange[1]),
+    width: num('width', 0.85, 1.15),
+    ribs: Math.round(num('ribs', 3, 120)),
+    depth: num('depth', 0, 6),
+    twist: num('twist', -2, 2),
+    flowWaves: Math.round(num('flowWaves', 1, 8)),
+    textSize: num('textSize', 4, 10),
+    textPos: num('textPos', 0.15, 0.8),
+    text: String(cfg.text || '').slice(0, 16),
+    saucer: product === 'eierbecher' && !!cfg.saucer,
+  });
+  const col = (content.colors || []).find((c) => c.id === cfg.color);
+  if (col) setColor(col);
+  // Regler & Chips nachziehen
+  const preset = cfg.preset === 'eigene' && customByProduct[product] ? 'eigene' : (prod.presets[cfg.preset] ? cfg.preset : Object.keys(prod.presets)[0]);
+  if (preset !== 'eigene') lastRealPreset[product] = preset;
+  state.preset = preset;
+  markActivePreset();
+  if (preset === 'eigene') renderShapeEditor();
+  syncControls(); markActiveFont();
+  $('#s-width').value = state.width; $('#s-width-val').textContent = `${Math.round(state.width * 100)} %`;
+  $('#s-textsize').value = state.textSize; $('#s-textsize-val').textContent = `${state.textSize} mm`;
+  $('#s-textpos').value = state.textPos; $('#s-textpos-val').textContent = `${Math.round(state.textPos * 100)} %`;
+  $$('input[type=range]').forEach((el) => sliderFill(el));
+  $('#i-text').value = state.text; $('#c-gravur').checked = !!state.text; $('#gravur-options').hidden = !state.text;
+  $('#c-saucer').checked = state.saucer;
+  rebuild();
+  rebuildText();
+  frameCamera();
+  showToast(`🔖 Design ${formatCode(code)} geladen`);
 }
 
 // Quadratisches Vorschaubild aus dem aktuellen Canvas (für den Warenkorb)
@@ -1019,6 +1068,10 @@ async function renderShowcase() {
   await loadGallery();
   setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders
   initMobileShell({ product: state.product });
+  initDesignCodes({ getConfig: designConfig, applyConfig: applyDesign });
+  setCodeProvider((item) => saveDesign(item.config));
+  // Direktlink ?d=CODE → Design laden und zum Konfigurator springen
+  if (await loadFromURL()) $('#konfigurator').scrollIntoView();
 
   // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
   window.__ovju = {

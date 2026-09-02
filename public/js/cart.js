@@ -81,21 +81,32 @@ function itemSub(it) {
 // ---------------------------------------------------------------------------
 // In den Warenkorb
 // ---------------------------------------------------------------------------
-export function addToCart({ config, colorName, colorHex, thumb }) {
+export function addToCart({ config, colorName, colorHex, thumb, code }) {
   // Identisches Design (gleiche Konfiguration & Farbe) → Menge erhöhen (Rabatt!)
   const sig = JSON.stringify({ ...config, colorName });
   const existing = cart.find((it) => it.sig === sig);
   if (existing) {
     existing.qty = Math.min(50, existing.qty + 1);
+    if (code && !existing.code) existing.code = code;
   } else {
     cart.push({
-      sig, product: config.product, config, colorName, colorHex, thumb,
+      sig, product: config.product, config, colorName, colorHex, thumb, code: code || null,
       saucer: !!config.saucer, qty: 1,
     });
   }
   saveCart();
   openCart();
+  // Design-Code nachreichen, falls noch keiner da ist (Server vergibt ihn deterministisch)
+  const item = existing || cart[cart.length - 1];
+  if (!item.code && typeof codeProvider === 'function') {
+    codeProvider(item).then((c) => { if (c) { item.code = c; saveCart(); if ($('#cart-modal').open) renderCart(); } }).catch(() => {});
+  }
 }
+
+/** Vom Konfigurator gesetzt: liefert für eine Warenkorb-Zeile den Design-Code (async) */
+let codeProvider = null;
+export function setCodeProvider(fn) { codeProvider = fn; }
+export const formatCode = (c) => c ? String(c).replace(/(.{3})(?=.)/g, '$1-') : '';
 
 // ---------------------------------------------------------------------------
 // Warenkorb-UI
@@ -124,6 +135,7 @@ function renderCart() {
         <div class="ci-main">
           <b>${itemTitle(it)}</b>
           <small>${itemSub(it)}</small>
+          ${it.code ? `<button class="ci-code" data-code="${it.code}" title="Design-Code kopieren — damit kannst du dieses Design jederzeit wieder laden">🔖 ${formatCode(it.code)}</button>` : ''}
           <div class="ci-qty">
             <span class="ci-step"><button data-i="${i}" data-d="-1">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1">+</button></span>
             ${off ? `<span class="ci-off">−${off} %</span>` : ''}
@@ -146,6 +158,11 @@ function renderCart() {
     const it = cart[+b.dataset.i];
     it.qty = Math.max(1, Math.min(50, it.qty + (+b.dataset.d)));
     saveCart(); renderCart();
+  }));
+  box.querySelectorAll('.ci-code').forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.code); } catch { /* kein Clipboard */ }
+    const old = b.textContent; b.textContent = '✓ kopiert';
+    setTimeout(() => { b.textContent = old; }, 1400);
   }));
   box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
     cart.splice(+b.dataset.del, 1);
@@ -246,7 +263,7 @@ function setupPayPal() {
 function cartPayload() {
   return cart.map((it) => ({
     product: it.product, qty: it.qty, saucer: it.saucer,
-    config: it.config, colorName: it.colorName,
+    config: it.config, colorName: it.colorName, code: it.code || null,
   }));
 }
 
