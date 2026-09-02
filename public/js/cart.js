@@ -1,5 +1,6 @@
 // OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing)
 import { makeSTL } from './modelfactory.js';
+import { copyText, formatCode } from './designcode.js';
 import { PRODUCTS, PATTERNS, FLOWS, FONTS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
 
@@ -106,7 +107,7 @@ export function addToCart({ config, colorName, colorHex, thumb, code }) {
 /** Vom Konfigurator gesetzt: liefert für eine Warenkorb-Zeile den Design-Code (async) */
 let codeProvider = null;
 export function setCodeProvider(fn) { codeProvider = fn; }
-export const formatCode = (c) => c ? String(c).replace(/(.{3})(?=.)/g, '$1-') : '';
+export { formatCode };
 
 // ---------------------------------------------------------------------------
 // Warenkorb-UI
@@ -160,8 +161,8 @@ function renderCart() {
     saveCart(); renderCart();
   }));
   box.querySelectorAll('.ci-code').forEach((b) => b.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(b.dataset.code); } catch { /* kein Clipboard */ }
-    const old = b.textContent; b.textContent = '✓ kopiert';
+    const ok = await copyText(formatCode(b.dataset.code));
+    const old = b.textContent; b.textContent = ok ? '✓ kopiert' : b.textContent;
     setTimeout(() => { b.textContent = old; }, 1400);
   }));
   box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {

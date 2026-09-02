@@ -53,10 +53,31 @@ export function openCodeDialog(mode = 'show') {
   showCurrent();
 }
 
+/** Text in die Zwischenablage — mit Fallback für http:// (Clipboard-API gibt es nur auf https/localhost) */
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* weiter mit Fallback */ }
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  // In einen offenen modalen Dialog hängen — alles außerhalb ist „inert“ und ließe sich nicht selektieren
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  host.appendChild(ta);
+  ta.select(); ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
 async function copy(text, btn) {
-  try { await navigator.clipboard.writeText(text); } catch { /* Clipboard gesperrt */ }
-  const old = btn.textContent; btn.textContent = '✓ Kopiert'; btn.classList.add('ok');
-  setTimeout(() => { btn.textContent = old; btn.classList.remove('ok'); }, 1500);
+  const ok = await copyText(text);
+  const old = btn.textContent;
+  btn.textContent = ok ? '✓ Kopiert' : 'Bitte markieren & kopieren';
+  btn.classList.toggle('ok', ok);
+  if (!ok) { const out = $('#dc-code'); const r = document.createRange(); r.selectNodeContents(out); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+  setTimeout(() => { btn.textContent = old; btn.classList.remove('ok'); }, 1800);
 }
 
 async function loadFromInput() {
@@ -85,7 +106,7 @@ export async function loadFromURL() {
 export function initDesignCodes(opts) {
   getConfig = opts.getConfig; applyConfig = opts.applyConfig;
   $('#dc-close').addEventListener('click', () => $('#code-modal').close());
-  $('#dc-copy').addEventListener('click', (e) => { if (lastCode) copy(lastCode, e.currentTarget); });
+  $('#dc-copy').addEventListener('click', (e) => { if (lastCode) copy(formatCode(lastCode), e.currentTarget); });
   $('#dc-copylink').addEventListener('click', (e) => { if (lastCode) copy(designLink(lastCode), e.currentTarget); });
   $('#dc-share').addEventListener('click', async (e) => {
     if (!lastCode) return;
