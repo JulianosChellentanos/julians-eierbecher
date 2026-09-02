@@ -28,6 +28,7 @@ const state = {
 const customByProduct = { eierbecher: null, vase: null };
 const EDITOR_T = [0, 0.15, 0.3, 0.45, 0.62, 0.8, 1];
 let lastRealPreset = { eierbecher: 'kelch', vase: 'flasche' };
+const START_PRODUCT = 'vase';
 let content = null;
 let cupMesh = null;
 let textMesh = null;
@@ -943,10 +944,10 @@ async function loadGallery() {
   try { galleryPhotos = await (await fetch('/api/gallery')).json(); } catch { galleryPhotos = []; }
   const galerie = galleryPhotos.filter((g) => g.cat === 'galerie');
   // Produktfotos ergänzen, bis das Grid gut gefüllt ist
-  const rest = galleryPhotos.filter((g) => g.cat !== 'galerie');
+  const rest = galleryPhotos.filter((g) => g.cat !== 'galerie').sort((a, b) => (a.cat === 'vase' ? -1 : 1) - (b.cat === 'vase' ? -1 : 1));
   const items = [...galerie, ...(galerie.length < 4 ? rest : [])];
   // Hero-Foto: das Eierbecher-Produktfoto (oder erstes Galerie-Bild)
-  const heroPic = galleryPhotos.find((g) => g.cat === 'eierbecher') || galleryPhotos[0];
+  const heroPic = galleryPhotos.find((g) => g.cat === 'vase') || galleryPhotos.find((g) => g.cat === 'eierbecher') || galleryPhotos[0];
   if (heroPic) {
     $('#hero-photo-img').src = heroPic.file;
     $('#hero-photo').hidden = false;
@@ -965,14 +966,14 @@ async function renderShowcase() {
   $('#showcase-sub').textContent = sc.sub;
   const defs = [
     {
-      id: 'eierbecher', c: sc.eierbecher, hex: '#c86f4a', extra: 'egg',
-      params: { product: 'eierbecher', preset: 'kelch', pattern: 'rippen', ribs: 48, depth: 0.9, height: 58 },
-      price: getPricing().products.eierbecher.single,
-    },
-    {
       id: 'vase', c: sc.vase, hex: '#9caf88', extra: 'grass',
       params: { product: 'vase', preset: 'flasche', pattern: 'rippen', ribs: 72, depth: 0.9, height: 150 },
       price: getPricing().products.vase.single,
+    },
+    {
+      id: 'eierbecher', c: sc.eierbecher, hex: '#c86f4a', extra: 'egg',
+      params: { product: 'eierbecher', preset: 'kelch', pattern: 'rippen', ribs: 48, depth: 0.9, height: 58 },
+      price: getPricing().products.eierbecher.single,
     },
   ];
   // Echte Produktfotos (Admin-Upload) bevorzugen, Engine-Render als Fallback
@@ -1009,7 +1010,9 @@ async function renderShowcase() {
   renderPrices();
   initControls();
   loadFont(state.font); // Standardschrift vorwärmen
-  rebuild();
+  // Startprodukt über setProduct() initialisieren (Slider-Bereiche, Tabs, Hinweise, Preise)
+  state.product = START_PRODUCT === 'vase' ? 'eierbecher' : 'vase';
+  setProduct(START_PRODUCT);
   animate();
   $('#loading').classList.add('hidden');
   await loadGallery();

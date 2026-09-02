@@ -1,18 +1,18 @@
 {
   "brand": {
     "name": "OVJU",
-    "tagline": "Dein Ei. Dein Design."
+    "tagline": "Dein Design. Deine Vase."
   },
   "hero": {
-    "headline": "Eierbecher & Vasen, die es nur einmal gibt: deine.",
-    "subheadline": "Gestalte deine Eierbecher und Vasen im 3D-Konfigurator – Rippen, Spiralen, Wellen, Zickzack, zehn matte Farben und deine persönliche Gravur. Wir drucken dein Design für dich – oder du lädst die Datei für deinen eigenen Drucker.",
-    "cta": "Jetzt gestalten"
+    "headline": "Eine Vase, die es nur einmal gibt: deine.",
+    "subheadline": "Gestalte deine Vase im 3D-Konfigurator – Rippen, Spiralen, tiefe Lamellen oder gehämmert, in sechzehn Farben von matt bis metallic. Wir drucken sie für dich. Und für den Frühstückstisch gibt es den passenden Eierbecher im gleichen Design.",
+    "cta": "Vase gestalten"
   },
   "usps": [
     {
       "icon": "🎨",
-      "title": "Design in Echtzeit",
-      "text": "Forme deinen Eierbecher live im 3D-Konfigurator: Oberfläche, Farbe und Gravur – du siehst sofort, was du bekommst."
+      "title": "Vase in Echtzeit designen",
+      "text": "Forme deine Vase live im 3D-Konfigurator: Silhouette, Oberfläche, Farbe und Gravur – du siehst sofort, was auf deinem Regal stehen wird."
     },
     {
       "icon": "🌿",
@@ -145,16 +145,16 @@
     "currency": "EUR"
   },
   "showcase": {
-    "title": "Zwei Produkte. Unendlich viele Designs.",
-    "sub": "Beides aus demselben Studio: forme, färbe und graviere – wir drucken.",
+    "title": "Die Vase im Mittelpunkt.",
+    "sub": "Skulptur fürs Regal, Trockenblumen-Bühne, Geschenk mit Gravur – und als Bonus der Eierbecher im selben Stil.",
     "eierbecher": {
       "title": "Der Eierbecher",
-      "text": "Dein Frühstücks-Statement: Kelch, Schale oder Tulpe, mit Rippen oder Spiralen – und auf Wunsch mit passendem Untersetzer für die Schalen.",
+      "text": "Das kleine Geschwisterstück: Kelch, Schale oder Tulpe im gleichen Muster wie deine Vase – auf Wunsch mit Gravur und passendem Untersetzer.",
       "cta": "Eierbecher designen"
     },
     "vase": {
       "title": "Die Vase",
-      "text": "Vom Japandi-Klassiker bis zur Skulptur mit eigener Silhouette: bis 22 cm hoch, echte Hohlform, bereit für Trockenblumen.",
+      "text": "Vom Japandi-Klassiker mit feinen Rippen bis zur Skulptur mit eigener Silhouette und tiefen Lamellen: bis 22 cm hoch, echte Hohlform, bereit für Trockenblumen.",
       "cta": "Vase designen"
     }
   },

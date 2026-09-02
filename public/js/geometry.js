@@ -7,36 +7,6 @@ import * as THREE from 'three';
 // t = 0..1 (Höhe von unten nach oben), r relativ zum Maximalradius.
 // ---------------------------------------------------------------------------
 export const PRODUCTS = {
-  eierbecher: {
-    label: 'Eierbecher',
-    icon: '🥚',
-    heightRange: [35, 75],
-    defaultHeight: 58,
-    maxRadius: 24,
-    presets: {
-      kelch: {
-        label: 'Kelch',
-        points: [
-          [0.00, 0.62], [0.07, 0.68], [0.16, 0.58], [0.28, 0.52],
-          [0.42, 0.66], [0.60, 0.85], [0.80, 0.96], [0.93, 1.00], [1.00, 0.98],
-        ],
-      },
-      schale: {
-        label: 'Schale',
-        points: [
-          [0.00, 0.55], [0.06, 0.63], [0.22, 0.78], [0.45, 0.90],
-          [0.70, 0.97], [0.90, 1.00], [1.00, 1.00],
-        ],
-      },
-      tulpe: {
-        label: 'Tulpe',
-        points: [
-          [0.00, 0.72], [0.08, 0.74], [0.20, 0.62], [0.35, 0.58],
-          [0.55, 0.76], [0.75, 0.93], [0.90, 1.00], [1.00, 0.95],
-        ],
-      },
-    },
-  },
   vase: {
     label: 'Vase',
     icon: '🏺',
@@ -80,6 +50,37 @@ export const PRODUCTS = {
       },
     },
   },
+  eierbecher: {
+    label: 'Eierbecher',
+    icon: '🥚',
+    heightRange: [35, 75],
+    defaultHeight: 58,
+    maxRadius: 24,
+    presets: {
+      kelch: {
+        label: 'Kelch',
+        points: [
+          [0.00, 0.62], [0.07, 0.68], [0.16, 0.58], [0.28, 0.52],
+          [0.42, 0.66], [0.60, 0.85], [0.80, 0.96], [0.93, 1.00], [1.00, 0.98],
+        ],
+      },
+      schale: {
+        label: 'Schale',
+        points: [
+          [0.00, 0.55], [0.06, 0.63], [0.22, 0.78], [0.45, 0.90],
+          [0.70, 0.97], [0.90, 1.00], [1.00, 1.00],
+        ],
+      },
+      tulpe: {
+        label: 'Tulpe',
+        points: [
+          [0.00, 0.72], [0.08, 0.74], [0.20, 0.62], [0.35, 0.58],
+          [0.55, 0.76], [0.75, 0.93], [0.90, 1.00], [1.00, 0.95],
+        ],
+      },
+    },
+  },
+
 };
 
 // Schriften für die Gravur (typeface.json im fonts/-Ordner)
@@ -112,12 +113,12 @@ export const FLOWS = {
 };
 
 export const DEFAULTS = {
-  product: 'eierbecher',
-  preset: 'kelch',
-  height: 58,        // mm
+  product: 'vase',
+  preset: 'flasche',
+  height: 150,       // mm
   width: 1.0,        // Faktor 0.85..1.15 auf den Maximalradius
   pattern: 'rippen',
-  ribs: 48,          // Anzahl Rippen/Wellen
+  ribs: 64,          // Anzahl Rippen/Wellen
   depth: 0.9,        // Amplitude in mm (0..1.6)
   twist: 0,          // -2..2 — Stärke des Verlaufs (0 = gerade)
   flow: 'spirale',   // 'spirale' | 'gegen' | 'fluss' | 'zick'
@@ -292,7 +293,9 @@ export function buildModel(params) {
   // Radiale Auflösung: ≥ 12 Segmente pro Rippenperiode (Zickzack 16), sonst
   // zittern die Gratlinien körnig über die Ringe („zackig“ statt samtig).
   const rsFactor = { zickzack: 16, lamellen: 14, gehaemmert: 8 }[p.pattern] || 12;
-  const RS = Math.round(Math.min(1080, Math.max(240, ribs * rsFactor)) * q);
+  // Segmente pro Rippe (ganzzahlig!) → Gratspitzen liegen auf jedem Ring exakt auf einem Vertex
+  const perRib = Math.max(6, Math.round(Math.min(Math.max(rsFactor, Math.ceil(240 / ribs)), Math.floor(1080 / ribs)) * q));
+  const RS = ribs * perRib;
   const wallBase = isVase ? Math.max(160, H * 1.4) : 130;
   const querExtra = isQuer ? quersV * 14 : 0;
   const WALL_STEPS = Math.round(Math.min(430, wallBase + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
@@ -336,7 +339,7 @@ export function buildModel(params) {
     const t = y / H;
     stations.push(
       ampAt(t) > 1e-4
-        ? { y, rFn: (theta) => R(t) + offset(theta, t) }
+        ? { y, rFn: (theta) => R(t) + offset(theta, t), rot: isQuer ? 0 : -flowPhase(t) }
         : { y, r: R(t) }
     );
   }
@@ -412,7 +415,7 @@ function revolve(stations, RS) {
       ringStart.push(positions.length / 3);
       pointIdx.push(-1);
       for (let j = 0; j < RS; j++) {
-        const theta = (j / RS) * Math.PI * 2;
+        const theta = (j / RS) * Math.PI * 2 + (st.rot || 0); // Ring folgt dem Muster-Verlauf
         const r = st.rFn ? st.rFn(theta) : st.r;
         positions.push(Math.sin(theta) * r, st.y, Math.cos(theta) * r);
       }
