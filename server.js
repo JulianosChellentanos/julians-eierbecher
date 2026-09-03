@@ -160,6 +160,44 @@ function designCode(cfg) {
 }
 const normalizeCode = (raw) => String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^OVJU/, '');
 
+// Vorschaubilder zu Design-Codes (data/thumbs/CODE.jpg, ≤ 80 KB, vom Client gerendert)
+const THUMBS = path.join(DATA, 'thumbs');
+
+// ---------------------------------------------------------------------------
+// Design-Listen (data/lists.json): Sammlungen von Design-Codes, z. B. für eine
+// Hochzeit. Besitzer bearbeiten per Token, alle anderen lesen per Code/Link.
+// ---------------------------------------------------------------------------
+const LISTS_FILE = path.join(DATA, 'lists.json');
+let lists = {};
+function loadLists() { try { lists = JSON.parse(readFileSync(LISTS_FILE, 'utf8')); } catch { lists = {}; } }
+const saveLists = () => writeFile(LISTS_FILE, JSON.stringify(lists));
+function newListCode() {
+  for (;;) {
+    let c = 'L';
+    for (let i = 0; i < 6; i++) c += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+    if (!lists[c]) return c;
+  }
+}
+const LIST_OCCASIONS = ['hochzeit', 'geburtstag', 'taufe', 'weihnachten', 'firma', 'sonstiges'];
+function cleanListItems(items) {
+  const out = [];
+  for (const it of Array.isArray(items) ? items.slice(0, 60) : []) {
+    const code = normalizeCode(it?.code);
+    if (!designs[code]) continue;
+    const qty = Math.max(1, Math.min(50, Math.round(+it.qty || 1)));
+    const ex = out.find((o) => o.code === code);
+    if (ex) ex.qty = Math.min(50, ex.qty + qty); else out.push({ code, qty });
+  }
+  return out;
+}
+function publicList(l) {
+  return {
+    code: l.code, name: l.name, occasion: l.occasion, note: l.note || '',
+    createdAt: l.createdAt, updatedAt: l.updatedAt,
+    items: l.items.map((it) => ({ ...it, config: designs[it.code]?.config || null })).filter((it) => it.config),
+  };
+}
+
 const saveSessions = () => writeFile(SESS_FILE, JSON.stringify(sessions));
 const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
 function createSession(userId) {
@@ -558,6 +596,62 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, code, config: d.config });
     }
 
+    // --- Vorschaubild eines Designs (PUT: data-URL JPEG vom Client, GET: Bild)
+    const mThumb = p.match(/^\/api\/design\/([A-Za-z0-9-]{4,40})\/thumb$/);
+    if (mThumb) {
+      const code = normalizeCode(mThumb[1]);
+      const file = path.join(THUMBS, `${code}.jpg`);
+      if (req.method === 'PUT') {
+        if (!designs[code]) return send(res, 404, { ok: false, error: 'Design unbekannt' });
+        const raw = (await readBody(req, 120 * 1024)).toString('utf8');
+        const m = raw.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/);
+        if (!m) return send(res, 400, { ok: false, error: 'Nur JPEG (data-URL)' });
+        await mkdir(THUMBS, { recursive: true });
+        await writeFile(file, Buffer.from(m[1], 'base64'));
+        return send(res, 200, { ok: true });
+      }
+      if (req.method === 'GET') {
+        if (!existsSync(file)) { res.writeHead(404); return res.end(); }
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=3600' });
+        return res.end(await readFile(file));
+      }
+    }
+
+    // --- Design-Listen
+    if (req.method === 'POST' && p === '/api/list') {
+      let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
+      const name = String(b.name || '').trim().slice(0, 60) || 'Meine Liste';
+      const code = newListCode();
+      const token = crypto.randomBytes(16).toString('hex');
+      const l = {
+        code, token, name, occasion: LIST_OCCASIONS.includes(b.occasion) ? b.occasion : 'sonstiges',
+        note: String(b.note || '').slice(0, 300), items: cleanListItems(b.items),
+        createdAt: Date.now(), updatedAt: Date.now(),
+      };
+      lists[code] = l;
+      await saveLists();
+      return send(res, 200, { ok: true, code, token, list: publicList(l) });
+    }
+    const mList = p.match(/^\/api\/list\/([A-Za-z0-9-]{4,20})$/);
+    if (mList) {
+      const code = normalizeCode(mList[1]);
+      const l = lists[code];
+      if (!l) return send(res, 404, { ok: false, error: 'Diese Liste gibt es nicht — bitte den Code prüfen.' });
+      if (req.method === 'GET') return send(res, 200, { ok: true, list: publicList(l) });
+      let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
+      if (!b.token || b.token !== l.token) return send(res, 403, { ok: false, error: 'Nur der Besitzer kann diese Liste ändern.' });
+      if (req.method === 'DELETE') { delete lists[code]; await saveLists(); return send(res, 200, { ok: true }); }
+      if (req.method === 'PUT') {
+        if (b.name !== undefined) l.name = String(b.name).trim().slice(0, 60) || l.name;
+        if (b.occasion !== undefined && LIST_OCCASIONS.includes(b.occasion)) l.occasion = b.occasion;
+        if (b.note !== undefined) l.note = String(b.note).slice(0, 300);
+        if (b.items !== undefined) l.items = cleanListItems(b.items);
+        l.updatedAt = Date.now();
+        await saveLists();
+        return send(res, 200, { ok: true, list: publicList(l) });
+      }
+    }
+
     if (p === '/api/colors') {
       return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish }) => ({ id, name, hex, finish: finish || 'matt' })));
     }
@@ -721,6 +815,7 @@ const server = http.createServer(async (req, res) => {
 
 loadSettings();
 loadDesigns();
+loadLists();
 loadUsers();
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🥚 OVJU Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);

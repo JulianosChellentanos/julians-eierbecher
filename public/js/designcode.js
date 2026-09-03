@@ -25,9 +25,18 @@ export async function loadDesign(code) {
 
 export const designLink = (code) => `${location.origin}${location.pathname}?d=${code}`;
 
+/** Vorschaubild (JPEG data-URL) zu einem Design-Code hochladen — für Listen & Warenkorb */
+export async function uploadThumb(code, dataURL) {
+  if (!code || !dataURL || !dataURL.startsWith('data:image/jpeg')) return false;
+  try { const r = await fetch(`/api/design/${code}/thumb`, { method: 'PUT', body: dataURL }); return r.ok; }
+  catch { return false; }
+}
+
+let getThumb = null;    // () => JPEG data-URL der aktuellen Vorschau (optional)
 let getConfig = null;   // () => config des aktuellen Designs
 let applyConfig = null; // (config) => Design in den Konfigurator laden
 let lastCode = null;
+let onListCode = null;  // (code) => Liste öffnen, wenn ein Listen-Code eingegeben wird
 let lastSig = null;
 
 async function showCurrent() {
@@ -36,7 +45,7 @@ async function showCurrent() {
   const out = $('#dc-code'); const link = $('#dc-link');
   if (sig !== lastSig) {
     out.textContent = '…'; out.classList.add('busy');
-    try { lastCode = await saveDesign(cfg); lastSig = sig; }
+    try { lastCode = await saveDesign(cfg); lastSig = sig; if (getThumb) uploadThumb(lastCode, getThumb()); }
     catch (e) { out.textContent = '—'; $('#dc-err').textContent = e.message; return; }
   }
   out.classList.remove('busy');
@@ -84,10 +93,16 @@ async function loadFromInput() {
   const err = $('#dc-err'); err.textContent = '';
   const btn = $('#dc-load'); btn.disabled = true;
   try {
-    const { code, config } = await loadDesign($('#dc-input').value);
-    await applyConfig(config, code);
-    $('#code-modal').close();
-    history.replaceState(null, '', `${location.pathname}?d=${code}#konfigurator`);
+    const raw = normalizeCode($('#dc-input').value);
+    if (/^L[A-Z0-9]{6}$/.test(raw) && onListCode) { // Listen-Code → Liste öffnen
+      $('#code-modal').close();
+      await onListCode(raw);
+    } else {
+      const { code, config } = await loadDesign(raw);
+      await applyConfig(config, code);
+      $('#code-modal').close();
+      history.replaceState(null, '', `${location.pathname}?d=${code}#konfigurator`);
+    }
   } catch (e) { err.textContent = e.message; }
   btn.disabled = false;
 }
@@ -104,7 +119,8 @@ export async function loadFromURL() {
 }
 
 export function initDesignCodes(opts) {
-  getConfig = opts.getConfig; applyConfig = opts.applyConfig;
+  getConfig = opts.getConfig; applyConfig = opts.applyConfig; getThumb = opts.getThumb || null;
+  if (opts.onListCode) onListCode = opts.onListCode;
   $('#dc-close').addEventListener('click', () => $('#code-modal').close());
   $('#dc-copy').addEventListener('click', (e) => { if (lastCode) copy(formatCode(lastCode), e.currentTarget); });
   $('#dc-copylink').addEventListener('click', (e) => { if (lastCode) copy(designLink(lastCode), e.currentTarget); });

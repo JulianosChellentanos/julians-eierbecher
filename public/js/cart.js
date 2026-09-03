@@ -66,12 +66,12 @@ function totals() {
   return { subtotal, shipping, total: Math.round((subtotal + shipping) * 100) / 100 };
 }
 
-function itemTitle(it) {
+export function itemTitle(it) {
   const prod = PRODUCTS[it.product];
   const preset = it.config.preset === 'eigene' ? 'Eigene Form' : (prod.presets[it.config.preset]?.label || it.config.preset);
   return `${prod.label} „${preset}“`;
 }
-function itemSub(it) {
+export function itemSub(it) {
   const c = it.config;
   const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` (${FLOWS[c.flow] || 'Spirale'})` : '';
   return `${PATTERNS[c.pattern] || c.pattern}${flow} · ${c.height} mm · ${it.colorName}` +
@@ -82,21 +82,23 @@ function itemSub(it) {
 // ---------------------------------------------------------------------------
 // In den Warenkorb
 // ---------------------------------------------------------------------------
-export function addToCart({ config, colorName, colorHex, thumb, code }) {
+export function addToCart({ config, colorName, colorHex, thumb, code }, opts = {}) {
+  const qty = Math.max(1, Math.min(50, Math.round(opts.qty || 1)));
   // Identisches Design (gleiche Konfiguration & Farbe) → Menge erhöhen (Rabatt!)
   const sig = JSON.stringify({ ...config, colorName });
   const existing = cart.find((it) => it.sig === sig);
   if (existing) {
-    existing.qty = Math.min(50, existing.qty + 1);
+    existing.qty = Math.min(50, existing.qty + qty);
     if (code && !existing.code) existing.code = code;
   } else {
     cart.push({
       sig, product: config.product, config, colorName, colorHex, thumb, code: code || null,
-      saucer: !!config.saucer, qty: 1,
+      saucer: !!config.saucer, qty,
     });
   }
   saveCart();
-  openCart();
+  renderBadge();
+  if (!opts.silent) openCart();
   // Design-Code nachreichen, falls noch keiner da ist (Server vergibt ihn deterministisch)
   const item = existing || cart[cart.length - 1];
   if (!item.code && typeof codeProvider === 'function') {
@@ -118,6 +120,7 @@ function renderBadge() {
   $('#cart-btn').classList.toggle('has-items', n > 0);
 }
 
+export const getCart = () => cart;
 export function openCart() {
   renderCart();
   $('#cart-modal').showModal();

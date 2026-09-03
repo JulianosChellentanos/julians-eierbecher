@@ -11,8 +11,9 @@ import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { makeSTL, loadFont } from './modelfactory.js';
-import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge, setCodeProvider } from './cart.js';
-import { initDesignCodes, loadFromURL, saveDesign, formatCode } from './designcode.js';
+import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge, setCodeProvider, getCart } from './cart.js';
+import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } from './designcode.js';
+import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
 import { initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
 
@@ -1105,10 +1106,31 @@ async function renderShowcase() {
   await loadGallery();
   setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders
   initMobileShell({ product: state.product });
-  initDesignCodes({ getConfig: designConfig, applyConfig: applyDesign });
-  setCodeProvider((item) => saveDesign(item.config));
-  // Direktlink ?d=CODE → Design laden und zum Konfigurator springen
+  initDesignCodes({
+    getConfig: designConfig, applyConfig: applyDesign,
+    getThumb: () => { renderer.render(scene, camera); return captureThumb(); },
+    onListCode: (code) => openList(code),
+  });
+  setCodeProvider(async (item) => {
+    const code = await saveDesign(item.config);
+    if (item.thumb && item.thumb.startsWith('data:')) uploadThumb(code, item.thumb);
+    return code;
+  });
+  initLists({
+    getDesign: async () => {
+      renderer.render(scene, camera);
+      const config = designConfig();
+      const code = await saveDesign(config);
+      await uploadThumb(code, captureThumb());
+      return { code, config };
+    },
+    applyDesign,
+    colorInfo: (id) => (content.colors || []).find((c) => c.id === id) || null,
+  });
+  $('#cart-to-list')?.addEventListener('click', () => createListFromCart(getCart()).catch((e) => showToast(e.message)));
+  // Direktlinks: ?d=CODE → Design laden, ?l=CODE → Liste öffnen
   if (await loadFromURL()) $('#konfigurator').scrollIntoView();
+  await loadListFromURL();
 
   // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
   window.__ovju = {

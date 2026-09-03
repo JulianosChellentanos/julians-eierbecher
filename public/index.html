@@ -43,6 +43,7 @@
     <div class="topbar-actions">
       <button class="icon-btn" id="theme-btn" title="Hell/Dunkel umschalten">🌙</button>
       <button class="icon-btn account-btn" id="account-btn" title="Mein Konto">👤 Anmelden</button>
+      <button class="icon-btn lists-btn" data-open-lists title="Design-Listen (z. B. für Hochzeiten)">📋<span class="ab-txt"> Listen</span></button>
       <button class="cart-btn" id="cart-btn" title="Warenkorb">🛒<span id="cart-count">0</span></button>
     </div>
   </div>
@@ -268,7 +269,7 @@
     <div id="cart-items"></div>
     <div class="cart-totals" id="cart-totals"></div>
     <button class="btn btn-primary btn-lg" id="cart-checkout">Zur Kasse</button>
-    <div class="tiny">Design gespeichert? <button class="linkbtn" data-open-code="enter">🔖 Design-Code eingeben</button> und weiter gestalten.</div>
+    <div class="tiny">Design gespeichert? <button class="linkbtn" data-open-code="enter">🔖 Design-Code eingeben</button> · <button class="linkbtn" id="cart-to-list">📋 Warenkorb als Liste speichern</button></div>
   </div>
 </dialog>
 
@@ -372,6 +373,12 @@
 </dialog>
 
 <!-- Mobile Bottom-Bar (App-Shell) -->
+<dialog id="lists-modal">
+  <div class="confirm dc lw">
+    <div class="co-head"><h2>📋 Design-Listen</h2><button class="btn btn-ghost" id="ls-close">✕</button></div>
+    <div id="ls-body"></div>
+  </div>
+</dialog>
 <dialog id="code-modal">
   <div class="confirm dc">
     <div class="co-head"><h2>🔖 Design-Code</h2><button class="btn btn-ghost" id="dc-close">✕</button></div>
@@ -383,6 +390,7 @@
         <button class="btn btn-ghost" id="dc-copylink">🔗 Link kopieren</button>
         <button class="btn btn-ghost" id="dc-share">📤 Teilen</button>
       </div>
+      <button class="btn btn-ghost dc-tolist" data-add-to-list>📋 Zu einer Liste hinzufügen</button>
       <input id="dc-link" class="dc-link" readonly aria-label="Link zum Design">
     </div>
     <div class="dc-enter">
