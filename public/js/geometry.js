@@ -112,6 +112,15 @@ export const FLOWS = {
   zick: 'Zickzack',
 };
 
+// Gravur-Stile: „geprägt“ = aufgesetzte Buchstaben (TextGeometry), die beiden
+// anderen werden als Relief direkt in die Wand gerechnet (siehe rasterizeText/surface).
+export const TEXT_STYLES = {
+  gepraegt: { label: 'Geprägt', hint: 'scharfe, aufgesetzte Buchstaben' },
+  gehaemmert: { label: 'Gehämmert', hint: 'erhabene Buchstaben mit Hammerschlag-Facetten' },
+  gestanzt: { label: 'Gestanzt', hint: 'in die Wand gedrückt, wie ein Metallstempel' },
+};
+export const isIntegratedTextStyle = (st) => st === 'gehaemmert' || st === 'gestanzt';
+
 export const DEFAULTS = {
   product: 'vase',
   preset: 'flasche',
@@ -125,7 +134,8 @@ export const DEFAULTS = {
   flowWaves: 3,      // Richtungswechsel bei fluss/zick (2..8)
   text: '',
   textSize: 7,       // mm
-  textPos: 0.55,     // Gravur-Höhe als Anteil der Gesamthöhe (0.15..0.8)
+  textPos: 0.55,
+  textStyle: 'gepraegt',     // Gravur-Höhe als Anteil der Gesamthöhe (0.15..0.8)
   font: 'helvetiker',
   customPoints: null, // eigene Silhouette [[t,r],...] wenn preset === 'eigene'
   quality: 1,        // 0.5..1 — Mesh-Auflösung (Mobile-Vorschau niedriger)
@@ -213,8 +223,99 @@ function hammerField(theta, w, n, lambda) {
 }
 
 // ---------------------------------------------------------------------------
+// Schrift-Maske: Umrisse der Buchstaben (Font.generateShapes) werden per
+// Scanline (even-odd → Löcher automatisch richtig) mit Antialiasing in ein
+// Raster gerastert. Reine JS-Implementierung → läuft im Browser UND in Node.
+// ---------------------------------------------------------------------------
+const maskCache = new Map();
+function rasterizeText(font, text, size, chamfer) {
+  const key = `${font.data?.familyName || ''}|${text}|${size}|${chamfer}`;
+  if (maskCache.has(key)) return maskCache.get(key);
+  const PX = 8;          // Pixel pro mm (0,125 mm) — feiner als jede Düse
+  const PAD = 1.2;       // Rand in mm (Platz für die Fase)
+  const SUB = 4;         // Sub-Scanlines pro Pixelzeile (vertikales AA)
+  const glyphs = []; // je Form: [Außenkontur, ...Löcher]
+  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+  for (const shape of font.generateShapes(text, size)) {
+    const pts = shape.extractPoints(6);
+    const loops = [pts.shape, ...pts.holes].filter((l) => l.length >= 3);
+    if (!loops.length) continue;
+    glyphs.push(loops);
+    for (const loop of loops) for (const q of loop) {
+      if (q.x < minx) minx = q.x; if (q.x > maxx) maxx = q.x;
+      if (q.y < miny) miny = q.y; if (q.y > maxy) maxy = q.y;
+    }
+  }
+  if (!glyphs.length) return null;
+  const ox = minx - PAD, oy = miny - PAD;
+  const W = Math.ceil((maxx - minx + 2 * PAD) * PX), H = Math.ceil((maxy - miny + 2 * PAD) * PX);
+  const m = new Float32Array(W * H);
+  const tmp = new Float32Array(W * H);
+  const xs = [];
+  // Jede Glyph-Form einzeln (Außenkontur + Löcher, even-odd), dann Vereinigung per max —
+  // sonst löschen sich überlappende Konturen benachbarter Buchstaben gegenseitig aus.
+  for (const glyph of glyphs) {
+    tmp.fill(0);
+    const edges = [];
+    for (const loop of glyph) {
+      for (let i = 0; i < loop.length; i++) {
+        const a = loop[i], b = loop[(i + 1) % loop.length];
+        if (a.y !== b.y) edges.push([a.x, a.y, b.x, b.y]);
+      }
+    }
+    for (let r = 0; r < H; r++) {
+      for (let sr = 0; sr < SUB; sr++) {
+        const y = oy + (r + (sr + 0.5) / SUB) / PX;
+        xs.length = 0;
+        for (const [x0, y0, x1, y1] of edges) {
+          if ((y >= y0) !== (y >= y1)) xs.push(x0 + (y - y0) * (x1 - x0) / (y1 - y0));
+        }
+        if (xs.length < 2) continue;
+        xs.sort((a, b) => a - b);
+        for (let k = 0; k + 1 < xs.length; k += 2) {
+          const pa = (xs[k] - ox) * PX, pb = (xs[k + 1] - ox) * PX; // Pixelkoordinaten des Spans
+          const c0 = Math.max(0, Math.floor(pa)), c1 = Math.min(W - 1, Math.floor(pb));
+          for (let c = c0; c <= c1; c++) {
+            const cov = Math.min(pb, c + 1) - Math.max(pa, c); // horizontale Abdeckung 0..1
+            if (cov > 0) tmp[r * W + c] += cov / SUB;
+          }
+        }
+      }
+    }
+    for (let i = 0; i < m.length; i++) if (tmp[i] > m[i]) m[i] = Math.min(1, tmp[i]);
+  }
+  // Druck-Fase (Zeile 0 = unten): erhabene Buchstaben brauchen UNTER sich eine ~45°-Rampe
+  // (Schmierung nach unten), gestanzte Buchstaben ÜBER sich (Decke der Vertiefung →
+  // Schmierung nach oben). acc = max(m, acc − Δ/w) — die übrigen Kanten bleiben scharf.
+  if (chamfer) {
+    const step = (1 / PX) / Math.abs(chamfer);
+    for (let c = 0; c < W; c++) {
+      let acc = 0;
+      if (chamfer > 0) for (let r = H - 1; r >= 0; r--) { acc = Math.max(m[r * W + c], acc - step); m[r * W + c] = acc; }
+      else for (let r = 0; r < H; r++) { acc = Math.max(m[r * W + c], acc - step); m[r * W + c] = acc; }
+    }
+  }
+  const mask = {
+    width: maxx - minx, height: maxy - miny,
+    cx: (minx + maxx) / 2, cy: (miny + maxy) / 2,
+    /** Abdeckung 0..1 an (u, v) in mm relativ zur Textmitte (u nach rechts, v nach oben) */
+    sample(u, v) {
+      const fx = (u + this.cx - ox) * PX - 0.5, fy = (v + this.cy - oy) * PX - 0.5;
+      if (fx < 0 || fy < 0 || fx >= W - 1 || fy >= H - 1) return 0;
+      const x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+      const i = y0 * W + x0;
+      return (m[i] * (1 - tx) + m[i + 1] * tx) * (1 - ty) + (m[i + W] * (1 - tx) + m[i + W + 1] * tx) * ty;
+    },
+  };
+  if (maskCache.size > 24) maskCache.delete(maskCache.keys().next().value);
+  maskCache.set(key, mask);
+  return mask;
+}
+
+// ---------------------------------------------------------------------------
 /**
- * Baut die Becher-/Vasen-Geometrie (ohne Text).
+ * Baut die Becher-/Vasen-Geometrie (ohne aufgesetzten Text; Relief-Gravuren
+ * „gehämmert“/„gestanzt“ sind Teil der Wand, wenn params.textFont gesetzt ist).
  * Rückgabe: { geometry, info } — indexed BufferGeometry in mm,
  * y-Achse = Höhe, Ursprung in der Bodenmitte.
  */
@@ -327,19 +428,92 @@ export function buildModel(params) {
     return a * waveTheta(p.pattern, ribs * (theta + flowPhase(t)));
   };
 
+  // --- Relief-Gravur („gehämmert“ / „gestanzt“): Schrift als Höhenfeld in der Wand.
+  // Vorne (θ = 0) zentriert, Bogenlänge u = rMid·Δθ wie bei der aufgesetzten Schrift.
+  const txt = String(p.text || '').trim();
+  let relief = null; // { yText, y0, y1, rMid, mask, depth, style, size }
+  const textInfo = { style: p.textStyle, size: p.textSize, warn: '' };
+  if (txt && p.textFont && isIntegratedTextStyle(p.textStyle)) {
+    const style = p.textStyle;
+    const depth = style === 'gestanzt' ? -0.75 : 0.85;  // − = Vertiefung
+    const tC = Math.min(0.97, Math.max(0.03, p.textPos ?? 0.55));
+    const rMid = R(tC);
+    let size = p.textSize ?? 7, mask = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      mask = rasterizeText(p.textFont, txt, size, depth * 1.3); // Fase ≈ 37° statt 45° (Silhouetten-Check + sauberer Druck)
+      if (!mask || mask.width / rMid <= maxTextArc()) break;
+      size *= 0.88;
+    }
+    if (mask && mask.width / rMid <= maxTextArc()) {
+      const yText = tC * H;
+      // Kartusche: glatte Platte um den Text (Muster darunter ausgeblendet), bündig
+      // mit den Gratspitzen → Schrift liest sich wie auf einem Metallschild.
+      const plateHalfW = mask.width / 2 + 1.7, plateHalfH = mask.height / 2 + 1.3;
+      const plateRamp = 2.0;
+      relief = { yText, rMid, mask, depth, style, size, plateHalfW, plateHalfH, plateRamp,
+        plateR: Math.min(2.6, plateHalfH * 0.8),
+        y0: Math.max(CHAMFER + 0.6, yText - plateHalfH - plateRamp - 0.2),
+        y1: Math.min(H - 0.6, yText + plateHalfH + plateRamp + 0.2) };
+      textInfo.size = size;
+      if (size < (p.textSize ?? 7) - 0.01) textInfo.warn = `Text automatisch auf ${size.toFixed(1)} mm verkleinert.`;
+    } else if (mask) textInfo.warn = 'Text zu lang — bitte kürzen.';
+  }
+  // Hammerschlag-Facetten auf den Buchstaben (feiner als das Wand-Muster)
+  const letterDent = relief && relief.style === 'gehaemmert' ? (() => {
+    const lam = 1.2, n = Math.max(8, Math.round((2 * Math.PI * relief.rMid) / lam));
+    return (theta, y) => (0.9 - hammerField(theta, y, n, lam)) / 1.9; // 0 = Grat, 1 = tiefste Delle
+  })() : null;
+  const reliefAt = (theta, y) => {
+    const d = ((theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; // −π..π
+    const u = relief.rMid * d, v = y - relief.yText;
+    // Platte: abgerundetes Rechteck (SDF), weicher Rand über plateRamp (≤ ~45° am Druck)
+    const qx = Math.abs(u) - (relief.plateHalfW - relief.plateR), qy = Math.abs(v) - (relief.plateHalfH - relief.plateR);
+    const sd = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - relief.plateR;
+    const plate = 1 - smoothstep(-relief.plateRamp, 0, sd);
+    if (plate <= 0) return { plate: 0, m: 0, h: 0 };
+    const m = relief.mask.sample(u, v);
+    let h = relief.depth;
+    if (m > 0 && letterDent) h -= 0.4 * letterDent(theta, y);
+    return { plate, m, h: m * h };
+  };
+  // Gesamtversatz: Muster unter der Platte ausblenden, Platte auf Grathöhe legen, Relief drauf
+  const surface = (theta, t, y) => {
+    const base = offset(theta, t);
+    if (!relief || y < relief.y0 || y > relief.y1) return base;
+    const { plate, h } = reliefAt(theta, y);
+    if (plate <= 0) return base;
+    const level = Math.min(1.5, 0.8 * ampAt(t)); // Plattenhöhe ≈ Gratspitzen (bei tiefen Lamellen begrenzt)
+    return base * (1 - plate) + level * plate + h;
+  };
+  // Feinraster nur im Textband: Ringe alle ~0,2 mm, Umfang in ~0,2-mm-Schritten
+  // (Vielfaches der Rippenzahl → Grate bleiben auf Vertices). Übergang zu den
+  // gröberen Ringen per Reißverschluss-Vernähung in revolve().
+  const fineStep = q >= 0.9 ? 0.2 : 0.3;
+  const RS_T = relief
+    ? Math.min(2600, ribs * Math.max(perRib, Math.ceil((2 * Math.PI * relief.rMid) / fineStep / ribs)))
+    : RS;
+
   // --- Stationen: Kontur von Bodenmitte → außen hoch → Rand → innen → Achse
   const stations = [];
   const rBase = R(CHAMFER / H) - CHAMFER * 0.6;
   stations.push({ y: 0, r: 0 });
   stations.push({ y: 0, r: rBase * 0.55 });
   stations.push({ y: 0, r: rBase });
-  for (let i = 0; i <= WALL_STEPS; i++) {
-    const s = i / WALL_STEPS;
-    const y = CHAMFER + s * (H - CHAMFER);
+  const wallYs = [];
+  for (let i = 0; i <= WALL_STEPS; i++) wallYs.push(CHAMFER + (i / WALL_STEPS) * (H - CHAMFER));
+  if (relief) {
+    const kept = wallYs.filter((y) => y < relief.y0 - 1e-6 || y > relief.y1 + 1e-6);
+    const nFine = Math.max(2, Math.ceil((relief.y1 - relief.y0) / fineStep));
+    for (let i = 0; i <= nFine; i++) kept.push(relief.y0 + (i / nFine) * (relief.y1 - relief.y0));
+    kept.sort((a, b) => a - b);
+    wallYs.length = 0; wallYs.push(...kept);
+  }
+  for (const y of wallYs) {
     const t = y / H;
+    const inBand = relief && y >= relief.y0 - 1e-6 && y <= relief.y1 + 1e-6;
     stations.push(
-      ampAt(t) > 1e-4
-        ? { y, rFn: (theta) => R(t) + offset(theta, t), rot: isQuer ? 0 : -flowPhase(t) }
+      (ampAt(t) > 1e-4 || inBand)
+        ? { y, rFn: (theta) => R(t) + surface(theta, t, y), rot: isQuer ? 0 : -flowPhase(t), rs: inBand ? RS_T : RS }
         : { y, r: R(t) }
     );
   }
@@ -388,6 +562,7 @@ export function buildModel(params) {
       cavityDepth,
       openingDiameter: openingDia,
       radialSegments: RS,
+      text: textInfo, // Relief-Gravur: gewählter Stil, ggf. verkleinerte Größe, Warnung
       // Für die Text-Prägung: glatter Radius & Muster-Amplitude an Höhe t
       radiusAt: R,
       ampAt,
@@ -402,6 +577,25 @@ export const buildEggcup = buildModel;
 // Rotationskörper aus Stationen (geschlossene Kontur → manifold Mesh).
 // Stationen: { y, r } | { y, rFn(θ) }; r === 0 → degenerierter Punkt (Fächer).
 // ---------------------------------------------------------------------------
+// Reißverschluss zwischen zwei geschlossenen Ringen unterschiedlicher Auflösung:
+// beide Ringe nach Winkel durchlaufen, immer die Seite mit dem kleineren nächsten
+// Winkel vorrücken → jede Kante liegt in genau zwei Dreiecken (manifold),
+// Orientierung wie bei den regulären Bändern (unten → oben).
+function stitchRings(indices, aStart, na, aRot, bStart, nb, bRot) {
+  const TAU = Math.PI * 2;
+  const norm = (x) => ((x % TAU) + TAU) % TAU;
+  const first = (rot, n) => { const k = Math.ceil(norm(-rot) / (TAU / n) - 1e-9) % n; return [k, norm(rot + (TAU * k) / n)]; };
+  const [ka, angA0] = first(aRot, na), [kb, angB0] = first(bRot, nb);
+  let i = 0, j = 0;
+  while (i < na || j < nb) {
+    const nextA = i < na ? angA0 + (TAU * (i + 1)) / na : Infinity;
+    const nextB = j < nb ? angB0 + (TAU * (j + 1)) / nb : Infinity;
+    const ai = aStart + (ka + i) % na, bj = bStart + (kb + j) % nb;
+    if (nextA <= nextB) { indices.push(ai, aStart + (ka + i + 1) % na, bj); i++; }
+    else { indices.push(ai, bStart + (kb + j + 1) % nb, bj); j++; }
+  }
+}
+
 function revolve(stations, RS) {
   // Muster-Rotation der gemusterten Ringe auf die glatten Nachbarn (Rand, Innenwand, Boden, Mulde)
   // übertragen: sonst verbinden die Bänder dazwischen verdrehte Punkte → Sliver-Dreiecke, die
@@ -411,17 +605,19 @@ function revolve(stations, RS) {
   for (const st of stations) { if (st.rot === undefined) st.rot = rot; else rot = st.rot; }
   const positions = [];
   const ringStart = [];
+  const ringN = [];   // Segmente je Ring (Textband feiner)
   const pointIdx = [];
   for (const st of stations) {
     if (st.r === 0 && !st.rFn) {
       pointIdx.push(positions.length / 3);
-      ringStart.push(-1);
+      ringStart.push(-1); ringN.push(0);
       positions.push(0, st.y, 0);
     } else {
-      ringStart.push(positions.length / 3);
+      const n = st.rs || RS;
+      ringStart.push(positions.length / 3); ringN.push(n);
       pointIdx.push(-1);
-      for (let j = 0; j < RS; j++) {
-        const theta = (j / RS) * Math.PI * 2 + (st.rot || 0); // Ring folgt dem Muster-Verlauf
+      for (let j = 0; j < n; j++) {
+        const theta = (j / n) * Math.PI * 2 + (st.rot || 0); // Ring folgt dem Muster-Verlauf
         const r = st.rFn ? st.rFn(theta) : st.r;
         positions.push(Math.sin(theta) * r, st.y, Math.cos(theta) * r);
       }
@@ -430,19 +626,22 @@ function revolve(stations, RS) {
   const indices = [];
   for (let i = 0; i < stations.length - 1; i++) {
     const a = ringStart[i], b = ringStart[i + 1];
+    const na = ringN[i], nb = ringN[i + 1];
     if (a === -1 && b === -1) continue;
     if (a === -1) {
       const c = pointIdx[i];
-      for (let j = 0; j < RS; j++) indices.push(c, b + (j + 1) % RS, b + j);
+      for (let j = 0; j < nb; j++) indices.push(c, b + (j + 1) % nb, b + j);
     } else if (b === -1) {
       const c = pointIdx[i + 1];
-      for (let j = 0; j < RS; j++) indices.push(a + j, a + (j + 1) % RS, c);
-    } else {
-      for (let j = 0; j < RS; j++) {
-        const j1 = (j + 1) % RS;
+      for (let j = 0; j < na; j++) indices.push(a + j, a + (j + 1) % na, c);
+    } else if (na === nb) {
+      for (let j = 0; j < na; j++) {
+        const j1 = (j + 1) % na;
         indices.push(a + j, b + j1, b + j);
         indices.push(a + j, a + j1, b + j1);
       }
+    } else {
+      stitchRings(indices, a, na, stations[i].rot || 0, b, nb, stations[i + 1].rot || 0);
     }
   }
   const geometry = new THREE.BufferGeometry();

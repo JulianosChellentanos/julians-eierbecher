@@ -124,7 +124,7 @@ const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2)
 const DESIGNS_FILE = path.join(DATA, 'designs.json');
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // ohne I/L/O/0/1 (verwechselbar)
 const DESIGN_KEYS = ['product', 'preset', 'height', 'width', 'pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves',
-  'text', 'textSize', 'textPos', 'font', 'saucer', 'customPoints', 'color'];
+  'text', 'textSize', 'textPos', 'font', 'textStyle', 'saucer', 'customPoints', 'color'];
 let designs = {};
 function loadDesigns() {
   try { designs = JSON.parse(readFileSync(DESIGNS_FILE, 'utf8')); } catch { designs = {}; }
@@ -275,7 +275,7 @@ function itemLabel(it) {
   const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen' }[c.pattern] || c.pattern;
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
-    (c.text ? ` · Gravur „${c.text}“` : '') +
+    (c.text ? ` · Gravur „${c.text}“${c.textStyle === 'gehaemmert' ? ' (gehämmert)' : c.textStyle === 'gestanzt' ? ' (gestanzt)' : ''}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
     (it.code ? ` · Design-Code ${it.code}` : '');
 }

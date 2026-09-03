@@ -1,7 +1,7 @@
 // OVJU — erzeugt aus einer gespeicherten Design-Konfiguration die druckfertige STL
 // (wird vom Konfigurator UND vom Warenkorb-Checkout genutzt)
 import * as THREE from 'three';
-import { buildModel, buildSaucer, bendTextOntoCup, maxTextArc, FONTS } from './geometry.js';
+import { buildModel, buildSaucer, bendTextOntoCup, maxTextArc, FONTS, isIntegratedTextStyle } from './geometry.js';
 import { FontLoader } from '../vendor/FontLoader.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import { exportSTL } from './exporter.js';
@@ -18,12 +18,14 @@ export function loadFont(key) {
 
 /** Konfiguration → binäre STL (ArrayBuffer), volle Auflösung, inkl. Text & Untersetzer. */
 export async function makeSTL(config) {
-  const { geometry, info } = buildModel({ ...config, quality: 1 });
+  const txt = (config.text || '').trim();
+  const integrated = !!txt && isIntegratedTextStyle(config.textStyle);
+  const textFont = integrated ? await loadFont(config.font) : undefined;
+  const { geometry, info } = buildModel({ ...config, quality: 1, textFont });
   const meshes = [new THREE.Mesh(geometry)];
   const disposables = [geometry];
 
-  const txt = (config.text || '').trim();
-  if (txt) {
+  if (txt && !integrated) {
     const font = await loadFont(config.font);
     const textPos = config.textPos ?? 0.55;
     const depth = info.ampAt(textPos) + 2.0;

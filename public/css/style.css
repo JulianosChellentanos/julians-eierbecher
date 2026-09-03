@@ -773,6 +773,20 @@ html.dark, .dark body { color-scheme: dark; }
 }
 section[id] { scroll-margin-top: 72px; }
 
+/* ---------- Gravur-Stil (geprägt / gehämmert / gestanzt) ---------- */
+.style-row { display: flex; gap: 6px; margin: 10px 0 4px; }
+.style-chip {
+  flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 9px 4px 7px; border-radius: 12px; border: 1.5px solid var(--line); background: transparent;
+  font-family: var(--sans); font-size: 0.74rem; font-weight: 700; color: var(--ink-soft); cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.style-chip .sc-ic { font-size: 1.15rem; line-height: 1; }
+.style-chip:hover { border-color: var(--ink-soft); }
+.style-chip.active { border-color: var(--ink); color: var(--ink); background: var(--bg); animation: springPop 0.32s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.tiny.left { text-align: left; }
+#style-hint { margin-bottom: 8px; min-height: 1em; }
+
 /* ---------- Design-Codes ---------- */
 .panel-head-btns { display: flex; gap: 6px; }
 .linkbtn {

@@ -75,7 +75,7 @@ function itemSub(it) {
   const c = it.config;
   const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` (${FLOWS[c.flow] || 'Spirale'})` : '';
   return `${PATTERNS[c.pattern] || c.pattern}${flow} · ${c.height} mm · ${it.colorName}` +
-    (c.text ? ` · ✒️ „${c.text}“ (+${fmt(pricing.gravur || 0)})` : '') +
+    (c.text ? ` · ${c.textStyle === 'gehaemmert' ? '🔨' : c.textStyle === 'gestanzt' ? '🪙' : '✒️'} „${c.text}“ (+${fmt(pricing.gravur || 0)})` : '') +
     (it.saucer ? ' · 🍽️ Untersetzer' : '');
 }
 

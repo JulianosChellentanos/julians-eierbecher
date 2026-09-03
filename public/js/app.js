@@ -4,7 +4,7 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
   buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
-  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS,
+  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, TEXT_STYLES, isIntegratedTextStyle,
 } from './geometry.js';
 import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
@@ -392,8 +392,19 @@ function saucerLift() {
   return (state.product === 'eierbecher' && state.saucer && saucerInfo) ? saucerInfo.seatHeight : 0;
 }
 
+const loadedFonts = {};
+let fontLoadId = 0;
 function rebuild() {
-  const { geometry, info } = buildModel({ ...state, customPoints: customByProduct[state.product] });
+  // Relief-Gravur braucht die Schrift schon beim Wandaufbau — nachladen und dann neu bauen
+  let textFont;
+  if (state.text.trim() && isIntegratedTextStyle(state.textStyle)) {
+    textFont = loadedFonts[state.font];
+    if (!textFont) {
+      const myId = ++fontLoadId;
+      loadFont(state.font).then((f) => { loadedFonts[state.font] = f; if (myId === fontLoadId) rebuild(); }).catch(() => {});
+    }
+  }
+  const { geometry, info } = buildModel({ ...state, customPoints: customByProduct[state.product], textFont });
   currentInfo = info;
   if (!cupMesh) {
     cupMesh = new THREE.Mesh(geometry, material);
@@ -442,6 +453,10 @@ async function rebuildText() {
   const txt = state.text.trim();
   $('#text-warn').textContent = '';
   if (!txt || !currentInfo) return;
+  if (isIntegratedTextStyle(state.textStyle)) { // Relief ist Teil der Wand (siehe rebuild)
+    $('#text-warn').textContent = currentInfo.text?.warn || '';
+    return;
+  }
 
   let font;
   try {
@@ -480,7 +495,10 @@ const debounce = (fn, ms) => {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 };
 const rebuildSoon = debounce(rebuild, 60);
-const rebuildTextSoon = debounce(rebuildText, 120);
+const rebuildBodySoon = debounce(rebuild, 160);
+// Relief-Stile leben in der Wand → Körper neu bauen; aufgesetzter Text → nur Text
+const rebuildTextSoon = (...a) => (isIntegratedTextStyle(state.textStyle) ? rebuildBodySoon() : debouncedText(...a));
+const debouncedText = debounce(rebuildText, 120);
 
 // ---------------------------------------------------------------------------
 // Silhouetten (SVG) für Preset-Buttons & Formen-Editor
@@ -665,6 +683,21 @@ function renderFontRow() {
 }
 function markActiveFont() {
   $$('.font-chip').forEach((x) => x.classList.toggle('active', x.dataset.font === state.font));
+  $$('.style-chip').forEach((x) => x.classList.toggle('active', x.dataset.style === state.textStyle));
+  const st = TEXT_STYLES[state.textStyle] || TEXT_STYLES.gepraegt;
+  $('#style-hint').textContent = `${st.label}: ${st.hint}`;
+}
+const STYLE_ICONS = { gepraegt: '🔤', gehaemmert: '🔨', gestanzt: '🪙' };
+function renderStyleRow() {
+  $('#style-row').innerHTML = Object.entries(TEXT_STYLES).map(([id, st]) => `
+    <button class="style-chip" data-style="${id}" title="${st.hint}"><span class="sc-ic">${STYLE_ICONS[id] || '✒️'}</span>${st.label}</button>`).join('');
+  $$('.style-chip').forEach((b) => b.addEventListener('click', () => {
+    const was = isIntegratedTextStyle(state.textStyle);
+    state.textStyle = b.dataset.style;
+    markActiveFont();
+    // Wechsel zwischen Relief und aufgesetzt: Körper UND Text neu
+    if (was || isIntegratedTextStyle(state.textStyle)) rebuild(); else rebuildText();
+  }));
 }
 
 function initControls() {
@@ -762,9 +795,10 @@ function initControls() {
   $('#c-gravur').addEventListener('change', (e) => {
     $('#gravur-options').hidden = !e.target.checked;
     if (!e.target.checked) {
+      const wasRelief = isIntegratedTextStyle(state.textStyle) && state.text.trim();
       state.text = '';
       $('#i-text').value = '';
-      rebuildText();
+      if (wasRelief) rebuild(); else rebuildText();
     } else {
       $('#i-text').focus();
     }
@@ -810,6 +844,7 @@ function syncControls() {
   $('#s-twist-val').textContent = state.twist === 0 ? 'gerade' : `${state.twist > 0 ? '+' : ''}${Math.round(state.twist * 180)}°`;
   $$('input[type=range]').forEach((el) => sliderFill(el));
   $$('.flow-btn').forEach((x) => x.classList.toggle('active', x.dataset.flow === state.flow));
+  markActiveFont();
   $('#flowwaves-row').hidden = !(state.flow === 'fluss' || state.flow === 'zick');
   $('#s-flowwaves').value = state.flowWaves;
   $('#s-flowwaves-val').textContent = `${state.flowWaves}×`;
@@ -854,6 +889,7 @@ async function applyDesign(cfg, code) {
     textSize: num('textSize', 4, 10),
     textPos: num('textPos', 0.15, 0.8),
     text: String(cfg.text || '').slice(0, 16),
+    textStyle: TEXT_STYLES[cfg.textStyle] ? cfg.textStyle : 'gepraegt',
     saucer: product === 'eierbecher' && !!cfg.saucer,
   });
   const col = (content.colors || []).find((c) => c.id === cfg.color);
@@ -1057,6 +1093,7 @@ async function renderShowcase() {
   renderProductTabs();
   renderPresetButtons();
   renderFontRow();
+  renderStyleRow();
   renderPrices();
   initControls();
   loadFont(state.font); // Standardschrift vorwärmen
