@@ -19,7 +19,9 @@ export function makeStudio(canvas,{width=1000,height=850,transparent=false}={}) 
 }
 export function makeObject(design,quality=.55){
   const {geometry}=buildModel({...design.config,quality});
-  const material=new THREE.MeshStandardMaterial({color:design.hex,roughness:.68,metalness:0});
+  // Finish wie im Konfigurator: matt / glänzend / metallic (Silk)
+  const finish=design.finish||'matt';
+  const material=new THREE.MeshStandardMaterial(finish==='metall'?{color:design.hex,roughness:.3,metalness:.85}:finish==='glanz'?{color:design.hex,roughness:.22,metalness:.05}:{color:design.hex,roughness:.68,metalness:0});
   const mesh=new THREE.Mesh(geometry,material);mesh.castShadow=true;mesh.receiveShadow=false;
   return mesh;
 }

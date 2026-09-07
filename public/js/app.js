@@ -669,10 +669,10 @@ const DEPTH_RANGES = {
   lamellen: { min: 1.5, max: 6, step: 0.25, def: 4 },
   gehaemmert: { min: 0.3, max: 1.2, step: 0.1, def: 0.8 },
   skelett: { min: 0.4, max: 1.8, step: 0.1, def: 1.4 },
-  koralle: { min: 0.5, max: 6, step: 0.1, def: 4.5 },
+  koralle: { min: 0.5, max: 6, step: 0.1, def: 5 },
   default: { min: 0.2, max: 1.6, step: 0.1, def: 0.9 },
 };
-function applyDepthRange() {
+function applyDepthRange(resetToDefault = false) {
   $('#skeleton-note').hidden = state.pattern !== 'skelett';
   $('#skeleton-note').textContent = state.product === 'vase'
     ? 'Voronoi: offene Zellen mit verbundenen Stegen. Für Trockenblumen oder einen passenden Einsatz. Brücken und Stützen im Slicer prüfen.'
@@ -682,7 +682,7 @@ function applyDepthRange() {
     : DEPTH_RANGES[state.pattern] || DEPTH_RANGES.default;
   const el = $('#s-depth');
   el.min = r.min; el.max = r.max; el.step = r.step;
-  if (state.depth < r.min || state.depth > r.max) {
+  if (resetToDefault || state.depth < r.min || state.depth > r.max) {
     state.depth = r.def;
   }
   // Set the value after changing the range: the previous pattern may have clamped it.
@@ -731,7 +731,7 @@ function initControls() {
       $('#s-ribs').value = 24;
       $('#s-ribs-val').textContent = '24';
     }
-    applyDepthRange();
+    applyDepthRange(true); // neues Muster → passende Standardtiefe (Fjordwelle/Lamellen wirken erst richtig tief)
     rebuild();
   }));
 

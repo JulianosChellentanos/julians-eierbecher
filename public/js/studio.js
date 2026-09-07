@@ -1,18 +1,18 @@
 import * as THREE from 'three';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import { buildModel } from './geometry.js';
-import { STUDIO_DESIGNS, designConfig } from './studio-designs.js';
+import { STUDIO_DESIGNS, designConfig, designImage } from './studio-designs.js';
 import { makeStudio, makeObject } from './studio-scene.js';
 const $=s=>document.querySelector(s);
 const motion=matchMedia('(prefers-reduced-motion: reduce)');
 const go=config=>window.dispatchEvent(new CustomEvent('ovju:studio-design',{detail:config}));
 const observer=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');observer.unobserve(e.target);}}),{threshold:.06});
 for(const el of document.querySelectorAll('.collection-heading,.lab-copy,.editorial-copy,.studio-heading')){if(!motion.matches){el.classList.add('reveal');observer.observe(el);}}
-$('#design-grid').innerHTML=STUDIO_DESIGNS.map((d,i)=>`<button class="design-card" data-design="${i}" aria-label="${d.name} im Konfigurator weitergestalten"><div class="design-image"><img src="/img/studio/fdm-card-${d.id}.webp" alt="${d.description}, KI-Produktfotografie auf Basis des 3D-Modells" loading="lazy" width="800" height="900"><span class="design-number">0${i+1}</span><span class="design-arrow">↗</span></div><div class="design-title"><h3>${d.name}</h3><span>${d.config.height/10} cm</span></div><p>${d.description}</p></button>`).join('');
+$('#design-grid').innerHTML=STUDIO_DESIGNS.map((d,i)=>`<button class="design-card" data-design="${i}" aria-label="${d.name} im Konfigurator weitergestalten"><div class="design-image"><img src="${designImage(d)}" alt="${d.description}, KI-Produktfotografie auf Basis des 3D-Modells" loading="lazy" width="800" height="900"><span class="design-number">0${i+1}</span><span class="design-arrow">↗</span></div><div class="design-title"><h3>${d.name}</h3><span>${d.config.height/10} cm</span></div><p>${d.description}</p></button>`).join('');
 document.querySelectorAll('[data-design]').forEach(b=>b.addEventListener('click',()=>go(designConfig(STUDIO_DESIGNS[+b.dataset.design]))));
 $('#hero-shapes').innerHTML=STUDIO_DESIGNS.map((d,i)=>`<button data-shape="${i}" aria-pressed="${i===0}" class="${i===0?'active':''}">${d.name}</button>`).join('');
 let index=0,paused=motion.matches,chooseScene=()=>{};
-function select(i){index=(i+STUDIO_DESIGNS.length)%STUDIO_DESIGNS.length;const d=STUDIO_DESIGNS[index];$('#hero-index').textContent=`0${index+1} / 06`;$('#hero-design-name').textContent=d.name;$('#hero-design-detail').textContent=d.description;document.querySelectorAll('[data-shape]').forEach(b=>{const on=+b.dataset.shape===index;b.classList.toggle('active',on);b.setAttribute('aria-pressed',String(on));});chooseScene();}
+function select(i){index=(i+STUDIO_DESIGNS.length)%STUDIO_DESIGNS.length;const d=STUDIO_DESIGNS[index];$('#hero-index').textContent=`${String(index+1).padStart(2,'0')} / ${String(STUDIO_DESIGNS.length).padStart(2,'0')}`;$('#hero-design-name').textContent=d.name;$('#hero-design-detail').textContent=d.description;document.querySelectorAll('[data-shape]').forEach(b=>{const on=+b.dataset.shape===index;b.classList.toggle('active',on);b.setAttribute('aria-pressed',String(on));});chooseScene();}
 $('#hero-prev').addEventListener('click',()=>select(index-1));$('#hero-next').addEventListener('click',()=>select(index+1));document.querySelectorAll('[data-shape]').forEach(b=>b.addEventListener('click',()=>select(+b.dataset.shape)));
 $('#hero-use').addEventListener('click',()=>go(designConfig(STUDIO_DESIGNS[index])));
 function syncPause(){const b=$('#motion-toggle');b.textContent=paused?'▷ Bewegung starten':'Ⅱ Bewegung pausieren';b.setAttribute('aria-label',paused?'Automatische Bewegung starten':'Automatische Bewegung pausieren');b.setAttribute('aria-pressed',String(paused));}
@@ -32,7 +32,7 @@ try{
  renderer.render(scene,camera);art.classList.add('ready');
  $('#hero-viewer').addEventListener('webglcontextlost',()=>art.classList.remove('ready'));
  $('#hero-viewer').addEventListener('webglcontextrestored',()=>art.classList.add('ready'));
-}catch(error){console.warn('3D collection unavailable; using rendered models.',error);$('#hero-viewer').hidden=true;chooseScene=()=>{$('.hero-fallback').src=`/img/studio/fdm-card-${STUDIO_DESIGNS[index].id}.webp`;};$('#motion-toggle').hidden=true;}
+}catch(error){console.warn('3D collection unavailable; using rendered models.',error);$('#hero-viewer').hidden=true;chooseScene=()=>{$('.hero-fallback').src=designImage(STUDIO_DESIGNS[index]);};$('#motion-toggle').hidden=true;}
 
 // The mini profile editor uses the exact same control points as the printable model.
 const own=structuredClone(STUDIO_DESIGNS[5]);let points=own.config.customPoints;
