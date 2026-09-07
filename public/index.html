@@ -15,6 +15,8 @@
     })();
   </script>
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/studio.css">
+  <link rel="stylesheet" href="css/configurator-studio.css">
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#f4efe7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#17130f" media="(prefers-color-scheme: dark)">
@@ -29,12 +31,14 @@
   </script>
 </head>
 <body>
+<a class="skip-link" href="#konfigurator">Zum Designstudio</a>
+<div class="announcement">Kleine Objekte. Große Persönlichkeit. <span>Entworfen von dir · Gedruckt in Deutschland</span></div>
 
 <header class="topbar">
   <div class="wrap">
-    <div class="logo"><span class="logo-mark">🥚</span><span id="brand-name">OVJU</span></div>
+    <div class="logo"><span class="logo-mark" aria-hidden="true">◒</span><span id="brand-name">OVJU</span></div>
     <nav>
-      <a href="#produkte">Produkte</a>
+      <a href="#formen">Formen entdecken</a>
       <a href="#konfigurator">Konfigurator</a>
       <a href="#galerie">Galerie</a>
       <a href="#sogehts">So geht's</a>
@@ -49,35 +53,59 @@
   </div>
 </header>
 
-<section class="hero">
-  <div class="wrap hero-grid" id="hero-grid">
-    <div class="hero-copy">
-      <p class="eyebrow" id="brand-tagline">Dein Design. Deine Vase.</p>
-      <h1 id="hero-headline">Der Eierbecher, den es nur einmal gibt: deiner.</h1>
-      <p class="sub" id="hero-sub"></p>
-      <button class="btn btn-primary btn-lg" id="hero-cta">Jetzt gestalten</button>
-      <div class="hero-hint">↓ Live-3D-Vorschau · STL für deinen Drucker · Vasen ab 24,90&nbsp;€ · Eierbecher ab 9,90&nbsp;€</div>
-      <div class="trust-row" id="trust-row"></div>
-    </div>
-    <div class="hero-photo" id="hero-photo" hidden>
-      <img id="hero-photo-img" alt="OVJU Vase im Wohnzimmer">
-      <div class="hero-photo-badge">Jedes Stück ein Unikat ✨</div>
-    </div>
+<main>
+<section class="hero form-hero">
+  <div class="hero-intro wrap">
+    <div><p class="eyebrow" id="brand-tagline">Deine Ideen nehmen Form an</p><h1 id="hero-headline">Deine Idee.<br>Deine Form.</h1></div>
+    <div class="hero-side"><p class="sub" id="hero-sub">Starte mit einer Grundform. Verändere Silhouette, Struktur und Farbe. Was du hier siehst, kannst du wirklich gestalten.</p><button class="btn btn-primary btn-lg" id="hero-cta">Eigene Form gestalten ↗</button><div class="trust-row" id="trust-row"></div></div>
   </div>
+  <div class="form-world" id="hero-art">
+    <span class="world-type" aria-hidden="true">FORM FOLLOWS YOU.</span>
+    <img class="hero-fallback" src="/img/studio/fdm-collection.webp" alt="Drei 3D-gedruckte Vasen aus den Formen Kugel, Flasche und Kurve" fetchpriority="high">
+    <canvas id="hero-viewer" role="img" aria-label="Interaktive 3D-Kollektion mit drei selbst gestaltbaren Vasen"></canvas>
+    <div class="world-meta"><span><i class="live-dot"></i> LIVE 3D · ECHTE KONFIGURATOR-FORMEN</span><button id="motion-toggle" aria-pressed="false" aria-label="Automatische Bewegung pausieren">Ⅱ Bewegung pausieren</button></div>
+    <div class="world-caption"><span id="hero-index">01 / 06</span><h2 id="hero-design-name">Twist</h2><p id="hero-design-detail">Flasche · gedrehte Rippen</p></div>
+    <div class="world-controls"><button id="hero-prev" aria-label="Vorherige Form">←</button><span>Ziehen & drehen</span><button id="hero-next" aria-label="Nächste Form">→</button></div>
+    <button class="world-use" id="hero-use">Diese Form weitergestalten <span>↗</span></button>
+    <div class="world-tabs" id="hero-shapes" role="group" aria-label="Grundform auswählen"></div>
+  </div>
+  <div class="wrap hero-foot"><span>05 GRUNDFORMEN <b>+</b> DEINE FREIE SILHOUETTE</span><a href="#formen">Möglichkeiten entdecken ↓</a><span>VON DER IDEE ZUM 3D-DRUCK</span></div>
 </section>
+<div class="studio-strip" aria-label="Unsere Designphilosophie"><span>DEINE FORM</span><i>✳</i><span>DEINE FARBE</span><i>✳</i><span>DEIN ORIGINAL</span><i>✳</i><span>MADE TO BE YOURS</span><i>✳</i></div>
 
+<section class="shape-collection" id="formen"><div class="wrap">
+  <div class="collection-heading"><div><p class="eyebrow">01 / Ein Anfang. Kein fertiges Design.</p><h2>Welche Form<br><em>steckt in dir?</em></h2></div><p>Keine feste Kollektion. Sondern Ausgangspunkte.<br>Jedes dieser Objekte kommt direkt aus unserem<br>3D-Konfigurator – und wartet auf deine Handschrift.</p></div>
+  <div class="design-grid" id="design-grid"></div>
+  <div class="collection-note"><span>↳ KI-Produktfotos auf Basis unserer Modelle. Deine Form zeigt die Live-Vorschau.</span><span>Form + Struktur + Farbe + Gravur = du.</span></div>
+</div></section>
+<section class="shape-lab" id="formlabor"><div class="wrap lab-grid"><div class="lab-copy"><p class="eyebrow">02 / Grenzenlos persönlich</p><h2>Eine Linie.<br>Unendlich<br><em>viel Charakter.</em></h2><p>Die Silhouette macht den Unterschied. Zieh an den Punkten und entdecke, wie aus deiner Linie ein räumliches Objekt wird.</p><p class="lab-note">Im Designstudio kannst du jeden Punkt einzeln setzen, Muster hinzufügen und die Druckbarkeit prüfen.</p><button class="btn btn-primary" id="lab-use">Meine Silhouette übernehmen ↗</button></div><div class="lab-demo"><div class="lab-top"><span>DEIN PROFIL → DEIN OBJEKT</span><span>LIVE</span></div><div class="lab-visual"><svg id="lab-profile" viewBox="0 0 160 240" aria-label="Silhouette: Ziehe einen Punkt oder nutze den Regler"></svg><img id="lab-reference" src="/img/studio/fdm-card-own.webp" alt="Freiform aus individuell gesetzten Silhouettenpunkten"><canvas id="lab-viewer" aria-label="Live-Vorschau deiner eigenen Form" role="img"></canvas></div><label class="lab-slider">Taille verändern <output id="lab-value">65 %</output><input id="lab-waist" type="range" min="55" max="100" value="65"></label><span class="lab-help">Punkte ziehen · Form live entdecken</span></div></div></section>
 <section id="produkte" class="produkte-band">
   <div class="wrap">
+    <p class="eyebrow">01 / Die Objektwelt</p>
     <h2 class="section-title" id="showcase-title"></h2>
     <p class="section-sub" id="showcase-sub"></p>
     <div class="showcase-grid" id="showcase"></div>
   </div>
 </section>
 
+<section class="surface-story" id="oberflaechen"><div class="wrap surface-grid">
+  <div class="surface-visual"><button class="image-expand" data-view-image="/img/studio/fdm-hammer-copper.webp" aria-label="Hammerschlag-Nahaufnahme vergrößern"><img id="finish-image" src="/img/studio/fdm-hammer-copper.webp" width="1400" height="1100" loading="lazy" alt="Nahaufnahme einer gehämmerten Vase aus Kupfer-Silk-PLA mit sichtbaren Druckschichten"><span>FILAMENT / IM DETAIL <b>↗</b></span></button></div>
+  <div class="surface-copy"><p class="eyebrow">Oberflächen mit Tiefgang</p><h2>Nicht glatt.<br><em>Charakterstark.</em></h2><p>Winzige Mulden. Unregelmäßige Facetten. Licht, das immer wieder anders bricht. Unsere gehämmerte Oberfläche bringt die Anmutung von Hammerschlag in deinen 3D-Druck.</p><p class="finish-label">GLEICHE FORM. ANDERE WIRKUNG.</p><div class="finish-tabs" role="group" aria-label="Oberfläche der Nahaufnahme"><button data-finish-preview="copper" class="active" aria-pressed="true"><i style="--finish:#b87333"></i>Kupfer</button><button data-finish-preview="matt" aria-pressed="false"><i style="--finish:#efe9dc"></i>Matt</button><button data-finish-preview="silver" aria-pressed="false"><i style="--finish:#c7c9cc"></i>Silber</button></div><p id="finish-description" class="finish-description">PLA mit metallischem Schimmer in Kupfer-Optik.</p><button class="btn btn-primary" id="hammer-use">Gehämmert gestalten ↗</button><small>Matt, glänzend oder mit Seidenschimmer: Jede Vase entsteht Schicht für Schicht aus PLA. Die Nahaufnahmen sind KI-Inszenierungen unserer Modelle.</small></div>
+</div></section>
+<section class="skeleton-story" id="neue-muster"><div class="wrap">
+  <div class="pattern-feature-heading"><div><p class="eyebrow"><span class="new-pill">NEU</span> Zwei neue Formensprachen</p><h2>Licht findet Lücken.<br><em>Linien finden ihren Weg.</em></h2></div><p>Offene Zellen oder fließende Rippen.<br>Wähle ein Muster und mach es zu deinem.</p></div>
+  <div class="skeleton-grid pattern-pair">
+    <article><button class="image-expand skeleton-image" data-view-image="/img/studio/fdm-voronoi.webp" aria-label="Voronoi-Vase vergrößern"><img src="/img/studio/fdm-voronoi.webp" loading="lazy" width="1024" height="1280" alt="Elfenbeinfarbene 3D-gedruckte Voronoi-Vase mit echten Zellöffnungen und feinen Druckschichten"><span>01 / VORONOI <b>↗</b></span></button><div class="skeleton-copy"><h3>Raum für Licht.</h3><p>Unregelmäßige Zellen, verbundene Stege und ein Schattenspiel, das mitwandert. Voronoi öffnet deine Vase nach außen.</p><div class="skeleton-facts"><span>Echte Durchbrüche</span><span>Individuelle Zellgröße</span><span>Für Trockenblumen</span></div><button class="btn btn-primary" id="skeleton-use">Voronoi gestalten ↗</button><small>Für Trockenblumen oder mit passendem Einsatz. Brücken und Stützen im Slicer prüfen. Beim Eierbecher wird das Zellmuster als geschlossenes Relief umgesetzt.</small></div></article>
+    <article><button class="image-expand skeleton-image" data-view-image="/img/studio/fdm-fjord.webp" aria-label="Fjordwelle-Vase vergrößern"><img src="/img/studio/fdm-fjord.webp" loading="lazy" width="1024" height="1280" alt="Salbeifarbene 3D-gedruckte Fjordwelle-Vase mit fließenden Rippen und sichtbarer Filamentstruktur"><span>02 / FJORDWELLE <b>↗</b></span></button><div class="skeleton-copy"><h3>Bewegung, die bleibt.</h3><p>Feine Rippen folgen weiten Wellen. Ruhig von vorn, überraschend beim Drehen. Fjordwelle bringt Bewegung in deine Silhouette.</p><div class="skeleton-facts"><span>Fließende Rippen</span><span>Geschlossene Wand</span><span>Variable Tiefe</span></div><button class="btn btn-primary" id="coral-use">Fjordwelle gestalten ↗</button><small>Form, Anzahl, Tiefe und Verlauf bleiben frei gestaltbar. Die Druck-Ampel bewertet deine Kombination. Die Bilder sind KI-Inszenierungen; die Live-Vorschau zeigt deine konkrete Form.</small></div></article>
+  </div>
+</div></section>
 <section id="konfigurator" class="configurator">
+  <div class="wrap studio-heading"><div><p class="eyebrow">02 / Dein Designstudio</p><h2>Von „Was wäre, wenn“<br>zu <em>„Hab ich gemacht.“</em></h2></div><p>Dreh an der Form. Spiel mit Farbe.<br>Dein Original entsteht vor deinen Augen.</p></div>
   <div class="wrap config-grid">
 
     <div class="stage">
+      <div class="viewer-heading"><span><i></i> OVJU / LIVE STUDIO</span><span>DEIN DESIGN IN 360°</span></div>
+      <div class="viewer-watermark" aria-hidden="true">made<br><em>by you.</em></div>
       <div id="loading" class="loading"><div class="egg-spin">🥚</div>Lade 3D-Studio …</div>
       <canvas id="viewer"></canvas>
       <div class="stage-badge" id="dim-info"></div>
@@ -86,15 +114,15 @@
       <div class="scene-chips" id="scene-chips"></div>
       <button class="stage-full-btn" id="btn-fullscreen" title="Vollbild">⤢</button>
       <div class="stage-hint" id="stage-hint"><span class="sh-desk">↔ Ziehen zum Drehen · Scrollen zum Zoomen</span><span class="sh-mob">☝️ Mit einem Finger drehen · zwei Finger zoomen</span></div>
-      <button class="stage-foto" id="btn-foto" title="Dein Design in mehreren Szenen rendern">📸 Foto-Shooting</button>
+      <button class="stage-foto" id="btn-foto" title="Dein Design in mehreren Szenen rendern">▧ Szenenbilder</button>
     </div>
 
     <aside class="panel">
       <div class="panel-head">
-        <h2>Dein Design</h2>
+        <div><p class="panel-kicker">DEIN PERSÖNLICHES ORIGINAL</p><h2>Mach es zu deinem.</h2></div>
         <div class="panel-head-btns">
-          <button class="btn btn-ghost" id="btn-random" title="Zufälliges Design">🎲 Überrasch mich</button>
-          <button class="btn btn-ghost" id="btn-code" data-open-code="show" title="Design-Code anzeigen, teilen oder eingeben">🔖 Code</button>
+          <button class="btn btn-ghost" id="btn-random" title="Zufälliges Design">↝ Inspiration</button>
+          <button class="btn btn-ghost" id="btn-code" data-open-code="show" title="Design-Code anzeigen, teilen oder eingeben">↗ Design-Code</button>
         </div>
       </div>
 
@@ -130,7 +158,10 @@
           <button class="pattern-btn" data-pattern="zickzack" title="Scharfe Facetten">Zickzack</button>
           <button class="pattern-btn" data-pattern="querwellen" title="Horizontale Wellenringe">Querwellen</button>
           <button class="pattern-btn" data-pattern="gehaemmert" title="Organische Dellen wie gehämmertes Metall">Gehämmert</button>
+          <button class="pattern-btn" data-pattern="skelett" title="Unregelmäßiges Zellnetz: offene Vase, geschlossenes Relief beim Eierbecher">Voronoi</button>
+          <button class="pattern-btn" data-pattern="koralle" title="Feine geschwungene Rippen auf weiten Wellen">Fjordwelle · Neu</button>
         </div>
+        <p class="surface-note" id="skeleton-note" hidden>Voronoi: offene Zellen mit verbundenen Stegen. Brücken und Stützen im Slicer prüfen.</p>
         <div id="surface-sliders">
           <label class="slider-row">
             <span>Anzahl <output id="s-ribs-val"></output></span>
@@ -205,7 +236,7 @@
         </div>
         <div class="price-size" id="price-size" hidden></div>
         <div class="cta-btns">
-          <button class="btn btn-primary btn-lg" id="btn-order">🛒 In den Warenkorb</button>
+          <button class="btn btn-primary btn-lg" id="btn-order">In den Warenkorb ↗</button>
           <button class="btn btn-ghost" id="btn-download" title="STL-Datei herunterladen — druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer &amp; Co.">⬇ STL</button>
         </div>
         <div class="tiny">Druckfertige STL in Millimetern — direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.<br>
@@ -215,6 +246,7 @@
   </div>
 </section>
 
+<section class="scene-journal wrap"><div class="collection-heading"><div><p class="eyebrow">Gedruckt. Und genau so gedacht.</p><h2>Viele Formen.<br><em>Ein eigener Charakter.</em></h2></div><p>Matt, glänzend, mit Seidenschimmer.<br>Die feinen Schichten gehören zum Design.</p></div><div class="scene-journal-grid"><figure><button class="image-expand" data-view-image="/img/studio/fdm-morning.webp" aria-label="Ein Platz im Licht. Bild vergrößern"><img src="/img/studio/fdm-morning.webp" width="1448" height="1086" alt="Zwei matte 3D-gedruckte Vasen in Salbei und Elfenbein mit feinen horizontalen Druckschichten auf Eiche" loading="lazy"><span>01 / SLOW MORNINGS <b>↗</b></span></button><figcaption><h3>Ein Platz im Licht.</h3><p>Salbei und Elfenbein. Mattes Filament, sanfte Formen und Morgenlicht.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-evening.webp" aria-label="Schicht für Schicht. Schimmer. Bild vergrößern"><img src="/img/studio/fdm-evening.webp" width="1448" height="1086" alt="Gehämmerte Kupfer-Silk-PLA-Vase und gerippte Graphitvase mit sichtbaren Drucklinien im Abendlicht" loading="lazy"><span>02 / AFTER HOURS <b>↗</b></span></button><figcaption><h3>Schicht für Schicht. Schimmer.</h3><p>Kupfer-Silk und mattes Graphit. Der Druck bleibt sichtbar, auch im Abendlicht.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-collection.webp" aria-label="Drei Formen. Deine Auswahl. Bild vergrößern"><img src="/img/studio/fdm-collection.webp" width="1448" height="1086" alt="Drei tatsächlich konfigurierbare 3D-gedruckte Vasen in Salbei, Terrakotta und Elfenbein" loading="lazy"><span>03 / SHAPES IN COMPANY <b>↗</b></span></button><figcaption><h3>Drei Formen. Deine Auswahl.</h3><p>Kugel, Flasche, Kurve. Unterschiedliche Silhouetten aus demselben Materialgedanken.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-gloss.webp" aria-label="Mehr Farbe. Mehr Glanz. Bild vergrößern"><img src="/img/studio/fdm-gloss.webp" width="1448" height="1086" alt="Glänzende feuerrote 3D-gedruckte Tropfenvase mit deutlich sichtbaren horizontalen Filamentlinien" loading="lazy"><span>04 / A LITTLE BOLDER <b>↗</b></span></button><figcaption><h3>Mehr Farbe. Mehr Glanz.</h3><p>Feuerrotes, glänzendes PLA. Feine Druckschichten treffen auf gedrehte Rippen.</p></figcaption></figure></div><p class="scene-disclosure">KI-generierte Inszenierungen auf Basis unserer Konfigurator-Modelle. Die Live-3D-Vorschau zeigt deine konkrete Form; Farben und Bilddetails können abweichen.</p></section>
 <section class="usps-band">
   <div class="wrap grid3" id="usps"></div>
 </section>
@@ -229,7 +261,7 @@
 
 <section id="sogehts" class="steps-band">
   <div class="wrap">
-    <h2 class="section-title">So geht's</h2>
+    <p class="eyebrow">03 / Von der Idee zu dir</p><h2 class="section-title">Drei Schritte. Dein Einzelstück.</h2>
     <div class="grid3" id="steps"></div>
   </div>
 </section>
@@ -241,16 +273,17 @@
   </div>
 </section>
 
+</main>
 <footer>
   <div class="wrap footer-grid">
     <div>
-      <div class="logo"><span class="logo-mark">🥚</span><span id="footer-brand">OVJU</span></div>
+      <div class="logo"><span class="logo-mark" aria-hidden="true">◒</span><span id="footer-brand">OVJU</span></div>
       <p id="footer-text"></p>
     </div>
     <div class="footer-col">
       <h4>Gut zu wissen</h4>
       <p>🌱 Pflanzenbasiertes PLA, individuell gedruckt</p>
-      <p>🌾 Vasen für Trockenblumen — imprägniert &amp; i.&nbsp;d.&nbsp;R. wasserfest, ohne Gewähr</p>
+      <p>🌾 Vasen für Trockenblumen · Offene Muster benötigen einen passenden Einsatz für Wasser</p>
       <p>⚖️ Bei frei gestalteten Formen keine Garantie für Standfestigkeit</p>
     </div>
     <div class="footer-col">
@@ -408,7 +441,7 @@
   <div class="mb-price"><b id="mb-price">9,90 €</b><small id="mb-sub">pro Stück</small></div>
   <button class="mb-dl mb-code" data-open-code="show" title="Design-Code" aria-label="Design-Code anzeigen">🔖</button>
   <button class="mb-dl" id="mb-download" title="Druckdatei (STL) herunterladen" aria-label="Druckdatei herunterladen">⬇</button>
-  <button class="mb-cart" id="mb-cart">🛒 In den Warenkorb</button>
+  <button class="mb-cart" id="mb-cart">In den Warenkorb ↗</button>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 
@@ -422,7 +455,10 @@
   </div>
 </dialog>
 
+<dialog id="scene-lightbox" class="scene-lightbox"><button class="lightbox-close" aria-label="Bild schließen">✕</button><img alt=""><p></p></dialog>
 <script type="module" src="js/app.js"></script>
 <script src="/js/pwa.js" defer></script>
+<script type="module" src="/js/studio.js"></script>
+<script type="module" src="/js/surface-story.js"></script>
 </body>
 </html>

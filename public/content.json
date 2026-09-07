@@ -1,12 +1,12 @@
 {
   "brand": {
     "name": "OVJU",
-    "tagline": "Dein Design. Deine Vase."
+    "tagline": "Deine Ideen nehmen Form an"
   },
   "hero": {
-    "headline": "Eine Vase, die es nur einmal gibt: deine.",
-    "subheadline": "Gestalte deine Vase im 3D-Konfigurator – Rippen, Spiralen, tiefe Lamellen oder gehämmert, in sechzehn Farben von matt bis metallic. Wir drucken sie für dich. Und für den Frühstückstisch gibt es den passenden Eierbecher im gleichen Design.",
-    "cta": "Vase gestalten"
+    "headline": "Deine Idee. Deine Form.",
+    "subheadline": "Starte mit einer Grundform. Verändere Silhouette, Struktur und Farbe. Was du hier siehst, kannst du wirklich gestalten.",
+    "cta": "Eigene Form gestalten ↗"
   },
   "usps": [
     {
@@ -34,12 +34,12 @@
     {
       "num": 2,
       "title": "Bestellen",
-      "text": "Leg dein Design in den Warenkorb – einzeln, im Duo oder als 4er-Familienset. Bezahlt ist in unter einer Minute."
+      "text": "Speichere dein Design oder lege es direkt in den Warenkorb. Du entscheidest, wie viele Lieblingsstücke es werden."
     },
     {
       "num": 3,
       "title": "Gedruckt geliefert",
-      "text": "Wir drucken deinen Eierbecher Schicht für Schicht in matter Qualität und schicken ihn dir innerhalb weniger Tage nach Hause."
+      "text": "Dein Objekt entsteht Schicht für Schicht aus PLA auf Pflanzenbasis. Individuell für dich gedruckt und zu dir geliefert."
     }
   ],
   "faq": [
@@ -129,7 +129,7 @@
     }
   ],
   "footer": {
-    "text": "OVJU – individuell designte Eierbecher, 3D-gedruckt in Deutschland. Mit Liebe entworfen von dir, Schicht für Schicht gedruckt von uns."
+    "text": "Kleine Objekte mit großer Persönlichkeit. Entworfen von dir. Schicht für Schicht gedruckt in Deutschland."
   },
   "pricing": {
     "eierbecher": {
@@ -145,16 +145,16 @@
     "currency": "EUR"
   },
   "showcase": {
-    "title": "Die Vase im Mittelpunkt.",
-    "sub": "Skulptur fürs Regal, Trockenblumen-Bühne, Geschenk mit Gravur – und als Bonus der Eierbecher im selben Stil.",
+    "title": "Dein Design. Auch im Kleinen.",
+    "sub": "Eine große Idee passt auch auf den Frühstückstisch. Gestalte Vasen und Eierbecher mit deiner Handschrift.",
     "eierbecher": {
       "title": "Der Eierbecher",
-      "text": "Das kleine Geschwisterstück: Kelch, Schale oder Tulpe im gleichen Muster wie deine Vase – auf Wunsch mit Gravur und passendem Untersetzer.",
+      "text": "Ein guter Morgen beginnt mit deinem Stil. Als Einzelstück, persönliches Geschenk oder dein ganz eigenes Set.",
       "cta": "Eierbecher designen"
     },
     "vase": {
       "title": "Die Vase",
-      "text": "Vom Japandi-Klassiker mit feinen Rippen bis zur Skulptur mit eigener Silhouette und tiefen Lamellen: bis 22 cm hoch, echte Hohlform, bereit für Trockenblumen.",
+      "text": "Skulptur, Statement oder Bühne für Trockenblumen. Du bestimmst die Form, wir drucken dein Original.",
       "cta": "Vase designen"
     }
   },
@@ -163,9 +163,7 @@
     "eigene": "⚖️ Individuelle Form: Du gestaltest frei — für die Standfestigkeit sehr ausgefallener Silhouetten übernehmen wir keine Garantie.",
     "checkout": "Alle Stücke bestehen aus pflanzenbasiertem PLA und werden individuell für dich gedruckt. Vasen sind für Trockenblumen konzipiert (imprägniert, i. d. R. wasserfest — ohne Gewähr). Bei frei gestalteten Formen keine Garantie für Standfestigkeit.",
     "trust": [
-      "🌱 Pflanzenbasiertes PLA",
-      "🖨️ Individuell gedruckt in Deutschland",
-      "📦 In 5–8 Werktagen bei dir"
+      "Live gestalten. Individuell drucken."
     ]
   }
 }

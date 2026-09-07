@@ -1,13 +1,13 @@
 /* OVJU Service Worker – Scope "/" */
 'use strict';
 
-const VERSION = 'ovju-v2';
+const VERSION = 'ovju-v7-filament-studio';
 const IMMUTABLE_CACHE = VERSION + '-immutable';
 const DYNAMIC_CACHE = VERSION + '-dynamic';
 const KNOWN_CACHES = [IMMUTABLE_CACHE, DYNAMIC_CACHE];
 
 // Unveränderliche Assets: Cache-First
-const IMMUTABLE_PREFIXES = ['/vendor/', '/fonts/', '/env/', '/img/gallery/', '/img/icons/'];
+const IMMUTABLE_PREFIXES = ['/vendor/', '/fonts/', '/env/', '/img/gallery/', '/img/icons/', '/img/studio/'];
 // App-Shell, JS, CSS: Network-First (frische Version, Cache nur als Offline-Fallback —
 // sonst mischen sich nach einem Deploy alte und neue Module)
 const SWR_PATHS = ['/', '/index.html', '/content.json', '/manifest.webmanifest'];

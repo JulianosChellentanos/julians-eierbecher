@@ -1,6 +1,7 @@
 // OVJU — parametrische Geometrie für Eierbecher & Vasen
 // Erzeugt wasserdichte (manifold) Meshes in Millimetern, bereit für den 3D-Druck.
 import * as THREE from 'three';
+import { buildVoronoiShell, cellDistance } from './voronoi-shell.js';
 
 // ---------------------------------------------------------------------------
 // Produkte & Form-Presets: Silhouetten als (t, r)-Kontrollpunkte.
@@ -102,6 +103,8 @@ export const PATTERNS = {
   zickzack: 'Zickzack',
   querwellen: 'Querwellen',
   gehaemmert: 'Gehämmert',
+  skelett: 'Voronoi',
+  koralle: 'Fjordwelle',
 };
 
 // Verlauf: wie das Muster über die Höhe „fließt“ (Phasenverschiebung φ(t))
@@ -343,6 +346,8 @@ export function buildModel(params) {
   let depthCap;
   if (p.pattern === 'lamellen') depthCap = isVase ? 6 : 3;
   else if (p.pattern === 'gehaemmert') depthCap = 1.2;
+  else if (p.pattern === 'skelett') depthCap = isVase ? 1.8 : 1.0;
+  else if (p.pattern === 'koralle') depthCap = isVase ? 6 : 1.0;
   else depthCap = ribs < 24 ? 1.1 : ribs > 56 ? 1.0 : 1.6;
   const amp = p.pattern === 'glatt' ? 0 : Math.min(p.depth, depthCap);
   const twistAngle = p.twist * Math.PI;
@@ -406,8 +411,8 @@ export function buildModel(params) {
   // Rippen-Fade: unten glatt (Druckbett), oben sanft auslaufend — ausgefranste
   // Ränder waren der meistgenannte Kritikpunkt im Design-Panel.
   const fade = (t) => {
-    let f = smoothstep(0.02, 0.12, t);
-    f *= smoothstep(1.0, isQuer ? 0.93 : 0.96, t);
+    let f = p.pattern === 'koralle' ? smoothstep(0.06, 0.22, t) : smoothstep(0.02, 0.12, t);
+    f *= smoothstep(1.0, isQuer ? 0.93 : p.pattern === 'koralle' ? 0.92 : 0.96, t);
     return f;
   };
   const ampAt = (t) => amp * fade(t);
@@ -419,6 +424,21 @@ export function buildModel(params) {
     if (isQuer) {
       a = Math.min(a, querAmpMax);
       return a * Math.sin(2 * Math.PI * quersV * t + querK * theta);
+    }
+    if (p.pattern === 'koralle') {
+      // Broad travelling waves modulate fine, continuous ribs. The long axial
+      // wavelength keeps the sculptural folds printable at small heights too.
+      const bend = 0.16 * Math.sin(2 * Math.PI * t - 0.8);
+      const angle = theta + flowPhase(t) * 0.22 + bend;
+      const swell = Math.sin(3 * angle + 2 * Math.PI * t);
+      const fin = Math.pow((1 + Math.cos(ribs * angle)) / 2, 2.2);
+      return a * (0.65 * swell + 0.35 * (2 * fin - 1));
+    }
+    if (p.pattern === 'skelett') {
+      const n = Math.max(6, Math.min(20, Math.round(ribs / 4)));
+      const d = cellDistance(theta + flowPhase(t) * 0.18, t * H, n, Math.max(18, H / 8));
+      // Egg cups keep their solid cavity. Vases use this relief on a cut shell below.
+      return a * (2 * Math.exp(-80 * d * d) - 1);
     }
     if (p.pattern === 'gehaemmert') {
       const n = Math.max(6, Math.round(ribs / 3));       // Dellen-Dichte aus dem Anzahl-Regler
@@ -513,7 +533,7 @@ export function buildModel(params) {
     const inBand = relief && y >= relief.y0 - 1e-6 && y <= relief.y1 + 1e-6;
     stations.push(
       (ampAt(t) > 1e-4 || inBand)
-        ? { y, rFn: (theta) => R(t) + surface(theta, t, y), rot: isQuer ? 0 : -flowPhase(t), rs: inBand ? RS_T : RS }
+        ? { y, rFn: (theta) => R(t) + surface(theta, t, y), rot: isQuer ? 0 : p.pattern === 'koralle' ? -(flowPhase(t) * 0.22 + 0.16 * Math.sin(2 * Math.PI * t - 0.8)) : -flowPhase(t), rs: inBand ? RS_T : RS }
         : { y, r: R(t) }
     );
   }
@@ -548,11 +568,16 @@ export function buildModel(params) {
     openingDia = rIn(1) * 2;
   }
 
-  const geometry = revolve(stations, RS);
+  const openCells = isVase && p.pattern === 'skelett';
+  const geometry = openCells
+    ? buildVoronoiShell({H,R,rBase,ribs,amp,flowPhase,quality:q,surface,
+        text:txt,textSize:textInfo.size,textPos:p.textPos ?? .55})
+    : revolve(stations, RS);
 
   return {
     geometry,
     info: {
+      openCells,
       product: p.product,
       height: H,
       maxRadius: rMax,
@@ -680,7 +705,7 @@ export function buildSaucer(params) {
   const q = Math.min(1, Math.max(0.4, p.quality));
   const RS = Math.round(Math.min(640, Math.max(200, p.ribs * 9)) * q);
   // Querwellen sind höhenbasiert — auf dem flachen Rand als normale Wellen zeigen
-  const patt = (p.pattern === 'querwellen' || p.pattern === 'gehaemmert') ? 'wellen' : p.pattern;
+  const patt = (p.pattern === 'querwellen' || p.pattern === 'gehaemmert' || p.pattern === 'skelett' || p.pattern === 'koralle') ? 'wellen' : p.pattern;
 
   const stations = [];
   stations.push({ y: 0, r: 0 });

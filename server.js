@@ -310,7 +310,7 @@ function esc(s) {
 }
 function itemLabel(it) {
   const c = it.config || {};
-  const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen' }[c.pattern] || c.pattern;
+  const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen', lamellen: 'Lamellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' }[c.pattern] || c.pattern;
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
     (c.text ? ` · Gravur „${c.text}“${c.textStyle === 'gehaemmert' ? ' (gehämmert)' : c.textStyle === 'gestanzt' ? ' (gestanzt)' : ''}` : '') +

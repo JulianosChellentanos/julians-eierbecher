@@ -1,5 +1,6 @@
 // OVJU — Konfigurator: 3D-Szene, UI-Bindings, Bestellung (Eierbecher & Vasen)
 import * as THREE from 'three';
+import { STUDIO_DESIGNS, designConfig as studioDesignConfig } from './studio-designs.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
@@ -15,7 +16,7 @@ import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge, 
 import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } from './designcode.js';
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
-import { initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
+import { activateTab, initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -297,10 +298,15 @@ function resize() {
 }
 new ResizeObserver(resize).observe(canvas);
 
+let stageVisible = true;
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+new IntersectionObserver(([entry]) => { stageVisible = entry.isIntersecting; }).observe(canvas);
+
 function animate() {
   requestAnimationFrame(animate);
+  if (!stageVisible || document.hidden) return;
   resize();
-  if (!userInteracted && cupMesh) cupGroup.rotation.y += 0.004;
+  if (!userInteracted && cupMesh && !reducedMotion.matches) cupGroup.rotation.y += 0.004;
   controls.update();
   renderer.render(scene, camera);
 }
@@ -367,6 +373,9 @@ function updatePrintBadge(geometry, info) {
   if (sil > 62) {
     cls = 'p-bad'; txt = '🔶 Form kragt stark aus — Silhouette flacher ziehen';
     tip = `Die Grundform hängt bis ${sil.toFixed(0)}° über — im Formen-Editor sanftere Übergänge wählen.`;
+  } else if (info.openCells) {
+    cls = 'p-warn'; txt = '⚠️ Zellöffnungen — Brücken im Slicer prüfen';
+    tip = 'Voronoi hat echte Durchbrüche. Brücken und Stützen vor dem Druck im Slicer prüfen. Für Trockenblumen oder mit passendem Einsatz.';
   } else if (sil > 50) {
     cls = 'p-warn'; txt = '⚠️ Ausladende Form — wir drucken mit extra Kühlung';
     tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung — druckt mit feinen Schichten sauber.`;
@@ -383,7 +392,7 @@ function updatePrintBadge(geometry, info) {
   el.className = 'stage-print ' + cls;
   // Mobile: Kurzform, Langtext als Tooltip
   const short = { 'p-ok': '✅ Druckbar', 'p-warn': '⚠️ Steil', 'p-bad': '🔶 Zu steil' }[cls];
-  el.textContent = IS_SMALL ? short : txt;
+  el.textContent = IS_SMALL ? (info.openCells && cls === 'p-warn' ? '⚠️ Brücken prüfen' : short) : txt;
   el.title = IS_SMALL ? `${txt} — ${tip}` : tip;
 }
 
@@ -629,6 +638,7 @@ function setProduct(id) {
   $('#extras-section').style.display = id === 'eierbecher' ? '' : 'none';
   $('#vase-note').hidden = id !== 'vase'; // Trockenblumen-Hinweis nur bei Vasen
   updateMobileTabs(id);
+  if (['skelett','koralle'].includes(state.pattern)) applyDepthRange();
   userInteracted = false; // neu einrahmen
   rebuild();
 }
@@ -658,16 +668,25 @@ function bindSlider(id, key, fmt, cb) {
 const DEPTH_RANGES = {
   lamellen: { min: 1.5, max: 6, step: 0.25, def: 4 },
   gehaemmert: { min: 0.3, max: 1.2, step: 0.1, def: 0.8 },
+  skelett: { min: 0.4, max: 1.8, step: 0.1, def: 1.4 },
+  koralle: { min: 0.5, max: 6, step: 0.1, def: 4.5 },
   default: { min: 0.2, max: 1.6, step: 0.1, def: 0.9 },
 };
 function applyDepthRange() {
-  const r = DEPTH_RANGES[state.pattern] || DEPTH_RANGES.default;
+  $('#skeleton-note').hidden = state.pattern !== 'skelett';
+  $('#skeleton-note').textContent = state.product === 'vase'
+    ? 'Voronoi: offene Zellen mit verbundenen Stegen. Für Trockenblumen oder einen passenden Einsatz. Brücken und Stützen im Slicer prüfen.'
+    : 'Voronoi als Zellrelief: Die Ei-Mulde bleibt geschlossen. Die Tiefe wird für den Druck begrenzt.';
+  const r = ['skelett','koralle'].includes(state.pattern) && state.product === 'eierbecher'
+    ? { min: 0.4, max: 1, step: 0.1, def: 1 }
+    : DEPTH_RANGES[state.pattern] || DEPTH_RANGES.default;
   const el = $('#s-depth');
   el.min = r.min; el.max = r.max; el.step = r.step;
   if (state.depth < r.min || state.depth > r.max) {
     state.depth = r.def;
-    el.value = r.def;
   }
+  // Set the value after changing the range: the previous pattern may have clamped it.
+  el.value = state.depth;
   $('#s-depth-val').textContent = `${state.depth.toFixed(1)} mm`;
   sliderFill(el);
 }
@@ -813,8 +832,10 @@ function initControls() {
     rebuild();
   });
 
-  $('#hero-cta').addEventListener('click', () => {
-    $('#konfigurator').scrollIntoView({ behavior: 'smooth' });
+  $('#hero-cta').addEventListener('click', async () => {
+    await applyDesign(studioDesignConfig(STUDIO_DESIGNS[5]));
+    activateTab('form');
+    $('#konfigurator').scrollIntoView({ behavior: reducedMotion.matches ? 'instant' : 'smooth' });
   });
 
   // Hell/Dunkel-Modus
@@ -911,7 +932,8 @@ async function applyDesign(cfg, code) {
   rebuild();
   rebuildText();
   frameCamera();
-  showToast(`🔖 Design ${formatCode(code)} geladen`);
+  showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Designstudio bereit");
+  renderPrices();
 }
 
 // Quadratisches Vorschaubild aus dem aktuellen Canvas (für den Warenkorb)
@@ -1033,13 +1055,6 @@ async function loadGallery() {
   // Produktfotos ergänzen, bis das Grid gut gefüllt ist
   const rest = galleryPhotos.filter((g) => g.cat !== 'galerie').sort((a, b) => (a.cat === 'vase' ? -1 : 1) - (b.cat === 'vase' ? -1 : 1));
   const items = [...galerie, ...(galerie.length < 4 ? rest : [])];
-  // Hero-Foto: das Eierbecher-Produktfoto (oder erstes Galerie-Bild)
-  const heroPic = galleryPhotos.find((g) => g.cat === 'vase') || galleryPhotos.find((g) => g.cat === 'eierbecher') || galleryPhotos[0];
-  if (heroPic) {
-    $('#hero-photo-img').src = heroPic.file;
-    $('#hero-photo').hidden = false;
-    $('#hero-grid').classList.add('has-photo');
-  }
   if (!items.length) return;
   $('#galerie').hidden = false;
   $('#galerie-grid').innerHTML = items.slice(0, 8).map((g, i) => `
@@ -1097,6 +1112,11 @@ async function renderShowcase() {
   renderStyleRow();
   renderPrices();
   initControls();
+  window.addEventListener('ovju:studio-design', async (event) => {
+    await applyDesign(event.detail);
+    activateTab(event.detail.studioTab === 'muster' ? 'muster' : 'form');
+    $('#konfigurator').scrollIntoView({ behavior: reducedMotion.matches ? 'instant' : 'smooth' });
+  });
   loadFont(state.font); // Standardschrift vorwärmen
   // Startprodukt über setProduct() initialisieren (Slider-Bereiche, Tabs, Hinweise, Preise)
   state.product = START_PRODUCT === 'vase' ? 'eierbecher' : 'vase';

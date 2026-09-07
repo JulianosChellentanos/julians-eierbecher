@@ -6,11 +6,11 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 export const IS_MOBILE = window.matchMedia('(max-width: 980px)').matches;
 
 const TABS = [
-  ['form', '🏺', 'Form'],
-  ['muster', '✨', 'Muster'],
-  ['gravur', '✒️', 'Gravur'],
-  ['farbe', '🎨', 'Farbe'],
-  ['extras', '➕', 'Extras'],
+  ['form', '01', 'Form'],
+  ['muster', '02', 'Muster'],
+  ['gravur', '03', 'Gravur'],
+  ['farbe', '04', 'Farbe'],
+  ['extras', '05', 'Extras'],
 ];
 let activeTab = 'form';
 let tabOrder = TABS.map((t) => t[0]);
@@ -190,7 +190,7 @@ export function initMobileShell({ product }) {
   // 🎲 als Floating-Button in der Bühne (unter dem Vollbild-Button)
   const dice = document.createElement('button');
   dice.className = 'stage-dice-btn';
-  dice.textContent = '🎲';
+  dice.textContent = '↝';
   dice.title = 'Überrasch mich';
   dice.setAttribute('aria-label', 'Zufälliges Design');
   dice.addEventListener('click', () => { buzz(12); $('#btn-random').click(); });
