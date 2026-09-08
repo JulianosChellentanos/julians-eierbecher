@@ -1,9 +1,8 @@
 // OVJU — erzeugt aus einer gespeicherten Design-Konfiguration die druckfertige STL
 // (wird vom Konfigurator UND vom Warenkorb-Checkout genutzt)
 import * as THREE from 'three';
-import { buildModel, buildSaucer, bendTextOntoCup, maxTextArc, FONTS, isIntegratedTextStyle } from './geometry.js';
+import { buildModel, buildSaucer, FONTS } from './geometry.js';
 import { FontLoader } from '../vendor/FontLoader.js';
-import { TextGeometry } from '../vendor/TextGeometry.js';
 import { exportSTL } from './exporter.js';
 
 const fontCache = {};
@@ -16,35 +15,14 @@ export function loadFont(key) {
   return fontCache[key];
 }
 
-/** Konfiguration → binäre STL (ArrayBuffer), volle Auflösung, inkl. Text & Untersetzer. */
+/** Konfiguration → binäre STL (ArrayBuffer), volle Auflösung, inkl. Gravur-Relief & Untersetzer. */
 export async function makeSTL(config) {
   const txt = (config.text || '').trim();
-  const integrated = !!txt && isIntegratedTextStyle(config.textStyle);
-  const textFont = integrated ? await loadFont(config.font) : undefined;
-  const { geometry, info } = buildModel({ ...config, quality: 1, exportRes: true, textFont }); // Export: feinstes Raster (Voronoi-Lochränder)
+  const textFont = txt ? await loadFont(config.font) : undefined;
+  const fallbackFont = txt ? await loadFont('droid_sans') : undefined;
+  const { geometry, info } = buildModel({ ...config, quality: 1, exportRes: true, textFont, fallbackFont }); // Export: feinstes Raster
   const meshes = [new THREE.Mesh(geometry)];
   const disposables = [geometry];
-
-  if (txt && !integrated) {
-    const font = await loadFont(config.font);
-    const textPos = config.textPos ?? 0.55;
-    const depth = info.ampAt(textPos) + 2.0;
-    let size = config.textSize ?? 7;
-    let geo, result;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      geo = new TextGeometry(txt, { font, size, height: depth, curveSegments: 6, bevelEnabled: false });
-      result = bendTextOntoCup(geo, info, textPos);
-      if (result.arc <= maxTextArc()) break;
-      geo.dispose();
-      size *= 0.88;
-    }
-    if (result.arc <= maxTextArc()) {
-      meshes.push(new THREE.Mesh(geo));
-      disposables.push(geo);
-    } else {
-      geo.dispose();
-    }
-  }
 
   if (config.product === 'eierbecher' && config.saucer) {
     const s = buildSaucer({ ...config, quality: 1 });

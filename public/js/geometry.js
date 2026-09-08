@@ -2,6 +2,8 @@
 // Erzeugt wasserdichte (manifold) Meshes in Millimetern, bereit für den 3D-Druck.
 import * as THREE from 'three';
 import { buildVoronoiShell, cellDistance, cellCount } from './voronoi-shell.js';
+import { buildGlyphField, roundedRectSDF, TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC } from './textrelief.js';
+export { TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC };
 
 // ---------------------------------------------------------------------------
 // Produkte & Form-Presets: Silhouetten als (t, r)-Kontrollpunkte.
@@ -115,14 +117,9 @@ export const FLOWS = {
   zick: 'Zickzack',
 };
 
-// Gravur-Stile: „geprägt“ = aufgesetzte Buchstaben (TextGeometry), die beiden
-// anderen werden als Relief direkt in die Wand gerechnet (siehe rasterizeText/surface).
-export const TEXT_STYLES = {
-  gepraegt: { label: 'Geprägt', hint: 'scharfe, aufgesetzte Buchstaben' },
-  gehaemmert: { label: 'Gehämmert', hint: 'erhabene Buchstaben mit Hammerschlag-Facetten' },
-  gestanzt: { label: 'Gestanzt', hint: 'in die Wand gedrückt, wie ein Metallstempel' },
-};
-export const isIntegratedTextStyle = (st) => st === 'gehaemmert' || st === 'gestanzt';
+// Gravur-Stile (siehe textrelief.js): ALLE Stile werden als Relief direkt in die Wand gerechnet —
+// ein manifold Körper, keine aufgesetzte Schrift mehr.
+export const isIntegratedTextStyle = () => true;
 
 export const DEFAULTS = {
   product: 'vase',
@@ -138,7 +135,7 @@ export const DEFAULTS = {
   text: '',
   textSize: 7,       // mm
   textPos: 0.55,
-  textStyle: 'gepraegt',     // Gravur-Höhe als Anteil der Gesamthöhe (0.15..0.8)
+  textStyle: 'gestanzt',     // Gravur-Höhe als Anteil der Gesamthöhe (0.15..0.8)
   font: 'helvetiker',
   customPoints: null, // eigene Silhouette [[t,r],...] wenn preset === 'eigene'
   quality: 1,        // 0.5..1 — Mesh-Auflösung (Mobile-Vorschau niedriger)
@@ -223,96 +220,6 @@ function hammerField(theta, w, n, lambda) {
     }
   }
   return 0.9 - 1.9 * best; // Dellen nach innen, schmale Grate zwischen den Schlägen
-}
-
-// ---------------------------------------------------------------------------
-// Schrift-Maske: Umrisse der Buchstaben (Font.generateShapes) werden per
-// Scanline (even-odd → Löcher automatisch richtig) mit Antialiasing in ein
-// Raster gerastert. Reine JS-Implementierung → läuft im Browser UND in Node.
-// ---------------------------------------------------------------------------
-const maskCache = new Map();
-function rasterizeText(font, text, size, chamfer) {
-  const key = `${font.data?.familyName || ''}|${text}|${size}|${chamfer}`;
-  if (maskCache.has(key)) return maskCache.get(key);
-  const PX = 8;          // Pixel pro mm (0,125 mm) — feiner als jede Düse
-  const PAD = 1.2;       // Rand in mm (Platz für die Fase)
-  const SUB = 4;         // Sub-Scanlines pro Pixelzeile (vertikales AA)
-  const glyphs = []; // je Form: [Außenkontur, ...Löcher]
-  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
-  for (const shape of font.generateShapes(text, size)) {
-    const pts = shape.extractPoints(6);
-    const loops = [pts.shape, ...pts.holes].filter((l) => l.length >= 3);
-    if (!loops.length) continue;
-    glyphs.push(loops);
-    for (const loop of loops) for (const q of loop) {
-      if (q.x < minx) minx = q.x; if (q.x > maxx) maxx = q.x;
-      if (q.y < miny) miny = q.y; if (q.y > maxy) maxy = q.y;
-    }
-  }
-  if (!glyphs.length) return null;
-  const ox = minx - PAD, oy = miny - PAD;
-  const W = Math.ceil((maxx - minx + 2 * PAD) * PX), H = Math.ceil((maxy - miny + 2 * PAD) * PX);
-  const m = new Float32Array(W * H);
-  const tmp = new Float32Array(W * H);
-  const xs = [];
-  // Jede Glyph-Form einzeln (Außenkontur + Löcher, even-odd), dann Vereinigung per max —
-  // sonst löschen sich überlappende Konturen benachbarter Buchstaben gegenseitig aus.
-  for (const glyph of glyphs) {
-    tmp.fill(0);
-    const edges = [];
-    for (const loop of glyph) {
-      for (let i = 0; i < loop.length; i++) {
-        const a = loop[i], b = loop[(i + 1) % loop.length];
-        if (a.y !== b.y) edges.push([a.x, a.y, b.x, b.y]);
-      }
-    }
-    for (let r = 0; r < H; r++) {
-      for (let sr = 0; sr < SUB; sr++) {
-        const y = oy + (r + (sr + 0.5) / SUB) / PX;
-        xs.length = 0;
-        for (const [x0, y0, x1, y1] of edges) {
-          if ((y >= y0) !== (y >= y1)) xs.push(x0 + (y - y0) * (x1 - x0) / (y1 - y0));
-        }
-        if (xs.length < 2) continue;
-        xs.sort((a, b) => a - b);
-        for (let k = 0; k + 1 < xs.length; k += 2) {
-          const pa = (xs[k] - ox) * PX, pb = (xs[k + 1] - ox) * PX; // Pixelkoordinaten des Spans
-          const c0 = Math.max(0, Math.floor(pa)), c1 = Math.min(W - 1, Math.floor(pb));
-          for (let c = c0; c <= c1; c++) {
-            const cov = Math.min(pb, c + 1) - Math.max(pa, c); // horizontale Abdeckung 0..1
-            if (cov > 0) tmp[r * W + c] += cov / SUB;
-          }
-        }
-      }
-    }
-    for (let i = 0; i < m.length; i++) if (tmp[i] > m[i]) m[i] = Math.min(1, tmp[i]);
-  }
-  // Druck-Fase (Zeile 0 = unten): erhabene Buchstaben brauchen UNTER sich eine ~45°-Rampe
-  // (Schmierung nach unten), gestanzte Buchstaben ÜBER sich (Decke der Vertiefung →
-  // Schmierung nach oben). acc = max(m, acc − Δ/w) — die übrigen Kanten bleiben scharf.
-  if (chamfer) {
-    const step = (1 / PX) / Math.abs(chamfer);
-    for (let c = 0; c < W; c++) {
-      let acc = 0;
-      if (chamfer > 0) for (let r = H - 1; r >= 0; r--) { acc = Math.max(m[r * W + c], acc - step); m[r * W + c] = acc; }
-      else for (let r = 0; r < H; r++) { acc = Math.max(m[r * W + c], acc - step); m[r * W + c] = acc; }
-    }
-  }
-  const mask = {
-    width: maxx - minx, height: maxy - miny,
-    cx: (minx + maxx) / 2, cy: (miny + maxy) / 2,
-    /** Abdeckung 0..1 an (u, v) in mm relativ zur Textmitte (u nach rechts, v nach oben) */
-    sample(u, v) {
-      const fx = (u + this.cx - ox) * PX - 0.5, fy = (v + this.cy - oy) * PX - 0.5;
-      if (fx < 0 || fy < 0 || fx >= W - 1 || fy >= H - 1) return 0;
-      const x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
-      const i = y0 * W + x0;
-      return (m[i] * (1 - tx) + m[i + 1] * tx) * (1 - ty) + (m[i + W] * (1 - tx) + m[i + W + 1] * tx) * ty;
-    },
-  };
-  if (maskCache.size > 24) maskCache.delete(maskCache.keys().next().value);
-  maskCache.set(key, mask);
-  return mask;
 }
 
 // ---------------------------------------------------------------------------
@@ -452,69 +359,156 @@ export function buildModel(params) {
     return a * waveTheta(p.pattern, ribs * (theta + flowPhase(t)));
   };
 
-  // --- Relief-Gravur („gehämmert“ / „gestanzt“): Schrift als Höhenfeld in der Wand.
-  // Vorne (θ = 0) zentriert, Bogenlänge u = rMid·Δθ wie bei der aufgesetzten Schrift.
+  // --- Gravur: Schrift als Höhenfeld (Distanzfeld-Relief, textrelief.js) in der Wand.
+  // Vorne (θ = 0) zentriert; u = lokale Bogenlänge R(t)·Δθ (kein Keystone auf Kugeln),
+  // v = Meridian-Bogenlänge (Buchstabenhöhe bleibt auf geneigter Wand erhalten).
   const txt = String(p.text || '').trim();
-  let relief = null; // { yText, y0, y1, rMid, mask, depth, style, size }
-  const textInfo = { style: p.textStyle, size: p.textSize, warn: '' };
-  if (txt && p.textFont && isIntegratedTextStyle(p.textStyle)) {
-    const style = p.textStyle;
-    const depth = style === 'gestanzt' ? -0.75 : 0.85;  // − = Vertiefung
-    const tC = Math.min(0.97, Math.max(0.03, p.textPos ?? 0.55));
-    const rMid = R(tC);
-    let size = p.textSize ?? 7, mask = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      mask = rasterizeText(p.textFont, txt, size, depth * 1.3); // Fase ≈ 37° statt 45° (Silhouetten-Check + sauberer Druck)
-      if (!mask || mask.width / rMid <= maxTextArc()) break;
-      size *= 0.88;
-    }
-    if (mask && mask.width / rMid <= maxTextArc()) {
-      const yText = tC * H;
-      // Kartusche: glatte Platte um den Text (Muster darunter ausgeblendet), bündig
-      // mit den Gratspitzen → Schrift liest sich wie auf einem Metallschild.
-      const plateHalfW = mask.width / 2 + 1.7, plateHalfH = mask.height / 2 + 1.3;
-      const plateRamp = 2.0;
-      relief = { yText, rMid, mask, depth, style, size, plateHalfW, plateHalfH, plateRamp,
-        plateR: Math.min(2.6, plateHalfH * 0.8),
-        y0: Math.max(CHAMFER + 0.6, yText - plateHalfH - plateRamp - 0.2),
-        y1: Math.min(H - 0.6, yText + plateHalfH + plateRamp + 0.2) };
-      textInfo.size = size;
-      if (size < (p.textSize ?? 7) - 0.01) textInfo.warn = `Text automatisch auf ${size.toFixed(1)} mm verkleinert.`;
-    } else if (mask) textInfo.warn = 'Text zu lang — bitte kürzen.';
+  const textInfo = { style: p.textStyle, size: p.textSize, warn: '', disabled: false, reason: '', arcDeg: 0 };
+  let relief = null;
+  // Meridian-Bogenlänge s(y) tabellieren
+  const ARC_N = 200, arcTab = new Float64Array(ARC_N + 1);
+  for (let i = 1; i <= ARC_N; i++) {
+    const y0 = ((i - 1) / ARC_N) * H, y1 = (i / ARC_N) * H;
+    arcTab[i] = arcTab[i - 1] + Math.hypot(y1 - y0, R(y1 / H) - R(y0 / H));
   }
-  // Hammerschlag-Facetten auf den Buchstaben (feiner als das Wand-Muster)
-  const letterDent = relief && relief.style === 'gehaemmert' ? (() => {
-    const lam = 1.2, n = Math.max(8, Math.round((2 * Math.PI * relief.rMid) / lam));
+  const sArc = (y) => { const f = Math.min(ARC_N - 1e-9, Math.max(0, (y / H) * ARC_N)); const i = Math.floor(f); return arcTab[i] + (arcTab[i + 1] - arcTab[i]) * (f - i); };
+  const wallSlope = (t) => Math.atan(Math.abs((R(Math.min(1, t + 0.01)) - R(Math.max(0, t - 0.01))) / (0.02 * H))); // rad
+  const tan40 = Math.tan((40 * Math.PI) / 180);
+  if (txt && p.textFont) {
+    const fontKey = FONTS[p.font] ? p.font : 'helvetiker';
+    let style = TEXT_STYLES[p.textStyle] ? p.textStyle : 'gestanzt';
+    if (!fontAllowsStyle(fontKey, style)) style = 'gepraegt';
+    const rule = FONT_RULES[fontKey] || { minCap: 5, capFactor: 1 };
+    textInfo.style = style;
+    // (1) Position: zu steile Wand → auf flacheren Bereich verschieben
+    let tC = Math.min(0.92, Math.max(0.08, p.textPos ?? 0.55));
+    const MAX_SLOPE = (35 * Math.PI) / 180;
+    if (wallSlope(tC) > MAX_SLOPE) {
+      let best = null;
+      for (let d = 1; d <= Math.round(0.25 * H); d++) for (const sgn of [1, -1]) {
+        const tt = tC + (sgn * d) / H;
+        if (tt < 0.1 || tt > 0.9) continue;
+        if (wallSlope(tt) <= MAX_SLOPE) { best = tt; break; }
+        if (best !== null) break;
+      }
+      if (best === null) { textInfo.disabled = true; textInfo.reason = 'An dieser Höhe ist die Wand zu stark geneigt — Gravur nicht möglich. Bitte Position oder Form ändern.'; }
+      else { tC = best; textInfo.warn = 'Position auf den flacheren Wandbereich verschoben.'; }
+    }
+    // (2) Offene Zellen / Mustertiefe an der Textstelle
+    const a = ampAt(tC);
+    if (!textInfo.disabled && isVase && p.pattern === 'skelett') {
+      textInfo.disabled = true;
+      textInfo.reason = 'Bei offenen Voronoi-Zellen ist keine Gravur möglich — anderes Muster wählen (beim Eierbecher geht es).';
+    }
+    const maxAmp = isVase ? 2.5 : 1.5; // Eierbecher: kleiner Radius, tiefe Muster schlucken die Schrift
+    if (!textInfo.disabled && a > maxAmp) {
+      textInfo.disabled = true;
+      textInfo.reason = `Gravur bei über ${String(maxAmp).replace('.', ',')} mm Mustertiefe nicht möglich — Tiefe auf ${String(maxAmp).replace('.', ',')} mm setzen oder anderes Muster wählen.`;
+    }
+    if (!textInfo.disabled) {
+      // (3) Schriftgröße: Untergrenze je Schrift, Bogen ≤ MAX_TEXT_ARC — sonst verkleinern bis minCap
+      const wanted = Math.min(12, Math.max(rule.minCap, p.textSize ?? 7));
+      let cap = wanted, field = null;
+      const rMid = R(tC);
+      for (let i = 0; i < 10; i++) {
+        field = buildGlyphField({ font: p.textFont, fallbackFont: p.fallbackFont, fontKey, text: txt, cap, style, product: p.product });
+        if (!field || field.width / rMid <= MAX_TEXT_ARC || cap <= rule.minCap + 1e-6) break;
+        cap = Math.max(rule.minCap, cap * 0.9);
+      }
+      if (!field) {
+        textInfo.disabled = true; textInfo.reason = 'Diese Zeichen gibt es in der gewählten Schrift nicht — bitte andere Schrift wählen.';
+      } else if (field.width / rMid > MAX_TEXT_ARC) {
+        const maxChars = Math.max(1, Math.floor(txt.length * (MAX_TEXT_ARC * rMid) / field.width));
+        textInfo.disabled = true; textInfo.reason = `Text zu lang für diese Vorderseite — maximal ca. ${maxChars} Zeichen in dieser Schrift.`;
+      } else {
+        textInfo.size = cap;
+        textInfo.arcDeg = (field.width / rMid) * 180 / Math.PI;
+        const warns = [];
+        if (textInfo.warn) warns.push(textInfo.warn);
+        if (cap < (p.textSize ?? 7) - 0.01 && cap < wanted - 0.01) warns.push(`Text automatisch auf ${cap.toFixed(1)} mm verkleinert, damit er auf die Vorderseite passt.`);
+        if ((p.textSize ?? 7) < rule.minCap - 0.01) warns.push(`Schrift auf ${rule.minCap} mm vergrößert, damit die feinen Striche druckbar sind.`);
+        if (field.missing) warns.push(`Zeichen „${field.missing}“ gibt es in dieser Schrift nicht.`);
+        textInfo.warn = warns.join(' ');
+        // (4) Kartusche je nach Mustertiefe: keine (≤ 0,45) · bündiges Schild (≤ 1,6) · Medaillon (≤ 2,5)
+        const hammerPlate = style === 'gehaemmert';
+        // Kartusche: keine bei glatter/feiner Fläche (a ≤ 0,45), sonst bündig knapp über den Gratspitzen;
+        // „gehämmert“ bekommt immer ein Schild (klarer Rand, gehämmerte Fläche)
+        // Kartuschen-Modus:
+        //  none   = Buchstaben direkt auf der Wand (Muster nur unter den Buchstaben geglättet) — glatte Wände,
+        //           feine Texturen und langwellige Muster (Querwellen, Hammerschlag ≤ 1,2 mm)
+        //  flush  = Muster wird um den Text über mehrere mm weich auf die mittlere Wandfläche ausgeblendet
+        //  shield = Stil „gehämmert“: erhabenes Schild mit klarem Rand (über den Gratspitzen)
+        const lowFreq = p.pattern === 'querwellen' || p.pattern === 'gehaemmert';
+        let plateMode = (a <= 0.45 || (lowFreq && a <= 1.2)) ? 'none' : 'flush';
+        if (hammerPlate) plateMode = 'shield';
+        const level = plateMode === 'shield' ? Math.max(0.6, a + 0.3) : 0;
+        let yText = tC * H;
+        const halfW = field.width / 2 + Math.max(2.5, 0.45 * cap), halfH = field.height / 2 + Math.max(1.5, 0.3 * cap);
+        const plateR = 0.6 * halfH;
+        // Übergänge: das Muster wird über mehrere mm ausgeblendet (kein Gürtel, keine Kante);
+        // die Unterkante (Fläche zeigt nach unten) zusätzlich ≤ 40° für den Druck
+        const feather = plateMode === 'none' ? 0 : plateMode === 'shield' ? 0.8 : Math.max(6.0, 4.0 * a);
+        const rampSide = feather;
+        const rampBottom = plateMode === 'none' ? 0 : Math.max(feather, (level + a) / tan40); // Unterkante: vom Tal (−a) aufs Niveau, ≤ 40°
+        const rampTop = feather;
+        // Eierbecher: Band unter dem Rand halten
+        if (!isVase) {
+          const maxY = H - 3.0 - halfH - rampTop;
+          if (yText + halfH + rampTop > H - 3.0) { yText = Math.max(halfH + rampBottom + CHAMFER + 1, maxY); tC = yText / H; textInfo.warn = (textInfo.warn + ' Position unter den Rand verschoben.').trim(); }
+        }
+        const sText = sArc(yText);
+        relief = { yText, tC, sText, field, style, cap, plateMode, level, a, halfW, halfH, plateR, rampSide, rampBottom, rampTop,
+          y0: Math.max(CHAMFER + 0.6, yText - halfH - rampBottom - 0.4),
+          y1: Math.min(H - 0.6, yText + halfH + rampTop + 0.4) };
+      }
+    }
+  }
+  // Hammerschlag-Textur der Kartusche (Stil „gehämmert“): nur auf der Platte, mit glattem Halo um die Schrift
+  const plateDent = relief && relief.style === 'gehaemmert' && p.pattern !== 'gehaemmert' ? (() => {
+    const lam = 2.6, n = Math.max(8, Math.round((2 * Math.PI * R(relief.tC)) / lam));
     return (theta, y) => (0.9 - hammerField(theta, y, n, lam)) / 1.9; // 0 = Grat, 1 = tiefste Delle
   })() : null;
   const reliefAt = (theta, y) => {
-    const d = ((theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; // −π..π
-    const u = relief.rMid * d, v = y - relief.yText;
-    // Platte: abgerundetes Rechteck (SDF), weicher Rand über plateRamp (≤ ~45° am Druck)
-    const qx = Math.abs(u) - (relief.plateHalfW - relief.plateR), qy = Math.abs(v) - (relief.plateHalfH - relief.plateR);
-    const sd = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - relief.plateR;
-    const plate = 1 - smoothstep(-relief.plateRamp, 0, sd);
-    if (plate <= 0) return { plate: 0, m: 0, h: 0 };
-    const m = relief.mask.sample(u, v);
-    let h = relief.depth;
-    if (m > 0 && letterDent) h -= 0.4 * letterDent(theta, y);
-    return { plate, m, h: m * h };
+    const t = y / H;
+    const dth = ((theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; // −π..π
+    const u = R(t) * dth, v = sArc(y) - relief.sText;
+    let plate = 0;
+    if (relief.plateMode !== 'none') {
+      const sd = roundedRectSDF(u, v, relief.halfW, relief.halfH, relief.plateR);
+      // Rampenbreite: unten (v < 0) rampBottom, oben rampTop, seitlich rampSide — weich gemischt
+      const kb = smoothstep(0.35, 0.85, Math.max(0, -v) / relief.halfH), kt = smoothstep(0.35, 0.85, Math.max(0, v) / relief.halfH);
+      const ramp = relief.rampSide + (relief.rampBottom - relief.rampSide) * kb + (relief.rampTop - relief.rampSide) * kt;
+      const x = Math.min(1, Math.max(0, 1 - sd / ramp)); // sd ≤ 0 (innen) → 1, sd = ramp → 0
+      plate = x * x * x * (x * (x * 6 - 15) + 10); // smootherstep
+      if (plate <= 0) return { plate: 0, h: 0, tex: 0 };
+    }
+    const h = relief.field.sample(u, v);
+    let tex = 0;
+    if (plateDent && plate > 0) {
+      const d = relief.field.dist(u, v);
+      tex = -0.42 * plateDent(theta, y) * smoothstep(0.0, 0.15, d); // Dellen bis direkt an die Buchstabenflanke (kein Halo)
+    }
+    return { plate, h, tex };
   };
-  // Gesamtversatz: Muster unter der Platte ausblenden, Platte auf Grathöhe legen, Relief drauf
+  // Gesamtversatz: Muster unter der Platte ausblenden, Platte auf Niveau, Relief drauf
   const surface = (theta, t, y) => {
     const base = offset(theta, t);
     if (!relief || y < relief.y0 || y > relief.y1) return base;
-    const { plate, h } = reliefAt(theta, y);
+    const { plate, h, tex } = reliefAt(theta, y);
+    if (relief.plateMode === 'none') {
+      const s = Math.min(1, Math.abs(h) / Math.abs(relief.field.depth)); // Muster unter den Buchstaben glätten
+      return base * (1 - s) + h;
+    }
     if (plate <= 0) return base;
-    const level = Math.min(1.5, 0.8 * ampAt(t)); // Plattenhöhe ≈ Gratspitzen (bei tiefen Lamellen begrenzt)
-    return base * (1 - plate) + level * plate + h;
+    return base * (1 - plate) + (relief.level + tex) * plate + h;
   };
+  const wallR = (theta, y) => R(y / H) + surface(theta, y / H, y);
   // Feinraster nur im Textband: Ringe alle ~0,2 mm, Umfang in ~0,2-mm-Schritten
   // (Vielfaches der Rippenzahl → Grate bleiben auf Vertices). Übergang zu den
   // gröberen Ringen per Reißverschluss-Vernähung in revolve().
-  const fineStep = q >= 0.9 ? 0.2 : 0.3;
+  const fineStep = q >= 0.9 ? 0.12 : 0.2;
   const RS_T = relief
-    ? Math.min(2600, ribs * Math.max(perRib, Math.ceil((2 * Math.PI * relief.rMid) / fineStep / ribs)))
+    ? Math.min(2600, ribs * Math.max(perRib, Math.ceil((2 * Math.PI * R(relief.tC)) / fineStep / ribs)))
     : RS;
 
   // --- Stationen: Kontur von Bodenmitte → außen hoch → Rand → innen → Achse
@@ -526,18 +520,22 @@ export function buildModel(params) {
   const wallYs = [];
   for (let i = 0; i <= WALL_STEPS; i++) wallYs.push(CHAMFER + (i / WALL_STEPS) * (H - CHAMFER));
   if (relief) {
+    // Feine Zeilen (fineStep) nur im Textkasten ±0,8 mm, Rampenzeilen gröber (0,45 mm)
     const kept = wallYs.filter((y) => y < relief.y0 - 1e-6 || y > relief.y1 + 1e-6);
-    const nFine = Math.max(2, Math.ceil((relief.y1 - relief.y0) / fineStep));
-    for (let i = 0; i <= nFine; i++) kept.push(relief.y0 + (i / nFine) * (relief.y1 - relief.y0));
-    kept.sort((a, b) => a - b);
-    wallYs.length = 0; wallYs.push(...kept);
+    const tb0 = Math.max(relief.y0, relief.yText - relief.field.height / 2 - 0.8), tb1 = Math.min(relief.y1, relief.yText + relief.field.height / 2 + 0.8);
+    const addRows = (a, b, step) => { const n = Math.max(1, Math.ceil((b - a) / step)); for (let i = 0; i <= n; i++) kept.push(a + (i / n) * (b - a)); };
+    if (tb0 > relief.y0 + 1e-6) addRows(relief.y0, tb0, 0.45);
+    addRows(tb0, tb1, fineStep);
+    if (tb1 < relief.y1 - 1e-6) addRows(tb1, relief.y1, 0.45);
+    const uniq = [...new Set(kept.map((y) => +y.toFixed(5)))].sort((a, b) => a - b);
+    wallYs.length = 0; wallYs.push(...uniq);
   }
   for (const y of wallYs) {
     const t = y / H;
     const inBand = relief && y >= relief.y0 - 1e-6 && y <= relief.y1 + 1e-6;
     stations.push(
       (ampAt(t) > 1e-4 || inBand)
-        ? { y, rFn: (theta) => R(t) + surface(theta, t, y), rot: isQuer ? 0 : p.pattern === 'koralle' ? -(flowPhase(t) * 0.22 + 0.16 * Math.sin(2 * Math.PI * t - 0.8)) : -flowPhase(t), rs: inBand ? RS_T : RS }
+        ? { y, rFn: (theta) => R(t) + surface(theta, t, y), rot: isQuer ? 0 : p.pattern === 'koralle' ? -(flowPhase(t) * 0.22 + 0.16 * Math.sin(2 * Math.PI * t - 0.8)) : -flowPhase(t), rs: inBand ? RS_T : RS, band: !!inBand }
         : { y, r: R(t) }
     );
   }
@@ -575,13 +573,15 @@ export function buildModel(params) {
   const openCells = isVase && p.pattern === 'skelett';
   let geometry = openCells
     ? buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality:q,exportRes:!!p.exportRes,surface,
-        text:txt,textSize:textInfo.size,textPos:p.textPos ?? .55})
+        band: relief ? { y0: relief.y0, y1: relief.y1, step: fineStep,
+          patch: (theta, y) => { const dth = ((theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; return roundedRectSDF(R(y / H) * dth, sArc(y) - relief.sText, relief.halfW + 1.5, relief.halfH + 1.5, relief.plateR); } } : null })
     : revolve(stations, RS);
+  if (relief && !openCells && geometry.userData.bandRanges) bandNormals(geometry, wallR);
   // Facettierte/durchbrochene Muster: Kanten scharf schattieren (Grate zwischen Dellen/Facetten, Lochränder),
   // Flächen dazwischen glatt. Weiche Vertex-Normalen würden die Kanten verschmieren — das sieht „unscharf“ aus.
   // (p.rawIndexed: Topologie-Tools brauchen die indizierte Geometrie.)
   if (!p.rawIndexed && (p.pattern === 'gehaemmert' || p.pattern === 'zickzack' || openCells)) {
-    geometry = creaseNormals(geometry, p.pattern === 'gehaemmert' ? 26 : openCells ? 30 : 22);
+    geometry = creaseNormals(geometry, p.pattern === 'gehaemmert' ? 26 : openCells ? 30 : 22, geometry.userData.bandRanges);
   }
 
   return {
@@ -615,8 +615,11 @@ export const buildEggcup = buildModel;
 // Kantenerhaltende Normalen: pro Dreiecksecke werden nur Nachbarflächen gemittelt, deren
 // Normale um weniger als `creaseDeg` abweicht. Ergebnis ist eine nicht-indizierte Geometrie
 // (gleiche Dreiecke, gleiche STL) mit scharfen Graten und glatten Flächen dazwischen.
-export function creaseNormals(geometry, creaseDeg = 26) {
+export function creaseNormals(geometry, creaseDeg = 26, keepRanges = null) {
   const pos = geometry.getAttribute('position').array;
+  const keepNor = keepRanges && geometry.getAttribute('normal') ? geometry.getAttribute('normal').array : null;
+  const keep = new Uint8Array(pos.length / 3);
+  if (keepRanges) for (const [st, n] of keepRanges) keep.fill(1, st, st + n);
   const idx = geometry.index ? geometry.index.array : null;
   const triCount = idx ? idx.length / 3 : pos.length / 9;
   const vCount = pos.length / 3;
@@ -653,7 +656,8 @@ export function creaseNormals(geometry, creaseDeg = 26) {
       const sl = Math.hypot(sx, sy, sz) || 1;
       const o = t * 9 + k * 3;
       outPos[o] = pos[v * 3]; outPos[o + 1] = pos[v * 3 + 1]; outPos[o + 2] = pos[v * 3 + 2];
-      outNor[o] = sx / sl; outNor[o + 1] = sy / sl; outNor[o + 2] = sz / sl;
+      if (keepNor && keep[v]) { outNor[o] = keepNor[v * 3]; outNor[o + 1] = keepNor[v * 3 + 1]; outNor[o + 2] = keepNor[v * 3 + 2]; }
+      else { outNor[o] = sx / sl; outNor[o + 1] = sy / sl; outNor[o + 2] = sz / sl; }
     }
   }
   const out = new THREE.BufferGeometry();
@@ -693,6 +697,7 @@ function revolve(stations, RS) {
   const ringStart = [];
   const ringN = [];   // Segmente je Ring (Textband feiner)
   const pointIdx = [];
+  const bandRanges = []; // [startIndex, count] der Textband-Ringe → analytische Normalen
   for (const st of stations) {
     if (st.r === 0 && !st.rFn) {
       pointIdx.push(positions.length / 3);
@@ -701,6 +706,7 @@ function revolve(stations, RS) {
     } else {
       const n = st.rs || RS;
       ringStart.push(positions.length / 3); ringN.push(n);
+      if (st.band) bandRanges.push([positions.length / 3, n]);
       pointIdx.push(-1);
       for (let j = 0; j < n; j++) {
         const theta = (j / n) * Math.PI * 2 + (st.rot || 0); // Ring folgt dem Muster-Verlauf
@@ -734,7 +740,31 @@ function revolve(stations, RS) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
+  if (bandRanges.length) geometry.userData.bandRanges = bandRanges;
   return geometry;
+}
+
+// Analytische Normalen im Textband: aus dem Wandradius r(θ, y) per zentraler Differenz (ε = 0,04 mm).
+// Damit bleiben Buchstabenkanten scharf, unabhängig von der Ringauflösung (keine gemittelten Normalen).
+function bandNormals(geometry, wallR) {
+  const pos = geometry.getAttribute('position').array;
+  const nor = geometry.getAttribute('normal').array;
+  const EPS = 0.1;
+  for (const [start, count] of geometry.userData.bandRanges) {
+    for (let k = 0; k < count; k++) {
+      const i = (start + k) * 3;
+      const x = pos[i], y = pos[i + 1], z = pos[i + 2];
+      const r = Math.hypot(x, z) || 1e-6, theta = Math.atan2(x, z);
+      const dth = EPS / r;
+      const dr_du = (wallR(theta + dth, y) - wallR(theta - dth, y)) / (2 * EPS);
+      const dr_dy = (wallR(theta, y + EPS) - wallR(theta, y - EPS)) / (2 * EPS);
+      // n = r̂ − (∂r/∂u)·t̂ − (∂r/∂y)·ŷ   mit r̂ = (sinθ,0,cosθ), t̂ = (cosθ,0,−sinθ)
+      let nx = Math.sin(theta) - dr_du * Math.cos(theta), ny = -dr_dy, nz = Math.cos(theta) + dr_du * Math.sin(theta);
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nor[i] = nx / l; nor[i + 1] = ny / l; nor[i + 2] = nz / l;
+    }
+  }
+  geometry.getAttribute('normal').needsUpdate = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -845,7 +875,7 @@ export function bendTextOntoCup(textGeo, info, textPos = 0.55) {
   return { arc: wdt / rMid, depth };
 }
 
-/** Maximale Textbreite (Bogen ≤ 55 % des Umfangs) — für UI-Feedback. */
+/** Maximale Textbreite als Bogen (144°) — für UI-Feedback. */
 export function maxTextArc() {
-  return Math.PI * 1.1;
+  return MAX_TEXT_ARC;
 }

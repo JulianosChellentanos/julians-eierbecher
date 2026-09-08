@@ -235,13 +235,19 @@ function discountFor(product, qty) {
   for (const t of tiers) if (qty >= t.qty && t.off > off) off = t.off;
   return off;
 }
+// Gravur-Regel (Spiegel der Geometrie): bei Lamellen/Fjordwelle über 2,5 mm Tiefe gibt es keine Gravur
+function gravurAllowed(c) {
+  const depth = +c?.depth || 0;
+  if ((c?.pattern === 'lamellen' || c?.pattern === 'koralle') && depth > 2.5) return false;
+  return true;
+}
 function priceItem(item) {
   const p = settings.pricing[item.product];
   if (!p) throw new Error('Unbekanntes Produkt');
   const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
   let unit = p.single;
   if (item.product === 'eierbecher' && item.saucer) unit += p.untersetzer;
-  if (String(item.config?.text || '').trim()) unit += settings.pricing.gravur || 0;
+  if (String(item.config?.text || '').trim() && gravurAllowed(item.config)) unit += settings.pricing.gravur || 0;
   unit += volumeSurcharge(item.product, item.config, p.single);
   unit = Math.round(unit * 100) / 100;
   const off = discountFor(item.product, qty);

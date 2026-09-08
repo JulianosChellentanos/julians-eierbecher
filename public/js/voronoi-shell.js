@@ -20,7 +20,7 @@ export function cellDistance(theta,y,n,spacing){
 /** Zellen um den Umfang: aus dem Anzahl-Regler, aber Teilung ≤ ~25 mm (sonst waagerechte Zelldecken > 30 mm = unstützbare Brücken) */
 export const cellCount=(ribs,rMax)=>Math.min(20,Math.max(Math.ceil(2*Math.PI*rMax/25),Math.round(ribs/4)));
 
-export function buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality,exportRes=false,surface,text,textSize,textPos}){
+export function buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality,exportRes=false,surface,band=null}){
  const n=cellCount(ribs,rMax||R(.5));
  // Isotropes Raster: Vorschau ≈ 0,55 mm, Export ≈ 0,32 mm (Lochränder ohne Treppen; Mobile über quality gröber)
  const step=(exportRes?0.38:0.55)/Math.max(0.4,Math.min(1,quality));
@@ -34,16 +34,21 @@ export function buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality,exp
   let f=web-cellDistance(theta+flowPhase(t)*.18,y,n,spacing);
   // Stable unperforated foot and rim. No detached cells at either end.
   f=Math.max(f,(6-y)/spacing,(y-(H-5))/spacing);
-  if(text){
-   const angle=Math.atan2(Math.sin(theta),Math.cos(theta));
-   const half=Math.min(Math.PI,(text.length*textSize*.38+5)/R(textPos));
-   const patch=Math.min((half-Math.abs(angle))*.4,(textSize*.8+4-Math.abs(y-H*textPos))/spacing);
-   f=Math.max(f,patch);
+  if(band){ // Gravur: massiver, abgerundeter Patch (Platten-SDF) — Schrift sitzt auf Material, nicht über Löchern
+   f=Math.max(f,-band.patch(theta,y)/spacing*.4);
   }
   return Math.abs(f)<1e-7?1e-7:f;
  };
- for(let j=0;j<=ny;j++)for(let i=0;i<nx;i++){
-  const theta=i/nx*2*Math.PI,y=floor+j/ny*(H-floor);
+ const ys=[];for(let j=0;j<=ny;j++)ys.push(floor+j/ny*(H-floor));
+ if(band){ // Textband: Zeilen alle band.step mm (feine Buchstabenkanten), außerhalb bleibt das Raster
+  const kept=ys.filter(y=>y<band.y0-1e-6||y>band.y1+1e-6);
+  const nFine=Math.max(2,Math.ceil((band.y1-band.y0)/band.step));
+  for(let i=0;i<=nFine;i++)kept.push(band.y0+(i/nFine)*(band.y1-band.y0));
+  kept.sort((a,b)=>a-b);ys.length=0;ys.push(...kept);
+ }
+ const nyL=ys.length-1;
+ for(let j=0;j<=nyL;j++)for(let i=0;i<nx;i++){
+  const theta=i/nx*2*Math.PI,y=ys[j];
   verts.push({theta,y,f:field(theta,y)});
  }
  const cut=(ia,ib)=>{
@@ -59,7 +64,7 @@ export function buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality,exp
   for(let k=0;k<3;k++){const a=ids[k],b=ids[(k+1)%3];if(verts[a].f>=0)out.push(a);if((verts[a].f>=0)!==(verts[b].f>=0))out.push(cut(a,b));}
   for(let k=1;k<out.length-1;k++)triangles.push([out[0],out[k],out[k+1]]);
  };
- for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+ for(let j=0;j<nyL;j++)for(let i=0;i<nx;i++){
   const a=j*nx+i,b=j*nx+(i+1)%nx,c=(j+1)*nx+i,d=(j+1)*nx+(i+1)%nx;
   clip([a,b,c]);clip([b,d,c]);
  }

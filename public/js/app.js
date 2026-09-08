@@ -5,7 +5,7 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
   buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
-  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, TEXT_STYLES, isIntegratedTextStyle,
+  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, TEXT_STYLES, FONT_RULES, fontAllowsStyle, isIntegratedTextStyle,
 } from './geometry.js';
 import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
@@ -100,14 +100,18 @@ function renderPrices() {
   renderHeroHint();
   const pp = getPricing().products[state.product];
   const size = volumeSurcharge(state.product, { height: state.height, width: state.width });
-  animateMoney($('#price'), pp.single + size, fmt);
-  animateMoney($('#mb-price'), pp.single + size, fmt);
-  setMobilePrice(undefined, size > 0 ? `inkl. ${fmt(size)} Größe` : 'pro Stück');
+  // Gravur-Aufpreis nur, wenn Text da ist UND die Gravur nicht per Regel deaktiviert wurde (Server rechnet identisch)
+  const gravur = (state.text.trim() && !currentInfo?.text?.disabled) ? (getPricing().gravur ?? 3) : 0;
+  const total = pp.single + size + gravur;
+  animateMoney($('#price'), total, fmt);
+  animateMoney($('#mb-price'), total, fmt);
+  const extras = [size > 0 ? `inkl. ${fmt(size)} Größe` : '', gravur > 0 ? `inkl. ${fmt(gravur)} Gravur` : ''].filter(Boolean).join(' · ');
+  setMobilePrice(undefined, extras || 'pro Stück');
   $('#price-hint').textContent = discountTeaser(state.product);
   const badge = $('#price-size');
   if (size > 0) {
     badge.hidden = false;
-    badge.textContent = `inkl. ${fmt(size)} Größenaufschlag (XL-Format = mehr Filament & Druckzeit)`;
+    badge.textContent = `inkl. ${fmt(size)} Größenaufschlag (XL-Format = mehr Filament & Druckzeit)${gravur > 0 ? ` · ${fmt(gravur)} Gravur` : ''}`;
   } else {
     badge.hidden = true;
   }
@@ -429,15 +433,18 @@ const loadedFonts = {};
 let fontLoadId = 0;
 function rebuild() {
   // Relief-Gravur braucht die Schrift schon beim Wandaufbau — nachladen und dann neu bauen
-  let textFont;
-  if (state.text.trim() && isIntegratedTextStyle(state.textStyle)) {
-    textFont = loadedFonts[state.font];
-    if (!textFont) {
+  let textFont, fallbackFont;
+  if (state.text.trim()) {
+    textFont = loadedFonts[state.font]; fallbackFont = loadedFonts.droid_sans;
+    if (!textFont || !fallbackFont) {
       const myId = ++fontLoadId;
-      loadFont(state.font).then((f) => { loadedFonts[state.font] = f; if (myId === fontLoadId) rebuild(); }).catch(() => {});
+      Promise.all([loadFont(state.font), loadFont('droid_sans')]).then(([f, fb]) => {
+        loadedFonts[state.font] = f; loadedFonts.droid_sans = fb;
+        if (myId === fontLoadId) rebuild();
+      }).catch(() => {});
     }
   }
-  const { geometry, info } = buildModel({ ...state, customPoints: customByProduct[state.product], textFont });
+  const { geometry, info } = buildModel({ ...state, customPoints: customByProduct[state.product], textFont, fallbackFont });
   currentInfo = info;
   if (!cupMesh) {
     cupMesh = new THREE.Mesh(geometry, material);
@@ -477,51 +484,27 @@ function rebuild() {
 
 let textBuildId = 0;
 async function rebuildText() {
-  const myId = ++textBuildId;
-  if (textMesh) {
-    cupGroup.remove(textMesh);
-    textMesh.geometry.dispose();
-    textMesh = null;
-  }
+  // Alle Gravur-Stile sind Teil der Wand (siehe rebuild) — hier nur Status & Hinweise.
+  if (textMesh) { cupGroup.remove(textMesh); textMesh.geometry.dispose(); textMesh = null; }
   const txt = state.text.trim();
-  $('#text-warn').textContent = '';
+  const warn = $('#text-warn'); warn.textContent = ''; warn.classList.remove('err');
+  const opts = $('#gravur-options'); opts.classList.remove('disabled');
+  $('#text-fix')?.remove();
   if (!txt || !currentInfo) return;
-  if (isIntegratedTextStyle(state.textStyle)) { // Relief ist Teil der Wand (siehe rebuild)
-    $('#text-warn').textContent = currentInfo.text?.warn || '';
+  const ti = currentInfo.text || {};
+  renderPrices(); // Gravur-Aufpreis hängt davon ab, ob die Gravur aktiv ist
+  if (ti.disabled) {
+    warn.textContent = '⛔ ' + (ti.reason || 'Gravur hier nicht möglich.');
+    warn.classList.add('err');
+    opts.classList.add('disabled');
+    if (/Mustertiefe/.test(ti.reason || '')) {
+      const b = document.createElement('button'); b.id = 'text-fix'; b.className = 'linkbtn'; b.textContent = 'Tiefe auf 2,5 mm setzen';
+      b.addEventListener('click', () => { state.depth = 2.5; $('#s-depth').value = 2.5; $('#s-depth-val').textContent = '2.5 mm'; sliderFill($('#s-depth')); rebuild(); });
+      warn.appendChild(document.createTextNode(' ')); warn.appendChild(b);
+    }
     return;
   }
-
-  let font;
-  try {
-    font = await loadFont(state.font);
-  } catch {
-    $('#text-warn').textContent = 'Schrift konnte nicht geladen werden.';
-    return;
-  }
-  if (myId !== textBuildId) return; // inzwischen neuer Aufruf
-
-  const depth = currentInfo.ampAt(state.textPos) + 2.0;
-  let size = state.textSize;
-  let geo, result;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    geo = new TextGeometry(txt, { font, size, height: depth, curveSegments: 6, bevelEnabled: false });
-    result = bendTextOntoCup(geo, currentInfo, state.textPos);
-    if (result.arc <= maxTextArc()) break;
-    geo.dispose();
-    size *= 0.88;
-  }
-  if (result.arc > maxTextArc()) {
-    $('#text-warn').textContent = 'Text zu lang — bitte kürzen.';
-    geo.dispose();
-    return;
-  }
-  if (size < state.textSize - 0.01) {
-    $('#text-warn').textContent = `Text automatisch auf ${size.toFixed(1)} mm verkleinert.`;
-  }
-  textMesh = new THREE.Mesh(geo, material);
-  textMesh.castShadow = true;
-  textMesh.position.y = saucerLift();
-  cupGroup.add(textMesh);
+  warn.textContent = ti.warn || '';
 }
 
 const debounce = (fn, ms) => {
@@ -530,8 +513,7 @@ const debounce = (fn, ms) => {
 const rebuildSoon = debounce(rebuild, 60);
 const rebuildBodySoon = debounce(rebuild, 160);
 // Relief-Stile leben in der Wand → Körper neu bauen; aufgesetzter Text → nur Text
-const rebuildTextSoon = (...a) => (isIntegratedTextStyle(state.textStyle) ? rebuildBodySoon() : debouncedText(...a));
-const debouncedText = debounce(rebuildText, 120);
+const rebuildTextSoon = () => rebuildBodySoon();
 
 // ---------------------------------------------------------------------------
 // Silhouetten (SVG) für Preset-Buttons & Formen-Editor
@@ -718,28 +700,39 @@ function renderFontRow() {
   $('#font-row').innerHTML = Object.entries(FONTS).map(([id, f]) => `
     <button class="font-chip font-${id}" data-font="${id}"><span>Aa</span><small>${f.label}</small></button>`).join('');
   $$('.font-chip').forEach((b) => b.addEventListener('click', () => {
+    if (b.disabled) return;
     state.font = b.dataset.font;
     markActiveFont();
-    rebuildTextSoon();
+    rebuild();
   }));
   markActiveFont();
 }
 function markActiveFont() {
-  $$('.font-chip').forEach((x) => x.classList.toggle('active', x.dataset.font === state.font));
-  $$('.style-chip').forEach((x) => x.classList.toggle('active', x.dataset.style === state.textStyle));
-  const st = TEXT_STYLES[state.textStyle] || TEXT_STYLES.gepraegt;
+  $$('.font-chip').forEach((x) => {
+    x.classList.toggle('active', x.dataset.font === state.font);
+    const ok = fontAllowsStyle(x.dataset.font, state.textStyle);
+    x.disabled = !ok; x.title = ok ? (FONTS[x.dataset.font]?.label || '') : 'Diese Schrift ist zu fein für diesen Stil';
+  });
+  $$('.style-chip').forEach((x) => {
+    x.classList.toggle('active', x.dataset.style === state.textStyle);
+    const ok = fontAllowsStyle(state.font, x.dataset.style);
+    x.disabled = !ok; if (!ok) x.title = 'Dieser Stil braucht eine kräftigere Schrift';
+  });
+  const st = TEXT_STYLES[state.textStyle] || TEXT_STYLES.gestanzt;
   $('#style-hint').textContent = `${st.label}: ${st.hint}`;
+  // Schriftgröße = Großbuchstabenhöhe; Untergrenze je Schrift (feine Schriften brauchen mehr Höhe)
+  const minCap = FONT_RULES[state.font]?.minCap ?? 5;
+  const sl = $('#s-textsize'); sl.min = minCap;
+  if (state.textSize < minCap) { state.textSize = minCap; sl.value = minCap; $('#s-textsize-val').textContent = `${minCap} mm`; sliderFill(sl); }
 }
-const STYLE_ICONS = { gepraegt: '🔤', gehaemmert: '🔨', gestanzt: '🪙' };
 function renderStyleRow() {
   $('#style-row').innerHTML = Object.entries(TEXT_STYLES).map(([id, st]) => `
-    <button class="style-chip" data-style="${id}" title="${st.hint}"><span class="sc-ic">${STYLE_ICONS[id] || '✒️'}</span>${st.label}</button>`).join('');
+    <button class="style-chip" data-style="${id}" title="${st.hint}"><span class="sc-ic">${st.icon || '✒️'}</span>${st.label}</button>`).join('');
   $$('.style-chip').forEach((b) => b.addEventListener('click', () => {
-    const was = isIntegratedTextStyle(state.textStyle);
+    if (b.disabled) return;
     state.textStyle = b.dataset.style;
     markActiveFont();
-    // Wechsel zwischen Relief und aufgesetzt: Körper UND Text neu
-    if (was || isIntegratedTextStyle(state.textStyle)) rebuild(); else rebuildText();
+    rebuild();
   }));
 }
 
@@ -838,10 +831,9 @@ function initControls() {
   $('#c-gravur').addEventListener('change', (e) => {
     $('#gravur-options').hidden = !e.target.checked;
     if (!e.target.checked) {
-      const wasRelief = isIntegratedTextStyle(state.textStyle) && state.text.trim();
       state.text = '';
       $('#i-text').value = '';
-      if (wasRelief) rebuild(); else rebuildText();
+      rebuild();
     } else {
       $('#i-text').focus();
     }
@@ -902,8 +894,10 @@ function stlFilename() {
 
 function currentConfig() {
   const { color, colorName, colorHex, quality, ...rest } = state;
+  const textActive = !(currentInfo?.text?.disabled);
   return {
     ...rest,
+    text: textActive ? rest.text : '', // deaktivierte Gravur kommt nicht in Bestellung/Preis
     saucer: state.product === 'eierbecher' && state.saucer, // Untersetzer gibt's nur beim Eierbecher
     customPoints: customByProduct[state.product],
   };
@@ -934,7 +928,7 @@ async function applyDesign(cfg, code) {
     textSize: num('textSize', 4, 10),
     textPos: num('textPos', 0.15, 0.8),
     text: String(cfg.text || '').slice(0, 16),
-    textStyle: TEXT_STYLES[cfg.textStyle] ? cfg.textStyle : 'gepraegt',
+    textStyle: TEXT_STYLES[cfg.textStyle] ? cfg.textStyle : 'gestanzt',
     saucer: product === 'eierbecher' && !!cfg.saucer,
   });
   const col = (content.colors || []).find((c) => c.id === cfg.color);
