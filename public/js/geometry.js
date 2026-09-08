@@ -400,7 +400,7 @@ export function buildModel(params) {
       textInfo.disabled = true;
       textInfo.reason = 'Bei offenen Voronoi-Zellen ist keine Gravur möglich — anderes Muster wählen (beim Eierbecher geht es).';
     }
-    const maxAmp = isVase ? 2.5 : 1.5; // Eierbecher: kleiner Radius, tiefe Muster schlucken die Schrift
+    const maxAmp = isVase ? 2.5 : 2.0; // Eierbecher: kleiner Radius, tiefe Muster schlucken die Schrift
     if (!textInfo.disabled && a > maxAmp) {
       textInfo.disabled = true;
       textInfo.reason = `Gravur bei über ${String(maxAmp).replace('.', ',')} mm Mustertiefe nicht möglich — Tiefe auf ${String(maxAmp).replace('.', ',')} mm setzen oder anderes Muster wählen.`;
@@ -438,18 +438,22 @@ export function buildModel(params) {
         //           feine Texturen und langwellige Muster (Querwellen, Hammerschlag ≤ 1,2 mm)
         //  flush  = Muster wird um den Text über mehrere mm weich auf die mittlere Wandfläche ausgeblendet
         //  shield = Stil „gehämmert“: erhabenes Schild mit klarem Rand (über den Gratspitzen)
-        const lowFreq = p.pattern === 'querwellen' || p.pattern === 'gehaemmert';
-        let plateMode = (a <= 0.45 || (lowFreq && a <= 1.2)) ? 'none' : 'flush';
+        // Querwellen: Feld folgt dem lokalen Wellenniveau der Textmitte (kein Plaque-Schnitt durch die Welle);
+        // gehämmerte Wand: Buchstaben direkt auf den Dellen (Dellen unter den Buchstaben geglättet), tiefer geprägt
+        const followWave = p.pattern === 'querwellen';
+        let plateMode = (a <= 0.45 || (p.pattern === 'gehaemmert' && a <= 1.2)) ? 'none' : 'flush';
         if (hammerPlate) plateMode = 'shield';
-        const level = plateMode === 'shield' ? Math.max(0.6, a + 0.3) : 0;
+        // shield: Muster wird wie bei flush ausgeblendet, das Schild sitzt erhaben (0,6 mm) auf dem geglätteten Feld
+        const level = plateMode === 'shield' ? 0.6 : 0;
         let yText = tC * H;
         const halfW = field.width / 2 + Math.max(2.5, 0.45 * cap), halfH = field.height / 2 + Math.max(1.5, 0.3 * cap);
         const plateR = 0.6 * halfH;
         // Übergänge: das Muster wird über mehrere mm ausgeblendet (kein Gürtel, keine Kante);
         // die Unterkante (Fläche zeigt nach unten) zusätzlich ≤ 40° für den Druck
-        const feather = plateMode === 'none' ? 0 : plateMode === 'shield' ? 0.8 : Math.max(6.0, 4.0 * a);
+        const feather = plateMode === 'none' ? 0 : Math.max(6.0, 4.0 * a);   // Muster-Ausblendung außerhalb des Rechtecks
+        const rimRamp = 0.8;                                                    // Schildrand (steil, definiert)
         const rampSide = feather;
-        const rampBottom = plateMode === 'none' ? 0 : Math.max(feather, (level + a) / tan40); // Unterkante: vom Tal (−a) aufs Niveau, ≤ 40°
+        const rampBottom = plateMode === 'none' ? 0 : Math.max(feather, (level + a) / tan40);
         const rampTop = feather;
         // Eierbecher: Band unter dem Rand halten
         if (!isVase) {
@@ -457,7 +461,7 @@ export function buildModel(params) {
           if (yText + halfH + rampTop > H - 3.0) { yText = Math.max(halfH + rampBottom + CHAMFER + 1, maxY); tC = yText / H; textInfo.warn = (textInfo.warn + ' Position unter den Rand verschoben.').trim(); }
         }
         const sText = sArc(yText);
-        relief = { yText, tC, sText, field, style, cap, plateMode, level, a, halfW, halfH, plateR, rampSide, rampBottom, rampTop,
+        relief = { yText, tC, sText, field, style, cap, plateMode, level, a, halfW, halfH, plateR, rampSide, rampBottom, rampTop, rimRamp, followWave,
           y0: Math.max(CHAMFER + 0.6, yText - halfH - rampBottom - 0.4),
           y1: Math.min(H - 0.6, yText + halfH + rampTop + 0.4) };
       }
@@ -472,35 +476,47 @@ export function buildModel(params) {
     const t = y / H;
     const dth = ((theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; // −π..π
     const u = R(t) * dth, v = sArc(y) - relief.sText;
-    let plate = 0;
+    let plate = 0, shield = 0;
     if (relief.plateMode !== 'none') {
+      // Muster-Ausblendung: Rechteck + weiche Rampe außerhalb (unten länger für ≤ 40° Unterseite)
       const sd = roundedRectSDF(u, v, relief.halfW, relief.halfH, relief.plateR);
-      // Rampenbreite: unten (v < 0) rampBottom, oben rampTop, seitlich rampSide — weich gemischt
       const kb = smoothstep(0.35, 0.85, Math.max(0, -v) / relief.halfH), kt = smoothstep(0.35, 0.85, Math.max(0, v) / relief.halfH);
       const ramp = relief.rampSide + (relief.rampBottom - relief.rampSide) * kb + (relief.rampTop - relief.rampSide) * kt;
-      const x = Math.min(1, Math.max(0, 1 - sd / ramp)); // sd ≤ 0 (innen) → 1, sd = ramp → 0
+      const x = Math.min(1, Math.max(0, 1 - sd / ramp));
       plate = x * x * x * (x * (x * 6 - 15) + 10); // smootherstep
-      if (plate <= 0) return { plate: 0, h: 0, tex: 0 };
+      if (plate <= 0) return { plate: 0, shield: 0, h: 0, tex: 0 };
+      if (relief.plateMode === 'shield') {
+        // Schild: knapp innerhalb des Rechtecks, steiler definierter Rand
+        const xs = Math.min(1, Math.max(0, 1 - (sd + 0.4) / relief.rimRamp));
+        shield = xs * xs * (3 - 2 * xs);
+      }
     }
     const h = relief.field.sample(u, v);
     let tex = 0;
-    if (plateDent && plate > 0) {
+    if (plateDent && shield > 0) {
       const d = relief.field.dist(u, v);
-      tex = -0.42 * plateDent(theta, y) * smoothstep(0.0, 0.15, d); // Dellen bis direkt an die Buchstabenflanke (kein Halo)
+      tex = -0.32 * plateDent(theta, y) * smoothstep(0.08, 0.3, d) * shield; // nur ein hauchdünner glatter Saum um die Schrift
     }
-    return { plate, h, tex };
+    return { plate, shield, h, tex };
   };
   // Gesamtversatz: Muster unter der Platte ausblenden, Platte auf Niveau, Relief drauf
   const surface = (theta, t, y) => {
     const base = offset(theta, t);
     if (!relief || y < relief.y0 || y > relief.y1) return base;
-    const { plate, h, tex } = reliefAt(theta, y);
+    const { plate, shield, h, tex } = reliefAt(theta, y);
     if (relief.plateMode === 'none') {
-      const s = Math.min(1, Math.abs(h) / Math.abs(relief.field.depth)); // Muster unter den Buchstaben glätten
-      return base * (1 - s) + h;
+      // Buchstaben direkt auf der Wand: Muster unter (und 0,5 mm um) die Buchstaben glätten, Relief kräftiger
+      const t2 = y / H;
+      const dth = ((theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+      const dd = relief.field.dist(R(t2) * dth, sArc(y) - relief.sText);
+      const s = 1 - smoothstep(0.0, 0.3, dd);          // 1 in den Buchstaben, Saum 0,3 mm (kein sichtbarer Ring)
+      const boost = 1 + 0.35 * Math.min(1, relief.a);  // auf strukturierten Wänden kräftiger
+      return base * (1 - s) + h * boost;
     }
     if (plate <= 0) return base;
-    return base * (1 - plate) + (relief.level + tex) * plate + h;
+    // Feldniveau: Querwellen folgen dem Wellenniveau der Textmitte, sonst mittlere Wandfläche
+    const lvl = relief.followWave ? offset(theta, relief.tC) : 0;
+    return base * (1 - plate) + lvl * plate + (relief.level + tex) * shield + h;
   };
   const wallR = (theta, y) => R(y / H) + surface(theta, y / H, y);
   // Feinraster nur im Textband: Ringe alle ~0,2 mm, Umfang in ~0,2-mm-Schritten

@@ -17,9 +17,9 @@ export const TEXT_STYLES = {
 // Schrift-Regeln: capFactor = Großbuchstabenhöhe / Schriftgrad; minCap = kleinste druckbare Höhe;
 // styles = erlaubte Stile (dünne Schriften vertragen kein Kissen-Profil).
 export const FONT_RULES = {
-  droid_sans: { capFactor: 0.99, minCap: 5, tracking: 0.04, bold: true },
-  helvetiker: { capFactor: 1.02, minCap: 5, tracking: 0.04, bold: true },
-  optimer: { capFactor: 0.94, minCap: 6, tracking: 0.04, bold: true },
+  droid_sans: { capFactor: 0.99, minCap: 5, tracking: 0.015, bold: true },
+  helvetiker: { capFactor: 1.02, minCap: 5, tracking: 0.015, bold: true },
+  optimer: { capFactor: 0.94, minCap: 6, tracking: 0.02, bold: true },
   droid_serif: { capFactor: 0.99, minCap: 6, tracking: 0.06, bold: true, styles: ['gestanzt', 'gepraegt', 'gehaemmert'] },
   gentilis: { capFactor: 0.86, minCap: 7, tracking: 0.06, styles: ['gestanzt', 'gepraegt', 'gehaemmert'] },
   marcellus: { capFactor: 0.70, minCap: 7, tracking: 0.06, styles: ['gestanzt', 'gepraegt', 'gehaemmert'] },
@@ -194,7 +194,7 @@ export function buildGlyphField({ font, fallbackFont, fontKey, text, cap, style,
   const strokeP10 = widths.length ? widths[Math.floor(0.1 * (widths.length - 1))] : 0;
   // --- Höhenfeld mit richtungsabhängiger Fase
   const isEgg = product === 'eierbecher';
-  const Hgt = style === 'gestanzt' ? (isEgg ? 0.5 : 0.6) : style === 'kissen' ? (isEgg ? 0.7 : 0.8) : (isEgg ? 0.55 : 0.65);
+  const Hgt = style === 'gestanzt' ? (isEgg ? 0.5 : 0.6) : style === 'kissen' ? (isEgg ? 0.85 : 1.0) : (isEgg ? 0.55 : 0.65);
   const B_CRISP = style === 'kissen' ? 0.6 : 0.3;
   const B_OVER = Math.max(B_CRISP, Hgt / Math.tan((TEXT_FLANK_DEG * Math.PI) / 180));
   const sign = raised ? 1 : -1;
@@ -221,7 +221,7 @@ export function buildGlyphField({ font, fallbackFont, fontKey, text, cap, style,
     // V-Bit-Gravur) — ein flacher 0,1-mm-Boden würde vom Wandraster nur alle zwei Samples getroffen (Perlenkette)
     const w = 2 * Math.max(0, wloc[i]);
     // Kissen: Wölbung über die ganze Strichbreite (echte Kuppel), sonst nur schmale Striche runden
-    const bEff = style === 'kissen' ? Math.max(b, 0.5 * w) : Math.max(b, Math.min(0.6, 0.45 * w));
+    const bEff = style === 'kissen' ? Math.max(b, 0.6 * w) : Math.max(b, Math.min(0.6, 0.45 * w));
     const s = Math.min(1, -de / bEff);
     const prof = style === 'kissen' ? Math.sqrt(1 - (1 - s) * (1 - s)) : bEff > b + 1e-6 ? s * (2 - s) : s;
     h[i] = sign * Hgt * prof;
