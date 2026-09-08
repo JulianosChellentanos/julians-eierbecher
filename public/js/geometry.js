@@ -500,10 +500,11 @@ export function buildModel(params) {
     return { plate, shield, h, tex };
   };
   // Gesamtversatz: Muster unter der Platte ausblenden, Platte auf Niveau, Relief drauf
-  const surface = (theta, t, y) => {
+  const surface = (theta, t, y, noText = false) => {
     const base = offset(theta, t);
     if (!relief || y < relief.y0 || y > relief.y1) return base;
-    const { plate, shield, h, tex } = reliefAt(theta, y);
+    let { plate, shield, h, tex } = reliefAt(theta, y);
+    if (noText) h = 0;
     if (relief.plateMode === 'none') {
       // Buchstaben direkt auf der Wand: Muster unter (und 0,5 mm um) die Buchstaben glätten, Relief kräftiger
       const t2 = y / H;
@@ -593,6 +594,8 @@ export function buildModel(params) {
           patch: (theta, y) => { const dth = ((theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI; return roundedRectSDF(R(y / H) * dth, sArc(y) - relief.sText, relief.halfW + 1.5, relief.halfH + 1.5, relief.plateR); } } : null })
     : revolve(stations, RS);
   if (relief && !openCells && geometry.userData.bandRanges) bandNormals(geometry, wallR);
+  // Farbschrift: Einlage = Volumen zwischen Taschenboden und ungestörter Oberfläche innerhalb der Buchstaben
+  const inlay = relief && relief.style === 'farbe' && !openCells ? buildInlay(relief, H, R, surface, sArc, fineStep) : null;
   // Facettierte/durchbrochene Muster: Kanten scharf schattieren (Grate zwischen Dellen/Facetten, Lochränder),
   // Flächen dazwischen glatt. Weiche Vertex-Normalen würden die Kanten verschmieren — das sieht „unscharf“ aus.
   // (p.rawIndexed: Topologie-Tools brauchen die indizierte Geometrie.)
@@ -614,6 +617,7 @@ export function buildModel(params) {
       openingDiameter: openingDia,
       radialSegments: RS,
       text: textInfo, // Relief-Gravur: gewählter Stil, ggf. verkleinerte Größe, Warnung
+      inlay,          // Farbschrift: eigener Körper für das zweite Filament (3MF-Export), sonst null
       // Für die Text-Prägung: glatter Radius & Muster-Amplitude an Höhe t
       radiusAt: R,
       ampAt,
@@ -681,6 +685,72 @@ export function creaseNormals(geometry, creaseDeg = 26, keepRanges = null) {
   out.setAttribute('normal', new THREE.BufferAttribute(outNor, 3));
   geometry.dispose();
   return out;
+}
+
+// Einlage für die Farbschrift: Raster über dem Textkasten, per Dreiecks-Clipping auf die Buchstaben
+// beschnitten (Höhe h < 0 = Tasche); Oberhaut = ungestörte Wand, Unterhaut = Taschenboden, Seitenwände
+// entlang der Schnittkanten. Ergebnis ist ein eigener manifold Körper, der die Tasche exakt füllt.
+function buildInlay(relief, H, R, surface, sArc, step) {
+  const rMid = R(relief.tC);
+  const halfArc = (relief.field.width / 2 + 1.5) / rMid;
+  const y0 = Math.max(relief.y0, relief.yText - relief.field.height / 2 - 1.2), y1 = Math.min(relief.y1, relief.yText + relief.field.height / 2 + 1.2);
+  const nx = Math.max(8, Math.ceil((2 * halfArc * rMid) / step)), ny = Math.max(4, Math.ceil((y1 - y0) / step));
+  const verts = []; // { theta, y, f }  f = Taschentiefe (> 0 innerhalb der Buchstaben)
+  const depthAt = (theta, y) => { const t = y / H; return surface(theta, t, y, true) - surface(theta, t, y); };
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
+    const theta = -halfArc + (i / nx) * 2 * halfArc, y = y0 + (j / ny) * (y1 - y0);
+    verts.push({ theta, y, f: depthAt(theta, y) - 0.02 }); // 0,02 mm Schwelle: keine Nullflächen
+  }
+  const cuts = new Map(), tris = [];
+  const cut = (ia, ib) => {
+    const key = ia < ib ? `${ia}:${ib}` : `${ib}:${ia}`;
+    if (cuts.has(key)) return cuts.get(key);
+    const a = verts[ia], b = verts[ib], t = Math.max(0.001, Math.min(0.999, a.f / (a.f - b.f)));
+    const id = verts.length;
+    verts.push({ theta: a.theta + (b.theta - a.theta) * t, y: a.y + (b.y - a.y) * t, f: 0 });
+    cuts.set(key, id); return id;
+  };
+  const clip = (ids) => {
+    const out = [];
+    for (let k = 0; k < 3; k++) {
+      const a = ids[k], b = ids[(k + 1) % 3];
+      if (verts[a].f > 0) out.push(a);
+      if ((verts[a].f > 0) !== (verts[b].f > 0)) out.push(cut(a, b));
+    }
+    for (let k = 1; k < out.length - 1; k++) tris.push([out[0], out[k], out[k + 1]]);
+  };
+  const W = nx + 1;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const a = j * W + i, b = j * W + i + 1, c = (j + 1) * W + i, d = (j + 1) * W + i + 1;
+    clip([a, b, c]); clip([b, d, c]);
+  }
+  if (!tris.length) return null;
+  const positions = [], indices = [], pair = new Map(), edges = new Map();
+  const point = (theta, y, r) => { positions.push(Math.sin(theta) * r, y, Math.cos(theta) * r); return positions.length / 3 - 1; };
+  const skins = (id) => {
+    if (pair.has(id)) return pair.get(id);
+    const v = verts[id], t = v.y / H;
+    const top = point(v.theta, v.y, R(t) + surface(v.theta, t, v.y, true));
+    const bottom = point(v.theta, v.y, R(t) + Math.min(surface(v.theta, t, v.y), surface(v.theta, t, v.y, true) - 0.02));
+    const pr = [top, bottom]; pair.set(id, pr); return pr;
+  };
+  for (const tri of tris) {
+    const [a, b, c] = tri.map(skins);
+    indices.push(a[0], b[0], c[0], c[1], b[1], a[1]); // Oberhaut nach außen, Unterhaut nach innen
+    for (let k = 0; k < 3; k++) {
+      const u = tri[k], v = tri[(k + 1) % 3], key = u < v ? `${u}:${v}` : `${v}:${u}`;
+      if (edges.has(key)) edges.delete(key); else edges.set(key, [u, v]);
+    }
+  }
+  for (const [u, v] of edges.values()) { // Seitenwände entlang der Buchstabenkontur
+    const a = skins(u), b = skins(v);
+    indices.push(b[0], a[0], a[1], b[0], a[1], b[1]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
 }
 
 // Reißverschluss zwischen zwei geschlossenen Ringen unterschiedlicher Auflösung:

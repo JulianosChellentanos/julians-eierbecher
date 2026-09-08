@@ -19,7 +19,7 @@ const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
-  '.woff2': 'font/woff2', '.stl': 'model/stl', '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2', '.stl': 'model/stl', '.3mf': 'model/3mf', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.hdr': 'application/octet-stream',
   '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json; charset=utf-8',
@@ -124,7 +124,7 @@ const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2)
 const DESIGNS_FILE = path.join(DATA, 'designs.json');
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // ohne I/L/O/0/1 (verwechselbar)
 const DESIGN_KEYS = ['product', 'preset', 'height', 'width', 'pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves',
-  'text', 'textSize', 'textPos', 'font', 'textStyle', 'saucer', 'customPoints', 'color'];
+  'text', 'textSize', 'textPos', 'font', 'textStyle', 'textColor', 'saucer', 'customPoints', 'color'];
 let designs = {};
 function loadDesigns() {
   try { designs = JSON.parse(readFileSync(DESIGNS_FILE, 'utf8')); } catch { designs = {}; }
@@ -319,7 +319,7 @@ function itemLabel(it) {
   const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen', lamellen: 'Lamellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' }[c.pattern] || c.pattern;
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
-    (c.text ? ` · Gravur „${c.text}“${c.textStyle === 'gehaemmert' ? ' (gehämmert)' : c.textStyle === 'gestanzt' ? ' (gestanzt)' : ''}` : '') +
+    (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} — 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
     (it.code ? ` · Design-Code ${it.code}` : '');
 }
@@ -432,7 +432,8 @@ async function handleCheckout(req, res) {
     lines: totals.lines.map((l, i) => ({
       product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
       colorName: l.colorName, unit: l.unit, off: l.off, line: l.line,
-      stlFile: `modell-${i + 1}-${l.product}.stl`,
+      // Farbschrift (zweites Filament) kommt als 3MF mit zwei Teilen, sonst STL
+      stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
     subtotal: totals.subtotal, coupon: totals.coupon, shipping: totals.shipping, total: totals.total,
     invoiceNo: null, filesComplete: false,

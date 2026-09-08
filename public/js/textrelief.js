@@ -12,6 +12,7 @@ export const TEXT_STYLES = {
   gepraegt: { label: 'Geprägt', hint: 'erhaben mit feiner Fase', icon: '🔤' },
   gehaemmert: { label: 'Gehämmert', hint: 'glatte Schrift auf gehämmertem Schild', icon: '🔨' },
   kissen: { label: 'Kissen', hint: 'weich gewölbt, wie ein Siegel', icon: '🫧' },
+  farbe: { label: 'Farbschrift', hint: 'bündig eingelegt in zweiter Filamentfarbe (Mehrfarbdruck, 3MF)', icon: '🎨' },
 };
 
 // Schrift-Regeln: capFactor = Großbuchstabenhöhe / Schriftgrad; minCap = kleinste druckbare Höhe;
@@ -26,6 +27,7 @@ export const FONT_RULES = {
   greatvibes: { capFactor: 0.98, minCap: 9, tracking: 0, styles: ['gestanzt', 'gepraegt', 'gehaemmert'] },
 };
 export const fontAllowsStyle = (fontKey, style) => {
+  if (style === 'farbe') return true; // Farbschrift ist eine bündige Einlage — geht mit jeder Schrift
   const r = FONT_RULES[fontKey]; if (!r) return true;
   return !r.styles || r.styles.includes(style);
 };
@@ -175,7 +177,8 @@ export function buildGlyphField({ font, fallbackFont, fontKey, text, cap, style,
   const negSdf = new Float32Array(W * H); for (let i = 0; i < negSdf.length; i++) negSdf[i] = -sdf[i];
   // Max-Filter ergibt Plateaus mit Sprüngen → glätten, sonst „Fransen“ an den Kanten
   const wloc = boxBlur(maxFilter(negSdf, W, H, Math.round(0.6 * PX)), W, H, Math.round(0.45 * PX)); // Fenster ±0,6 mm
-  const raised = style !== 'gestanzt';
+  const inlay = style === 'farbe';           // Farbschrift: Tasche in der Wand, wird vom zweiten Filament bündig gefüllt
+  const raised = style !== 'gestanzt' && !inlay;
   const WMIN = raised ? 0.9 : 0.8; // Nut ≥ 0,8 mm (2 Düsenbreiten) — sonst nur ein Kratzer im Druck
   const boldExtra = style === 'gestanzt' ? 0.10 : 0;
   const dEff = new Float32Array(W * H);
@@ -194,9 +197,10 @@ export function buildGlyphField({ font, fallbackFont, fontKey, text, cap, style,
   const strokeP10 = widths.length ? widths[Math.floor(0.1 * (widths.length - 1))] : 0;
   // --- Höhenfeld mit richtungsabhängiger Fase
   const isEgg = product === 'eierbecher';
-  const Hgt = style === 'gestanzt' ? (isEgg ? 0.5 : 0.6) : style === 'kissen' ? (isEgg ? 0.85 : 1.0) : (isEgg ? 0.55 : 0.65);
-  const B_CRISP = style === 'kissen' ? 0.6 : 0.3;
-  const B_OVER = Math.max(B_CRISP, Hgt / Math.tan((TEXT_FLANK_DEG * Math.PI) / 180));
+  const Hgt = (style === 'gestanzt' || inlay) ? (isEgg ? 0.5 : 0.6) : style === 'kissen' ? (isEgg ? 0.85 : 1.0) : (isEgg ? 0.55 : 0.65);
+  const B_CRISP = style === 'kissen' ? 0.6 : inlay ? 0.12 : 0.3;
+  // Inlay: fast senkrechte Taschenwände (die Einlage stützt beim Druck die Decke — keine Rampe nötig)
+  const B_OVER = inlay ? B_CRISP : Math.max(B_CRISP, Hgt / Math.tan((TEXT_FLANK_DEG * Math.PI) / 180));
   const sign = raised ? 1 : -1;
   // Kantenrichtung: Gradient des (ungeglätteten) Distanzfelds mit 2-px-Stencil, dann leicht geglättet
   const kField = new Float32Array(W * H);
@@ -221,7 +225,7 @@ export function buildGlyphField({ font, fallbackFont, fontKey, text, cap, style,
     // V-Bit-Gravur) — ein flacher 0,1-mm-Boden würde vom Wandraster nur alle zwei Samples getroffen (Perlenkette)
     const w = 2 * Math.max(0, wloc[i]);
     // Kissen: Wölbung über die ganze Strichbreite (echte Kuppel), sonst nur schmale Striche runden
-    const bEff = style === 'kissen' ? Math.max(b, 0.6 * w) : Math.max(b, Math.min(0.6, 0.45 * w));
+    const bEff = style === 'kissen' ? Math.max(b, 0.6 * w) : inlay ? b : Math.max(b, Math.min(0.6, 0.45 * w));
     const s = Math.min(1, -de / bEff);
     const prof = style === 'kissen' ? Math.sqrt(1 - (1 - s) * (1 - s)) : bEff > b + 1e-6 ? s * (2 - s) : s;
     h[i] = sign * Hgt * prof;

@@ -1139,3 +1139,9 @@ section[id] { scroll-margin-top: 72px; }
 #gravur-options.disabled .font-row, #gravur-options.disabled .style-row, #gravur-options.disabled .slider-row { opacity: 0.45; pointer-events: none; }
 #text-warn.err { color: #b3261e; font-weight: 600; }
 .font-chip:disabled, .style-chip:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* Farbschrift: zweite Farbreihe im Gravur-Tab */
+#text-color-box { margin: 8px 0 6px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 12px; background: var(--bg); }
+.tc-label { font-weight: 700; font-size: 0.85rem; margin-bottom: 6px; }
+.tc-label .opt { font-weight: 500; color: var(--ink-soft); font-size: 0.78rem; }
+.swatches-sm .swatch { width: 26px; height: 26px; }

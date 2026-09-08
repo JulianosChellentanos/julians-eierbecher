@@ -11,7 +11,7 @@ import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
-import { makeSTL, loadFont } from './modelfactory.js';
+import { makeSTL, makeExport, exportExt, loadFont } from './modelfactory.js';
 import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge, setCodeProvider, getCart } from './cart.js';
 import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } from './designcode.js';
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
@@ -35,6 +35,7 @@ const START_PRODUCT = 'vase';
 let content = null;
 let cupMesh = null;
 let textMesh = null;
+let inlayMesh = null; // Farbschrift: Einlage im zweiten Filament
 let currentInfo = null;
 let userInteracted = false;
 
@@ -85,8 +86,14 @@ async function loadContent() {
   $('#swatches').innerHTML = colors.map((c) => `
     <button class="swatch sw-${c.finish || 'matt'}" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}" data-finish="${c.finish || 'matt'}"
       style="--sw:${c.hex}" title="${c.name}${(c.finish || 'matt') !== 'matt' ? ' · ' + FINISH_LABEL[c.finish] : ''}"><span></span></button>`).join('');
-  $$('.swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
+  $$('#swatches .swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
   setColor(colors[0]);
+  // Schriftfarbe (Stil „Farbschrift“): gleiche Palette, zweites Filament
+  $('#text-swatches').innerHTML = colors.map((c) => `
+    <button class="swatch sw-${c.finish || 'matt'}" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}" data-finish="${c.finish || 'matt'}"
+      style="--sw:${c.hex}" title="${c.name}"><span></span></button>`).join('');
+  $$('#text-swatches .swatch').forEach((b) => b.addEventListener('click', () => { setTextColor(b.dataset.id); rebuild(); }));
+  setTextColor(state.textColor || 'tiefschwarz', true);
 }
 
 function renderHeroHint() {
@@ -120,13 +127,26 @@ function renderPrices() {
 function setColor({ id, hex, name, finish }) {
   const f = finish || 'matt';
   state.color = id; state.colorHex = hex; state.colorName = name; state.colorFinish = f;
-  $$('.swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
+  $$('#swatches .swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
   $('#color-name').textContent = f === 'matt' ? name : `${name} · ${FINISH_LABEL[f]}`;
   const fn = $('#farbe-name'); if (fn) fn.textContent = `— ${name} · ${FINISH_LABEL[f]}`;
   material.color.set(hex);
   Object.assign(material, FINISH_PROPS[f] || FINISH_PROPS.matt);
   material.needsUpdate = true;
   document.documentElement.style.setProperty('--accent-live', hex);
+}
+
+/** Schriftfarbe für die Farbschrift (zweites Filament) */
+function setTextColor(id, silent = false) {
+  const c = (content?.colors || []).find((x) => x.id === id) || (content?.colors || [])[0];
+  if (!c) return;
+  state.textColor = c.id;
+  $$('#text-swatches .swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === c.id));
+  $('#text-color-name').textContent = `— ${c.name}`;
+  inlayMaterial.color.set(c.hex);
+  Object.assign(inlayMaterial, FINISH_PROPS[c.finish || 'matt'] || FINISH_PROPS.matt);
+  inlayMaterial.needsUpdate = true;
+  if (!silent) showToast(`🎨 Schriftfarbe: ${c.name}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +204,7 @@ const FINISH_PROPS = {
 };
 export const FINISH_LABEL = { matt: 'matt', glanz: 'glänzend', metall: 'metallic' };
 const material = new THREE.MeshPhysicalMaterial({ color: state.colorHex, ...FINISH_PROPS.matt });
+const inlayMaterial = material.clone(); // Farbschrift-Einlage (zweites Filament)
 
 // Neutrale Studio-Umgebung → Metall & Glanz reflektieren auch ohne HDRI-Szene
 const pmrem = new THREE.PMREMGenerator(renderer);
@@ -470,6 +491,13 @@ function rebuild() {
     cupGroup.add(saucerMesh);
   }
   cupMesh.position.y = saucerLift();
+  if (inlayMesh) { cupGroup.remove(inlayMesh); inlayMesh.geometry.dispose(); inlayMesh = null; }
+  if (info.inlay) {
+    inlayMesh = new THREE.Mesh(info.inlay, inlayMaterial);
+    inlayMesh.castShadow = true;
+    inlayMesh.position.y = saucerLift();
+    cupGroup.add(inlayMesh);
+  }
   updatePrintBadge(geometry, info);
   rebuildText();
   updateProps();
@@ -493,6 +521,10 @@ async function rebuildText() {
   if (!txt || !currentInfo) return;
   const ti = currentInfo.text || {};
   renderPrices(); // Gravur-Aufpreis hängt davon ab, ob die Gravur aktiv ist
+  // Download-Button: Farbschrift liefert ein 3MF mit zwei Teilen statt STL
+  const is3mf = !ti.disabled && exportExt(currentConfig()) === '3mf';
+  $('#btn-download').textContent = is3mf ? '⬇ 3MF' : '⬇ STL';
+  $('#btn-download').title = is3mf ? '3MF mit zwei Teilen (Körper + Schrift) — Bambu Studio ordnet die Filamente automatisch zu' : 'STL-Datei herunterladen — druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer & Co.';
   if (ti.disabled) {
     warn.textContent = '⛔ ' + (ti.reason || 'Gravur hier nicht möglich.');
     warn.classList.add('err');
@@ -720,6 +752,7 @@ function markActiveFont() {
   });
   const st = TEXT_STYLES[state.textStyle] || TEXT_STYLES.gestanzt;
   $('#style-hint').textContent = `${st.label}: ${st.hint}`;
+  $('#text-color-box').hidden = state.textStyle !== 'farbe';
   // Schriftgröße = Großbuchstabenhöhe; Untergrenze je Schrift (feine Schriften brauchen mehr Höhe)
   const minCap = FONT_RULES[state.font]?.minCap ?? 5;
   const sl = $('#s-textsize'); sl.min = minCap;
@@ -801,7 +834,10 @@ function initControls() {
   });
 
   $('#btn-download').addEventListener('click', async () => {
-    downloadSTL(await makeSTL(currentConfig()), stlFilename());
+    const cfg = currentConfig();
+    const ex = await makeExport(cfg);
+    downloadSTL(ex.buffer, stlFilename(ex.ext), ex.mime);
+    if (ex.ext === '3mf') showToast('🎨 3MF mit zwei Teilen — in Bambu Studio öffnen, Filamente sind zugeordnet');
   });
 
   // In den Warenkorb (mit Live-Vorschaubild)
@@ -887,9 +923,9 @@ function syncControls() {
   $('#s-flowwaves-val').textContent = `${state.flowWaves}×`;
 }
 
-function stlFilename() {
+function stlFilename(ext = 'stl') {
   const brand = content ? content.brand.name.toLowerCase() : 'ovju';
-  return `${brand}-${state.product}-${state.preset}-${state.pattern}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.stl`;
+  return `${brand}-${state.product}-${state.preset}-${state.pattern}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.${ext}`;
 }
 
 function currentConfig() {
@@ -929,10 +965,12 @@ async function applyDesign(cfg, code) {
     textPos: num('textPos', 0.15, 0.8),
     text: String(cfg.text || '').slice(0, 16),
     textStyle: TEXT_STYLES[cfg.textStyle] ? cfg.textStyle : 'gestanzt',
+    textColor: cfg.textColor || state.textColor,
     saucer: product === 'eierbecher' && !!cfg.saucer,
   });
   const col = (content.colors || []).find((c) => c.id === cfg.color);
   if (col) setColor(col);
+  if (cfg.textColor) setTextColor(cfg.textColor, true);
   // Regler & Chips nachziehen
   const preset = cfg.preset === 'eigene' && customByProduct[product] ? 'eigene' : (prod.presets[cfg.preset] ? cfg.preset : Object.keys(prod.presets)[0]);
   if (preset !== 'eigene') lastRealPreset[product] = preset;

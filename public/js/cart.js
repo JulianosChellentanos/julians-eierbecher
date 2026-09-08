@@ -1,5 +1,5 @@
 // OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing)
-import { makeSTL } from './modelfactory.js';
+import { makeExport } from './modelfactory.js';
 import { copyText, formatCode } from './designcode.js';
 import { PRODUCTS, PATTERNS, FLOWS, FONTS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
@@ -291,7 +291,7 @@ async function submitOrder(payment, paypalOrderId = null) {
     // Druckdateien erzeugen & hochladen
     for (let i = 0; i < cart.length; i++) {
       prog.textContent = `Erzeuge Druckdatei ${i + 1}/${cart.length} …`;
-      const buf = await makeSTL(cart[i].config);
+      const { buffer: buf } = await makeExport(cart[i].config); // STL oder 3MF (Farbschrift)
       prog.textContent = `Lade Druckdatei ${i + 1}/${cart.length} hoch (${(buf.byteLength / 1e6).toFixed(1)} MB) …`;
       const up = await fetch(`/api/order/${r.orderId}/stl/${i}`, {
         method: 'PUT', headers: { 'Content-Type': 'model/stl' }, body: buf,

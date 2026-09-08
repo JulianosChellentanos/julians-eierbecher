@@ -40,8 +40,8 @@ export function exportSTL(meshes) {
 }
 
 /** ArrayBuffer → Download im Browser */
-export function downloadSTL(buffer, filename) {
-  const blob = new Blob([buffer], { type: 'model/stl' });
+export function downloadSTL(buffer, filename, mime = 'model/stl') {
+  const blob = new Blob([buffer], { type: mime });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = filename;
