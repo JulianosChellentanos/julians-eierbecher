@@ -21,7 +21,7 @@ export async function makeSTL(config) {
   const txt = (config.text || '').trim();
   const integrated = !!txt && isIntegratedTextStyle(config.textStyle);
   const textFont = integrated ? await loadFont(config.font) : undefined;
-  const { geometry, info } = buildModel({ ...config, quality: 1, textFont });
+  const { geometry, info } = buildModel({ ...config, quality: 1, exportRes: true, textFont }); // Export: feinstes Raster (Voronoi-Lochränder)
   const meshes = [new THREE.Mesh(geometry)];
   const disposables = [geometry];
 

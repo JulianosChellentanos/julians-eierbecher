@@ -335,10 +335,11 @@ function activePoints() {
 // (Überhangwinkel: 0° = senkrechte Wand, 90° = horizontale Unterseite)
 function overhangStats(geometry) {
   const pos = geometry.getAttribute('position').array;
-  const idx = geometry.index.array;
+  const idx = geometry.index ? geometry.index.array : null; // Facetten-Muster kommen nicht-indiziert (Crease-Normalen)
+  const nIdx = idx ? idx.length : pos.length / 3;
   let worst = 0, total = 0, over55 = 0;
-  for (let i = 0; i < idx.length; i += 3) {
-    const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
+  for (let i = 0; i < nIdx; i += 3) {
+    const a = (idx ? idx[i] : i) * 3, b = (idx ? idx[i + 1] : i + 1) * 3, c = (idx ? idx[i + 2] : i + 2) * 3;
     const cy = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3;
     const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
     const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];

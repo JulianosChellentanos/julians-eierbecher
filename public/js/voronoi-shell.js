@@ -20,9 +20,12 @@ export function cellDistance(theta,y,n,spacing){
 /** Zellen um den Umfang: aus dem Anzahl-Regler, aber Teilung ≤ ~25 mm (sonst waagerechte Zelldecken > 30 mm = unstützbare Brücken) */
 export const cellCount=(ribs,rMax)=>Math.min(20,Math.max(Math.ceil(2*Math.PI*rMax/25),Math.round(ribs/4)));
 
-export function buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality,surface,text,textSize,textPos}){
+export function buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality,exportRes=false,surface,text,textSize,textPos}){
  const n=cellCount(ribs,rMax||R(.5));
- const nx=Math.round(Math.max(240,n*36)*quality),ny=Math.round(Math.max(160,H*1.65)*quality);
+ // Isotropes Raster: Vorschau ≈ 0,55 mm, Export ≈ 0,32 mm (Lochränder ohne Treppen; Mobile über quality gröber)
+ const step=(exportRes?0.38:0.55)/Math.max(0.4,Math.min(1,quality));
+ const rr=rMax||R(.5);
+ const nx=Math.round(Math.min(1800,Math.max(320,2*Math.PI*rr/step))),ny=Math.round(Math.min(760,Math.max(200,H/step)));
  const floor=3,spacing=Math.max(18,H/8);
  const verts=[],triangles=[],edgeCuts=new Map();
  const field=(theta,y)=>{

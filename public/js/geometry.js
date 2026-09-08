@@ -398,13 +398,17 @@ export function buildModel(params) {
   const q = Math.min(1, Math.max(0.4, p.quality));
   // Radiale Auflösung: ≥ 12 Segmente pro Rippenperiode (Zickzack 16), sonst
   // zittern die Gratlinien körnig über die Ringe („zackig“ statt samtig).
-  const rsFactor = { zickzack: 16, lamellen: 14, gehaemmert: 8 }[p.pattern] || 12;
+  const fineExport = !!p.exportRes; // STL-Export: feinstes Raster; Vorschau bleibt flüssig
+  const rsFactor = { zickzack: 16, lamellen: 14, gehaemmert: fineExport ? 18 : 14 }[p.pattern] || 12; // Gehämmert: Facettenkanten brauchen ≤ 0,3 mm Abtastung
   // Segmente pro Rippe (ganzzahlig!) → Gratspitzen liegen auf jedem Ring exakt auf einem Vertex
   const perRib = Math.max(6, Math.round(Math.min(Math.max(rsFactor, Math.ceil(240 / ribs)), Math.floor(1080 / ribs)) * q));
   const RS = ribs * perRib;
   const wallBase = isVase ? Math.max(160, H * 1.4) : 130;
   const querExtra = isQuer ? quersV * 14 : 0;
-  const WALL_STEPS = Math.round(Math.min(430, wallBase + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
+  const isHammer = p.pattern === 'gehaemmert';
+  // Gehämmert: Ringabstand ≈ Umfangsschritt (≈ 0,3 mm), sonst treppige Dellenränder im Druck
+  const hammerRows = isHammer ? (fineExport ? 1.7 : 1.35) : 1;
+  const WALL_STEPS = Math.round(Math.min(isHammer ? 720 : 430, wallBase * hammerRows + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
   const CAVITY_STEPS = Math.round(36 * q);
   const INNER_STEPS = Math.round(44 * q);
 
@@ -569,10 +573,16 @@ export function buildModel(params) {
   }
 
   const openCells = isVase && p.pattern === 'skelett';
-  const geometry = openCells
-    ? buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality:q,surface,
+  let geometry = openCells
+    ? buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality:q,exportRes:!!p.exportRes,surface,
         text:txt,textSize:textInfo.size,textPos:p.textPos ?? .55})
     : revolve(stations, RS);
+  // Facettierte/durchbrochene Muster: Kanten scharf schattieren (Grate zwischen Dellen/Facetten, Lochränder),
+  // Flächen dazwischen glatt. Weiche Vertex-Normalen würden die Kanten verschmieren — das sieht „unscharf“ aus.
+  // (p.rawIndexed: Topologie-Tools brauchen die indizierte Geometrie.)
+  if (!p.rawIndexed && (p.pattern === 'gehaemmert' || p.pattern === 'zickzack' || openCells)) {
+    geometry = creaseNormals(geometry, p.pattern === 'gehaemmert' ? 26 : openCells ? 30 : 22);
+  }
 
   return {
     geometry,
@@ -602,6 +612,57 @@ export const buildEggcup = buildModel;
 // Rotationskörper aus Stationen (geschlossene Kontur → manifold Mesh).
 // Stationen: { y, r } | { y, rFn(θ) }; r === 0 → degenerierter Punkt (Fächer).
 // ---------------------------------------------------------------------------
+// Kantenerhaltende Normalen: pro Dreiecksecke werden nur Nachbarflächen gemittelt, deren
+// Normale um weniger als `creaseDeg` abweicht. Ergebnis ist eine nicht-indizierte Geometrie
+// (gleiche Dreiecke, gleiche STL) mit scharfen Graten und glatten Flächen dazwischen.
+export function creaseNormals(geometry, creaseDeg = 26) {
+  const pos = geometry.getAttribute('position').array;
+  const idx = geometry.index ? geometry.index.array : null;
+  const triCount = idx ? idx.length / 3 : pos.length / 9;
+  const vCount = pos.length / 3;
+  const fN = new Float32Array(triCount * 3);
+  const cosLimit = Math.cos((creaseDeg * Math.PI) / 180);
+  // Flächen-Normalen (flächengewichtet: Länge des Kreuzprodukts)
+  const vOf = (t, k) => (idx ? idx[t * 3 + k] : t * 3 + k);
+  for (let t = 0; t < triCount; t++) {
+    const a = vOf(t, 0) * 3, b = vOf(t, 1) * 3, c = vOf(t, 2) * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
+    fN[t * 3] = uy * wz - uz * wy; fN[t * 3 + 1] = uz * wx - ux * wz; fN[t * 3 + 2] = ux * wy - uy * wx;
+  }
+  // Vertex → Flächen (CSR)
+  const deg = new Uint32Array(vCount + 1);
+  for (let t = 0; t < triCount; t++) for (let k = 0; k < 3; k++) deg[vOf(t, k) + 1]++;
+  for (let v = 0; v < vCount; v++) deg[v + 1] += deg[v];
+  const fill = deg.slice(0, vCount);
+  const adj = new Uint32Array(deg[vCount]);
+  for (let t = 0; t < triCount; t++) for (let k = 0; k < 3; k++) adj[fill[vOf(t, k)]++] = t;
+  const outPos = new Float32Array(triCount * 9), outNor = new Float32Array(triCount * 9);
+  for (let t = 0; t < triCount; t++) {
+    const nx = fN[t * 3], ny = fN[t * 3 + 1], nz = fN[t * 3 + 2];
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    for (let k = 0; k < 3; k++) {
+      const v = vOf(t, k);
+      let sx = 0, sy = 0, sz = 0;
+      for (let j = deg[v]; j < deg[v + 1]; j++) {
+        const g = adj[j];
+        const gx = fN[g * 3], gy = fN[g * 3 + 1], gz = fN[g * 3 + 2];
+        const gl = Math.hypot(gx, gy, gz) || 1;
+        if ((nx * gx + ny * gy + nz * gz) / (nl * gl) >= cosLimit) { sx += gx; sy += gy; sz += gz; }
+      }
+      const sl = Math.hypot(sx, sy, sz) || 1;
+      const o = t * 9 + k * 3;
+      outPos[o] = pos[v * 3]; outPos[o + 1] = pos[v * 3 + 1]; outPos[o + 2] = pos[v * 3 + 2];
+      outNor[o] = sx / sl; outNor[o + 1] = sy / sl; outNor[o + 2] = sz / sl;
+    }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(outPos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(outNor, 3));
+  geometry.dispose();
+  return out;
+}
+
 // Reißverschluss zwischen zwei geschlossenen Ringen unterschiedlicher Auflösung:
 // beide Ringe nach Winkel durchlaufen, immer die Seite mit dem kleineren nächsten
 // Winkel vorrücken → jede Kante liegt in genau zwei Dreiecken (manifold),

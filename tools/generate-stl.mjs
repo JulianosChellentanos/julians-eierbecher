@@ -20,7 +20,7 @@ if (txt) {
   font = new Font(JSON.parse(readFileSync(path.join(ROOT, 'public', 'fonts', FONTS[f].file), 'utf8')));
 }
 const t0 = Date.now();
-const { geometry, info } = buildEggcup({ ...params, textFont: font });
+const { geometry, info } = buildEggcup({ ...params, exportRes: true, textFont: font });
 const meshes = [new THREE.Mesh(geometry)];
 if (txt && font && !isIntegratedTextStyle(params.textStyle)) {
   // aufgesetzte Schrift wie im Browser (modelfactory.makeSTL)

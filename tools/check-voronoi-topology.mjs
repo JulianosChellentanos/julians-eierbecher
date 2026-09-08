@@ -9,7 +9,7 @@ const cases=[
  {name:'egg-solid',product:'eierbecher',preset:'kelch',height:58,quality:.65},
 ];
 for(const c of cases){
- const {geometry,info}=buildModel({product:'vase',preset:'flasche',height:180,pattern:'skelett',ribs:48,depth:1.4,...c});
+ const {geometry,info}=buildModel({product:'vase',preset:'flasche',height:180,pattern:'skelett',ribs:48,depth:1.4,rawIndexed:true,...c});
  const pos=geometry.attributes.position.array,idx=geometry.index.array,edges=new Map(),vertices=new Set(),parents=new Map();
  const root=x=>{let y=x;while(parents.get(y)!==y)y=parents.get(y);while(x!==y){const next=parents.get(x);parents.set(x,y);x=next;}return y;};
  for(let i=0;i<idx.length;i+=3){
