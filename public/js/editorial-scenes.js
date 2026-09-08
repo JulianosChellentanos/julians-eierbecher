@@ -6,7 +6,7 @@ import { makeGrass } from './scenes.js';
 import { STUDIO_DESIGNS } from './studio-designs.js';
 import { SURFACE_DESIGNS } from './surface-designs.js';
 export async function renderEditorial(canvas,kind){
- const studio=makeStudio(canvas,{width:1400,height:1100});const {scene,camera,renderer}=studio;
+ const studio=makeStudio(canvas,{width:1400,height:1100,capture:true,shadowSize:2048});const {scene,camera,renderer}=studio;
  const originalEnv=scene.environment;
  renderer.toneMappingExposure=.85;
  scene.children.filter(o=>o.isHemisphereLight).forEach(o=>o.intensity=.4);

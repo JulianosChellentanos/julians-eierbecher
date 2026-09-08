@@ -21,8 +21,8 @@
     },
     {
       "icon": "✨",
-      "title": "Skandinavisch matt",
-      "text": "Feine Riffelung, samtmatte Oberfläche, klare Formen. Sieht nach Designladen aus – kommt aber aus deinem Kopf."
+      "title": "Matt bis metallic",
+      "text": "Samtmatt, glänzend oder mit Seidenschimmer – feine Riffelung, klare Formen. Sieht nach Designladen aus, kommt aber aus deinem Kopf."
     }
   ],
   "steps": [
@@ -57,7 +57,7 @@
     },
     {
       "q": "Aus welchem Material wird gedruckt?",
-      "a": "Wir drucken mit hochwertigem, mattem PLA – einem Biokunststoff auf Pflanzenbasis (z. B. Maisstärke). Die matte Oberfläche fühlt sich samtig an und versteckt Druckschichten fast vollständig."
+      "a": "Wir drucken mit hochwertigem PLA – einem Biokunststoff auf Pflanzenbasis (z. B. Maisstärke) – wahlweise samtmatt, glänzend oder mit metallischem Seidenschimmer. Die feinen Druckschichten bleiben sichtbar und gehören zum Charakter jedes Stücks."
     },
     {
       "q": "Was ist, wenn mir mein Eierbecher nicht gefällt oder er beschädigt ankommt?",
@@ -69,7 +69,7 @@
     },
     {
       "q": "Woraus bestehen die Produkte?",
-      "a": "Aus PLA — einem Biokunststoff auf Pflanzenbasis (Maisstärke/Zuckerrohr). Matt, robust und langlebig. Bitte nicht in die Spülmaschine geben und nicht dauerhaft über 50 °C aussetzen (z. B. Auto im Sommer)."
+      "a": "Aus PLA — einem Biokunststoff auf Pflanzenbasis (Maisstärke/Zuckerrohr). Robust und langlebig – matt, glänzend oder metallic. Bitte nicht in die Spülmaschine geben und nicht dauerhaft über 50 °C aussetzen (z. B. Auto im Sommer)."
     },
     {
       "q": "Gibt es Einschränkungen bei eigenen Formen?",
@@ -163,7 +163,9 @@
     "eigene": "⚖️ Individuelle Form: Du gestaltest frei — für die Standfestigkeit sehr ausgefallener Silhouetten übernehmen wir keine Garantie.",
     "checkout": "Alle Stücke bestehen aus pflanzenbasiertem PLA und werden individuell für dich gedruckt. Vasen sind für Trockenblumen konzipiert (imprägniert, i. d. R. wasserfest — ohne Gewähr). Bei frei gestalteten Formen keine Garantie für Standfestigkeit.",
     "trust": [
-      "Live gestalten. Individuell drucken."
+      "🌱 Pflanzenbasiertes PLA",
+      "🖨️ Individuell gedruckt in Deutschland",
+      "📦 In 5–8 Werktagen bei dir"
     ]
   }
 }

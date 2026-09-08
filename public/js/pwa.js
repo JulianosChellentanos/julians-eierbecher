@@ -125,6 +125,16 @@
     return isMobile() && !isStandalone() && !recentlyDismissed();
   }
 
+  /* Banner erst zeigen, wenn der Besucher gescrollt hat (nicht über die 3D-Bühne legen) — spätestens nach 25 s */
+  function whenEngaged(fn) {
+    var done = false;
+    var go = function () { if (done) return; done = true; window.removeEventListener('scroll', check); fn(); };
+    var check = function () { if (window.scrollY > 500) go(); };
+    window.addEventListener('scroll', check, { passive: true });
+    setTimeout(go, 25000);
+    check();
+  }
+
   /* Android / Chromium: natives Install-Prompt abfangen */
   var deferredPrompt = null;
   window.addEventListener('beforeinstallprompt', function (e) {
@@ -146,8 +156,9 @@
         }
       });
     };
-    if (document.readyState === 'complete') setTimeout(delay, 2500);
-    else window.addEventListener('load', function () { setTimeout(delay, 2500); });
+    var start = function () { setTimeout(function () { whenEngaged(delay); }, 2500); };
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start);
   });
 
   window.addEventListener('appinstalled', function () {
@@ -163,10 +174,12 @@
     store(VISITS_KEY, String(visits));
     if (visits < 2 || !mayShow()) return;
     setTimeout(function () {
-      if (!mayShow()) return;
-      showBanner({
-        title: '📲 OVJU als App installieren',
-        hint: 'Tippe auf „Teilen“ und dann „Zum Home-Bildschirm“.'
+      whenEngaged(function () {
+        if (!mayShow()) return;
+        showBanner({
+          title: '📲 OVJU als App installieren',
+          hint: 'Tippe auf „Teilen“ und dann „Zum Home-Bildschirm“.'
+        });
       });
     }, 3000);
   }

@@ -17,8 +17,11 @@ export function cellDistance(theta,y,n,spacing){
 
 // Clip a shared UV triangle grid once, then give it an outer and inner skin.
 // Every cut edge receives a side wall: the openings are real, the solid is manifold.
-export function buildVoronoiShell({H,R,rBase,ribs,amp,flowPhase,quality,surface,text,textSize,textPos}){
- const n=Math.max(6,Math.min(20,Math.round(ribs/4)));
+/** Zellen um den Umfang: aus dem Anzahl-Regler, aber Teilung ≤ ~25 mm (sonst waagerechte Zelldecken > 30 mm = unstützbare Brücken) */
+export const cellCount=(ribs,rMax)=>Math.min(20,Math.max(Math.ceil(2*Math.PI*rMax/25),Math.round(ribs/4)));
+
+export function buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality,surface,text,textSize,textPos}){
+ const n=cellCount(ribs,rMax||R(.5));
  const nx=Math.round(Math.max(240,n*36)*quality),ny=Math.round(Math.max(160,H*1.65)*quality);
  const floor=3,spacing=Math.max(18,H/8);
  const verts=[],triangles=[],edgeCuts=new Map();

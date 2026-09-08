@@ -1,7 +1,7 @@
 // OVJU — parametrische Geometrie für Eierbecher & Vasen
 // Erzeugt wasserdichte (manifold) Meshes in Millimetern, bereit für den 3D-Druck.
 import * as THREE from 'three';
-import { buildVoronoiShell, cellDistance } from './voronoi-shell.js';
+import { buildVoronoiShell, cellDistance, cellCount } from './voronoi-shell.js';
 
 // ---------------------------------------------------------------------------
 // Produkte & Form-Presets: Silhouetten als (t, r)-Kontrollpunkte.
@@ -435,7 +435,7 @@ export function buildModel(params) {
       return a * (0.65 * swell + 0.35 * (2 * fin - 1));
     }
     if (p.pattern === 'skelett') {
-      const n = Math.max(6, Math.min(20, Math.round(ribs / 4)));
+      const n = cellCount(ribs, rMax); // Zellteilung in mm begrenzt (≤ ~25 mm → keine langen Brücken)
       const d = cellDistance(theta + flowPhase(t) * 0.18, t * H, n, Math.max(18, H / 8));
       // Egg cups keep their solid cavity. Vases use this relief on a cut shell below.
       return a * (2 * Math.exp(-80 * d * d) - 1);
@@ -570,7 +570,7 @@ export function buildModel(params) {
 
   const openCells = isVase && p.pattern === 'skelett';
   const geometry = openCells
-    ? buildVoronoiShell({H,R,rBase,ribs,amp,flowPhase,quality:q,surface,
+    ? buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality:q,surface,
         text:txt,textSize:textInfo.size,textPos:p.textPos ?? .55})
     : revolve(stations, RS);
 
@@ -773,8 +773,9 @@ export function bendTextOntoCup(textGeo, info, textPos = 0.55) {
     const yWorld = yCenter + y;
     const t = Math.min(0.99, Math.max(0.01, yWorld / info.height));
     // lokale Oberfläche an dieser Höhe: glatter Radius + Musterberge
-    const rFace = info.radiusAt(t) + info.ampAt(t) + 0.55;
-    const r = rFace - (depth - z); // Rückseite steckt `depth` tief in der Wand
+    const rFace = info.radiusAt(t) + info.ampAt(t) + 0.55;                 // vor den Gratspitzen
+    const rBack = Math.max(0.6, info.radiusAt(t) - info.ampAt(t) - 1.45);  // 1,45 mm unter dem tiefsten Mustertal (Voronoi/Fjordwelle!), noch vor der Innenwand
+    const r = rBack + (rFace - rBack) * (z / depth);                       // Prisma linear zwischen Rückseite und Vorderseite
     const alpha = x / rMid;
     pos.setXYZ(i, Math.sin(alpha) * r, yWorld, Math.cos(alpha) * r);
   }

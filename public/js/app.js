@@ -67,6 +67,7 @@ async function loadContent() {
   // Rechtliche Hinweise & Trust-Row
   const h = content.hinweise || {};
   if (h.trust) $('#trust-row').innerHTML = h.trust.map((t) => `<span>${t}</span>`).join('');
+
   if (h.vase) $('#vase-note').textContent = h.vase;
   if (h.eigene) $('#eigene-note').textContent = h.eigene;
   if (h.checkout) $('#checkout-note').textContent = h.checkout;
@@ -88,7 +89,15 @@ async function loadContent() {
   setColor(colors[0]);
 }
 
+function renderHeroHint() {
+  const el = $('#hero-hint'); if (!el) return;
+  try {
+    const pr = getPricing().products;
+    el.textContent = `Vasen ab ${fmt(pr.vase.single)} · Eierbecher ab ${fmt(pr.eierbecher.single)} · STL-Download für deinen eigenen Drucker inklusive`;
+  } catch { /* Preise noch nicht geladen */ }
+}
 function renderPrices() {
+  renderHeroHint();
   const pp = getPricing().products[state.product];
   const size = volumeSurcharge(state.product, { height: state.height, width: state.width });
   animateMoney($('#price'), pp.single + size, fmt);
@@ -374,7 +383,7 @@ function updatePrintBadge(geometry, info) {
     cls = 'p-bad'; txt = '🔶 Form kragt stark aus — Silhouette flacher ziehen';
     tip = `Die Grundform hängt bis ${sil.toFixed(0)}° über — im Formen-Editor sanftere Übergänge wählen.`;
   } else if (info.openCells) {
-    cls = 'p-warn'; txt = '⚠️ Zellöffnungen — Brücken im Slicer prüfen';
+    cls = 'p-warn'; txt = 'ℹ️ Offene Zellen — Brücken im Slicer prüfen';
     tip = 'Voronoi hat echte Durchbrüche. Brücken und Stützen vor dem Druck im Slicer prüfen. Für Trockenblumen oder mit passendem Einsatz.';
   } else if (sil > 50) {
     cls = 'p-warn'; txt = '⚠️ Ausladende Form — wir drucken mit extra Kühlung';
@@ -392,7 +401,7 @@ function updatePrintBadge(geometry, info) {
   el.className = 'stage-print ' + cls;
   // Mobile: Kurzform, Langtext als Tooltip
   const short = { 'p-ok': '✅ Druckbar', 'p-warn': '⚠️ Steil', 'p-bad': '🔶 Zu steil' }[cls];
-  el.textContent = IS_SMALL ? (info.openCells && cls === 'p-warn' ? '⚠️ Brücken prüfen' : short) : txt;
+  el.textContent = IS_SMALL ? (info.openCells && cls === 'p-warn' ? 'ℹ️ Offene Zellen' : short) : txt;
   el.title = IS_SMALL ? `${txt} — ${tip}` : tip;
 }
 
@@ -401,6 +410,19 @@ let saucerInfo = null;
 function saucerLift() {
   return (state.product === 'eierbecher' && state.saucer && saucerInfo) ? saucerInfo.seatHeight : 0;
 }
+
+// Entwürfe aus der Hero-Formenwelt/Formenkarten: Klicks vor der Initialisierung werden gepuffert
+let studioReady = false, pendingStudioDesign = null;
+async function onStudioDesign(cfg) {
+  await applyDesign(cfg);
+  activateTab(cfg.studioTab === 'muster' ? 'muster' : 'form');
+  $('#konfigurator').scrollIntoView({ behavior: reducedMotion.matches ? 'instant' : 'smooth' });
+}
+window.addEventListener('ovju:studio-design', (e) => {
+  if (studioReady) { onStudioDesign(e.detail); return; }
+  pendingStudioDesign = e.detail; // letzter Klick gewinnt
+  $('#konfigurator')?.scrollIntoView({ behavior: reducedMotion.matches ? 'instant' : 'smooth' });
+});
 
 const loadedFonts = {};
 let fontLoadId = 0;
@@ -932,7 +954,7 @@ async function applyDesign(cfg, code) {
   rebuild();
   rebuildText();
   frameCamera();
-  showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Designstudio bereit");
+  showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Konfigurator bereit");
   renderPrices();
 }
 
@@ -1112,11 +1134,8 @@ async function renderShowcase() {
   renderStyleRow();
   renderPrices();
   initControls();
-  window.addEventListener('ovju:studio-design', async (event) => {
-    await applyDesign(event.detail);
-    activateTab(event.detail.studioTab === 'muster' ? 'muster' : 'form');
-    $('#konfigurator').scrollIntoView({ behavior: reducedMotion.matches ? 'instant' : 'smooth' });
-  });
+  studioReady = true;
+  if (pendingStudioDesign) { const cfg = pendingStudioDesign; pendingStudioDesign = null; onStudioDesign(cfg); }
   loadFont(state.font); // Standardschrift vorwärmen
   // Startprodukt über setProduct() initialisieren (Slider-Bereiche, Tabs, Hinweise, Preise)
   state.product = START_PRODUCT === 'vase' ? 'eierbecher' : 'vase';

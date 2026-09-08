@@ -26,7 +26,7 @@ Browser checks pass at 1440 px and 390 px: all fifteen campaign assets load, bot
 
 The hammered feature switches between copper-silk, matte ivory and silver-silk material macro photographs. Its action transfers the corresponding available filament color to the configurator. Native dialogs enlarge all campaign and feature images.
 
-Two independently implemented parametric patterns replace the previous experimental surfaces, retaining their saved IDs:
+Two independently implemented parametric patterns were added (IDs `skelett` and `koralle`):
 
 - Voronoi (`skelett`): a periodic jittered cell field cuts actual holes through the vase wall. A shared triangulated grid is clipped once and extruded into outer/inner skins, joined along every hole edge. Stable foot/rim and a text support patch keep it one connected solid. Egg cups retain a closed cellular relief. Depth adjusts relief and web width; count adjusts cell density. The live print badge asks for slicer bridge/support checks.
 - Fjordwelle (`koralle`): broad travelling radial waves carry fine curved ribs. The ring phase tracks the ribs to avoid sampling artifacts. Vase amplitude is capped at 6 mm and egg-cup amplitude at 1 mm. Bottom/rim fade preserves the base and opening.

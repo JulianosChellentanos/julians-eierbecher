@@ -959,7 +959,7 @@ section[id] { scroll-margin-top: 72px; }
   }
   .mtab-ic { font-size: 1.15rem; line-height: 1; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
   .mtab.active { background: var(--card); color: var(--ink); box-shadow: 0 3px 12px rgba(60,45,30,0.14); }
-  html, body { overflow-x: hidden; } /* Hard-Guard gegen Randbreiten-Überlauf */
+  html { overflow-x: hidden; } body { overflow-x: clip; } /* Guard gegen Randbreiten-Überlauf — body darf KEIN Scroll-Container werden (sticky Bühne/Tabs) */
   .mtabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); max-width: 100%; min-width: 0; }
   .mtab { padding: 8px 2px; }
   .stage-dice-btn {

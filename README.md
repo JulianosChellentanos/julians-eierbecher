@@ -14,11 +14,11 @@ Interaktive 3D-Formenwelt mit sechs direkt übernehmbaren Entwürfen, Live-Silho
 
 15 neu generierte FDM-Motive: sechs Formenkarten, vier Kampagnenszenen, drei Hammerschlag-Nahaufnahmen sowie Voronoi und Fjordwelle. Alle Materialien zeigen horizontale Druckschichten, auch glänzendes und metallisch schimmerndes PLA. Optimierte WebP-Dateien werden auf der Website verwendet; die PNG-Originale und exakten Prompts sind unter [Bilder und Prompts](docs/generated-scenes.md) dokumentiert.
 
-**Voronoi** ersetzt Exoskelett: Vasen erhalten echte unregelmäßige Zellöffnungen mit verbundenen Stegen, stabilem Fuß und geschlossenem Rand. Eierbecher behalten eine geschlossene Ei-Mulde und zeigen das Muster als Relief. Gravuren erhalten eine geschlossene Auflage. Prüfung: `node tools/check-skeleton.mjs` und `node tools/check-voronoi-topology.mjs`.
+**Voronoi** (Muster-ID `skelett`, neu): Vasen erhalten echte unregelmäßige Zellöffnungen mit verbundenen Stegen, stabilem Fuß und geschlossenem Rand. Eierbecher behalten eine geschlossene Ei-Mulde und zeigen das Muster als Relief. Gravuren erhalten eine geschlossene Auflage. Prüfung: `node tools/check-skeleton.mjs` und `node tools/check-voronoi-topology.mjs`.
 
-**Fjordwelle** ersetzt Koralle: feine geschwungene Rippen auf weiten Wellen. Die Oberfläche bleibt geschlossen; Tiefe bis 6 mm bei Vasen, bis 1 mm bei Eierbechern. Prüfung: `node tools/check-coral.mjs`.
+**Fjordwelle** (Muster-ID `koralle`, neu): feine geschwungene Rippen auf weiten Wellen. Die Oberfläche bleibt geschlossen; Tiefe bis 6 mm bei Vasen, bis 1 mm bei Eierbechern. Prüfung: `node tools/check-coral.mjs`.
 
-Die gespeicherten Muster-IDs `skelett` und `koralle` bleiben kompatibel, laden aber die neuen Geometrien. Alle bisherigen Konfigurator-Funktionen sind verfügbar. Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physischer Probedruck der neuen Muster steht aus; bei Voronoi sind Brücken und gegebenenfalls Stützen im Slicer zu prüfen.
+Alle bisherigen Konfigurator-Funktionen sind verfügbar. Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physischer Probedruck der neuen Muster steht aus; bei Voronoi sind Brücken und gegebenenfalls Stützen im Slicer zu prüfen.
 
 ## Features
 
