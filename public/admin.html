@@ -328,7 +328,7 @@ function orderDetail(o) {
     `mailto:${encodeURIComponent(o.customer?.email || o.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   const name = (o.customer?.name || o.name || '').split(' ')[0];
   const lines = (o.lines || []).map(l => `<div>• ${l.qty}× ${lineLabel(l)} ${l.off ? `<span class="badge">−${l.off} %</span>` : ''}
-    — <a href="/orders/${o.orderId}/${encodeURIComponent(l.stlFile)}" download onclick="event.stopPropagation()">⬇ STL</a></div>`).join('')
+    — <a href="/orders/${o.orderId}/${encodeURIComponent(l.stlFile)}" download onclick="event.stopPropagation()">⬇ ${/\.3mf$/i.test(l.stlFile) ? '3MF (2 Filamente)' : 'STL'}</a></div>`).join('')
     || (o.stlFile ? `<a href="/orders/${o.orderId}/${encodeURIComponent(o.stlFile)}" download onclick="event.stopPropagation()">⬇ STL (Alt-Format)</a>` : '');
   return `<div onclick="event.stopPropagation()">
     <div class="grid">

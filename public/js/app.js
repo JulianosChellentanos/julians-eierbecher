@@ -518,13 +518,13 @@ async function rebuildText() {
   const warn = $('#text-warn'); warn.textContent = ''; warn.classList.remove('err');
   const opts = $('#gravur-options'); opts.classList.remove('disabled');
   $('#text-fix')?.remove();
-  if (!txt || !currentInfo) return;
-  const ti = currentInfo.text || {};
-  renderPrices(); // Gravur-Aufpreis hängt davon ab, ob die Gravur aktiv ist
+  const ti = (currentInfo && currentInfo.text) || {};
   // Download-Button: Farbschrift liefert ein 3MF mit zwei Teilen statt STL
-  const is3mf = !ti.disabled && exportExt(currentConfig()) === '3mf';
+  const is3mf = !!txt && !ti.disabled && exportExt(currentConfig()) === '3mf';
   $('#btn-download').textContent = is3mf ? '⬇ 3MF' : '⬇ STL';
   $('#btn-download').title = is3mf ? '3MF mit zwei Teilen (Körper + Schrift) — Bambu Studio ordnet die Filamente automatisch zu' : 'STL-Datei herunterladen — druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer & Co.';
+  if (!txt || !currentInfo) return;
+  renderPrices(); // Gravur-Aufpreis hängt davon ab, ob die Gravur aktiv ist
   if (ti.disabled) {
     warn.textContent = '⛔ ' + (ti.reason || 'Gravur hier nicht möglich.');
     warn.classList.add('err');

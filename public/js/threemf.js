@@ -112,6 +112,7 @@ function meshChunks(mesh, push) {
   push(enc.encode('</triangles></mesh>'));
 }
 
+const ID12 = '1 0 0 0 1 0 0 0 1 0 0 0'; // Identität (3×4, spaltenweise) für component/item
 const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 
 /**
@@ -128,6 +129,7 @@ export async function make3MF(objects, { application = 'OVJU Konfigurator' } = {
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">
 <metadata name="Application">${esc(application)}</metadata>
 <metadata name="BambuStudio:3mfVersion">1</metadata>
+<metadata name="Title">${esc(objects[0]?.name || 'OVJU')}</metadata>
 <metadata name="Copyright">Kundendesign — OVJU</metadata>
 <resources>`);
   for (const obj of objects) {
@@ -135,13 +137,13 @@ export async function make3MF(objects, { application = 'OVJU Konfigurator' } = {
     for (const part of obj.parts) {
       const id = nextId++;
       partIds.push({ id, part });
-      pushText(`<object id="${id}" type="model"><metadata name="name">${esc(part.name)}</metadata>`);
+      pushText(`<object id="${id}" name="${esc(part.name)}" type="model">`); // name als Attribut (Bambu liest es so)
       meshChunks(part.mesh, push);
       pushText('</object>');
     }
     const objId = nextId++;
-    pushText(`<object id="${objId}" type="model"><metadata name="name">${esc(obj.name)}</metadata><components>${partIds.map((p) => `<component objectid="${p.id}"/>`).join('')}</components></object>`);
-    buildItems.push(`<item objectid="${objId}" printable="1"/>`);
+    pushText(`<object id="${objId}" name="${esc(obj.name)}" type="model"><components>${partIds.map((p) => `<component objectid="${p.id}" transform="${ID12}"/>`).join('')}</components></object>`);
+    buildItems.push(`<item objectid="${objId}" transform="${ID12}" printable="1"/>`);
     settings.push(`  <object id="${objId}">
     <metadata key="name" value="${esc(obj.name)}"/>
     <metadata key="extruder" value="${obj.parts[0]?.extruder ?? 1}"/>
