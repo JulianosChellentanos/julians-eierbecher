@@ -4,6 +4,9 @@ const $ = (s) => document.querySelector(s);
 
 export const formatCode = (c) => c ? String(c).replace(/(.{3})(?=.)/g, '$1-') : '';
 export const normalizeCode = (raw) => String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^OVJU/, '');
+/** HTML-Sonderzeichen maskieren — Pflicht für alles, was aus Nutzer-/Serverdaten per innerHTML gerendert wird
+ *  (Gravurtext, Farbnamen, Codes …); geteilte Design-Codes/Listen bringen fremde Eingaben in den eigenen Browser. */
+export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 /** Design speichern → Code */
 export async function saveDesign(config) {

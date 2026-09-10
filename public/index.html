@@ -196,10 +196,12 @@
         <label class="check-row">
           <input type="checkbox" id="c-gravur">
           <span>✒️ <b>Persönliche Gravur</b> <span class="opt" id="gravur-price"></span><br>
-          <small>Name oder kurzer Text, plastisch in die Wand geprägt — in 7 Schriftarten.</small></span>
+          <small>Name, Datum oder kurzer Spruch, plastisch in die Wand geprägt — in 7 Schriftarten. Bei Vasen bis 30 Zeichen (längere Texte laufen um die Seite), beim Eierbecher je nach Form ca. 15–20 — der Zähler unter dem Feld sagt es dir.</small></span>
         </label>
         <div id="gravur-options" hidden>
-          <input type="text" id="i-text" maxlength="16" placeholder="z. B. JULIAN" autocomplete="off">
+          <input type="text" id="i-text" maxlength="30" placeholder="z. B. Anna & Tom 12.06.2027" autocomplete="off">
+          <div class="text-meta"><span class="tiny" id="text-arc" hidden></span><span class="tiny" id="text-count">0/30</span></div>
+          <div class="warn" id="text-warn"></div>
           <div class="font-row" id="font-row"></div>
           <div class="style-row" id="style-row"></div>
           <div class="tiny left" id="style-hint"></div>
@@ -216,7 +218,6 @@
             <span>Position (Höhe) <output id="s-textpos-val"></output></span>
             <input type="range" id="s-textpos" min="0.15" max="0.8" step="0.01" value="0.55">
           </label>
-          <div class="warn" id="text-warn"></div>
         </div>
       </section>
 
@@ -369,8 +370,8 @@
 <!-- Anmelden / Registrieren -->
 <dialog id="auth-modal">
   <div class="auth-wrap">
-    <div class="cart-head"><h2>Mein Konto</h2><button class="btn btn-ghost" id="auth-close">✕</button></div>
-    <div class="seg auth-tabs">
+    <div class="cart-head"><h2 id="auth-title">Mein Konto</h2><button class="btn btn-ghost" id="auth-close">✕</button></div>
+    <div class="seg auth-tabs" id="auth-tabs">
       <button type="button" class="pattern-btn active" id="at-login">Anmelden</button>
       <button type="button" class="pattern-btn" id="at-register">Konto anlegen</button>
     </div>
@@ -378,6 +379,7 @@
       <label>E-Mail <input type="email" id="al-email" required autocomplete="email"></label>
       <label>Passwort <input type="password" id="al-pw" required autocomplete="current-password"></label>
       <button class="btn btn-primary btn-lg" type="submit">Anmelden</button>
+      <button type="button" class="linkbtn auth-forgot-link" id="al-forgot">Passwort vergessen?</button>
     </form>
     <form id="auth-register" hidden>
       <label>Name <input type="text" id="ar-name" required autocomplete="name"></label>
@@ -386,6 +388,22 @@
       <button class="btn btn-primary btn-lg" type="submit">Konto anlegen</button>
       <p class="tiny">Deine Daten werden nur für Bestellungen genutzt — kein Newsletter, kein Spam.</p>
     </form>
+    <!-- Passwort vergessen: Link per E-Mail anfordern -->
+    <form id="auth-forgot" hidden>
+      <p class="tiny left">Gib deine E-Mail-Adresse ein — wir schicken dir einen Link, mit dem du ein neues Passwort setzen kannst.</p>
+      <label>E-Mail <input type="email" id="af-email" required autocomplete="email"></label>
+      <button class="btn btn-primary btn-lg" type="submit" id="af-submit">Link anfordern</button>
+      <button type="button" class="linkbtn auth-forgot-link" id="af-back">← Zurück zur Anmeldung</button>
+    </form>
+    <!-- Neues Passwort setzen (Aufruf über ?reset=TOKEN aus der E-Mail) -->
+    <form id="auth-reset" hidden>
+      <p class="tiny left">Wähle ein neues Passwort für dein Konto.</p>
+      <label>Neues Passwort <input type="password" id="ap-pw" required minlength="6" placeholder="mind. 6 Zeichen" autocomplete="new-password"></label>
+      <label>Passwort wiederholen <input type="password" id="ap-pw2" required minlength="6" autocomplete="new-password"></label>
+      <button class="btn btn-primary btn-lg" type="submit" id="ap-submit">Passwort speichern</button>
+      <button type="button" class="linkbtn auth-forgot-link" id="ap-forgot">Neuen Link anfordern</button>
+    </form>
+    <p class="auth-info" id="auth-info" hidden></p>
     <div class="warn" id="auth-err"></div>
   </div>
 </dialog>

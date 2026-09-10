@@ -2,8 +2,8 @@
 // Erzeugt wasserdichte (manifold) Meshes in Millimetern, bereit für den 3D-Druck.
 import * as THREE from 'three';
 import { buildVoronoiShell, cellDistance, cellCount } from './voronoi-shell.js';
-import { buildGlyphField, roundedRectSDF, TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC } from './textrelief.js';
-export { TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC };
+import { buildGlyphField, measureText, roundedRectSDF, TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC, FRONT_TEXT_ARC } from './textrelief.js';
+export { TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC, FRONT_TEXT_ARC };
 
 // ---------------------------------------------------------------------------
 // Produkte & Form-Presets: Silhouetten als (t, r)-Kontrollpunkte.
@@ -406,55 +406,72 @@ export function buildModel(params) {
       textInfo.reason = `Gravur bei über ${String(maxAmp).replace('.', ',')} mm Mustertiefe nicht möglich — Tiefe auf ${String(maxAmp).replace('.', ',')} mm setzen oder anderes Muster wählen.`;
     }
     if (!textInfo.disabled) {
-      // (3) Schriftgröße: Untergrenze je Schrift, Bogen ≤ MAX_TEXT_ARC — sonst verkleinern bis minCap
+      // (3) Schriftgröße — Reihenfolge nach Lesbarkeit (monoton: mehr Zeichen machen den Text nie größer):
+      //   a) gewünschte Größe, solange der Bogen ≤ FRONT_TEXT_ARC (130°: von vorn in einem Blick lesbar)
+      //   b) darüber verkleinern bis zur kleinsten druckbaren Größe der Schrift (minCap), Bogen bleibt ≤ 130°
+      //   c) reicht das nicht, läuft der Text bei minCap um die Seiten (≤ MAX_TEXT_ARC 200°, Hinweis „drehen“)
+      //   d) sonst deaktivieren mit der maximalen Zeichenzahl.
+      // Dazu die Naht-Grenze: Textbogen + Kartuschenrand + Rampe müssen auf jeder Zeile des Bands diesseits
+      // von θ = ±180° bleiben — bei kleinem Radius (Eierbecher-Stiel, eigene Formen) greift sie vor den 200°.
+      // Die Breite wird ohne Rasterung gemessen (∝ cap) — so entsteht das Höhenfeld nur einmal.
       const wanted = Math.min(12, Math.max(rule.minCap, p.textSize ?? 7));
-      let cap = wanted, field = null;
       const rMid = R(tC);
-      for (let i = 0; i < 10; i++) {
-        field = buildGlyphField({ font: p.textFont, fallbackFont: p.fallbackFont, fontKey, text: txt, cap, style, product: p.product });
-        if (!field || field.width / rMid <= MAX_TEXT_ARC || cap <= rule.minCap + 1e-6) break;
-        cap = Math.max(rule.minCap, cap * 0.9);
+      const m = measureText({ font: p.textFont, fallbackFont: p.fallbackFont, fontKey, text: txt, cap: wanted });
+      // Kartuschen-Modus (hängt nur von Muster & Stil ab) → Rampenbreite um den Text:
+      //  none   = Buchstaben direkt auf der Wand (Muster nur unter den Buchstaben geglättet) — glatte Wände,
+      //           feine Texturen und langwellige Muster (Querwellen, Hammerschlag ≤ 1,2 mm)
+      //  flush  = Muster wird um den Text über mehrere mm weich auf die mittlere Wandfläche ausgeblendet
+      //  shield = Stil „gehämmert“: erhabenes Schild (0,6 mm) mit klarem Rand auf dem geglätteten Feld
+      const hammerPlate = style === 'gehaemmert';
+      let plateMode = (a <= 0.45 || (p.pattern === 'gehaemmert' && a <= 1.2)) ? 'none' : 'flush';
+      if (hammerPlate) plateMode = 'shield';
+      const level = plateMode === 'shield' ? 0.6 : 0;
+      // Übergänge: das Muster wird über mehrere mm ausgeblendet (kein Gürtel, keine Kante);
+      // die Unterkante (Fläche zeigt nach unten) zusätzlich ≤ 40° für den Druck
+      const feather = plateMode === 'none' ? 0 : Math.max(6.0, 4.0 * a);   // Muster-Ausblendung außerhalb des Rechtecks
+      const rimRamp = 0.8;                                                    // Schildrand (steil, definiert)
+      const rampSide = feather;
+      const rampBottom = plateMode === 'none' ? 0 : Math.max(feather, (level + a) / tan40);
+      const rampTop = feather;
+      const arcAt = (c) => (m.width * c / wanted) / rMid;                    // Textbogen (rad) bei Großbuchstabenhöhe c
+      const seamArc = (c) => {                                                // größter Bogen, der samt Rand/Rampe vor der Naht bleibt
+        const hh = (m.height * c / wanted) / 2 + Math.max(1.5, 0.3 * c);
+        const yA = Math.max(CHAMFER, tC * H - hh - rampBottom - 0.4), yB = Math.min(H, tC * H + hh + rampTop + 0.4);
+        let rMin = Infinity;
+        for (let i = 0; i <= 12; i++) rMin = Math.min(rMin, R((yA + (i / 12) * (yB - yA)) / H));
+        return 2 * (Math.PI * rMin - Math.max(2.5, 0.45 * c) - rampSide - 1.0) / rMid;
+      };
+      let cap = wanted, arcLim = MAX_TEXT_ARC, field = null;
+      if (m.width > 0) {
+        if (arcAt(cap) > FRONT_TEXT_ARC) cap = Math.max(rule.minCap, cap * FRONT_TEXT_ARC / arcAt(cap));
+        arcLim = Math.min(MAX_TEXT_ARC, seamArc(cap));
+        if (arcAt(cap) > arcLim) { cap = Math.max(rule.minCap, cap * arcLim / arcAt(cap)); arcLim = Math.min(MAX_TEXT_ARC, seamArc(cap)); }
+        if (arcAt(cap) <= arcLim + 1e-9) field = buildGlyphField({ font: p.textFont, fallbackFont: p.fallbackFont, fontKey, text: txt, cap, style, product: p.product });
       }
-      if (!field) {
+      textInfo.arcMaxDeg = Math.round((arcLim * 180) / Math.PI);
+      if (!(m.width > 0) || (!field && arcAt(cap) <= arcLim + 1e-9)) {
         textInfo.disabled = true; textInfo.reason = 'Diese Zeichen gibt es in der gewählten Schrift nicht — bitte andere Schrift wählen.';
-      } else if (field.width / rMid > MAX_TEXT_ARC) {
-        const maxChars = Math.max(1, Math.floor(txt.length * (MAX_TEXT_ARC * rMid) / field.width));
-        textInfo.disabled = true; textInfo.reason = `Text zu lang für diese Vorderseite — maximal ca. ${maxChars} Zeichen in dieser Schrift.`;
+      } else if (!field) {
+        const maxChars = Math.max(1, Math.floor(txt.length * arcLim / arcAt(cap)));
+        textInfo.disabled = true; textInfo.maxChars = maxChars; // für den Zeichenzähler im Konfigurator
+        textInfo.reason = `Text zu lang für diesen Umfang — maximal ca. ${maxChars} Zeichen in dieser Schrift (auch bei kleinster Größe ${String(rule.minCap).replace('.', ',')} mm).`;
       } else {
         textInfo.size = cap;
         textInfo.arcDeg = (field.width / rMid) * 180 / Math.PI;
+        const wraps = field.width / rMid > FRONT_TEXT_ARC + 1e-9;
         const warns = [];
         if (textInfo.warn) warns.push(textInfo.warn);
-        if (cap < (p.textSize ?? 7) - 0.01 && cap < wanted - 0.01) warns.push(`Text automatisch auf ${cap.toFixed(1)} mm verkleinert, damit er auf die Vorderseite passt.`);
+        if (cap < (p.textSize ?? 7) - 0.01 && cap < wanted - 0.01) warns.push(`Text automatisch auf ${cap.toFixed(1)} mm verkleinert, damit er ${wraps ? 'auf den Umfang' : 'auf die Vorderseite'} passt.`);
         if ((p.textSize ?? 7) < rule.minCap - 0.01) warns.push(`Schrift auf ${rule.minCap} mm vergrößert, damit die feinen Striche druckbar sind.`);
+        if (wraps) warns.push('Text läuft um die Seite — zum Lesen drehen.');
         if (field.missing) warns.push(`Zeichen „${field.missing}“ gibt es in dieser Schrift nicht.`);
         textInfo.warn = warns.join(' ');
-        // (4) Kartusche je nach Mustertiefe: keine (≤ 0,45) · bündiges Schild (≤ 1,6) · Medaillon (≤ 2,5)
-        const hammerPlate = style === 'gehaemmert';
-        // Kartusche: keine bei glatter/feiner Fläche (a ≤ 0,45), sonst bündig knapp über den Gratspitzen;
-        // „gehämmert“ bekommt immer ein Schild (klarer Rand, gehämmerte Fläche)
-        // Kartuschen-Modus:
-        //  none   = Buchstaben direkt auf der Wand (Muster nur unter den Buchstaben geglättet) — glatte Wände,
-        //           feine Texturen und langwellige Muster (Querwellen, Hammerschlag ≤ 1,2 mm)
-        //  flush  = Muster wird um den Text über mehrere mm weich auf die mittlere Wandfläche ausgeblendet
-        //  shield = Stil „gehämmert“: erhabenes Schild mit klarem Rand (über den Gratspitzen)
-        // Querwellen: Feld folgt dem lokalen Wellenniveau der Textmitte (kein Plaque-Schnitt durch die Welle);
-        // gehämmerte Wand: Buchstaben direkt auf den Dellen (Dellen unter den Buchstaben geglättet), tiefer geprägt
+        // (4) Kartusche: Querwellen — Feld folgt dem lokalen Wellenniveau der Textmitte (kein Plaque-Schnitt
+        // durch die Welle); gehämmerte Wand: Buchstaben direkt auf den Dellen (darunter geglättet), tiefer geprägt
         const followWave = p.pattern === 'querwellen';
-        let plateMode = (a <= 0.45 || (p.pattern === 'gehaemmert' && a <= 1.2)) ? 'none' : 'flush';
-        if (hammerPlate) plateMode = 'shield';
-        // shield: Muster wird wie bei flush ausgeblendet, das Schild sitzt erhaben (0,6 mm) auf dem geglätteten Feld
-        const level = plateMode === 'shield' ? 0.6 : 0;
         let yText = tC * H;
         const halfW = field.width / 2 + Math.max(2.5, 0.45 * cap), halfH = field.height / 2 + Math.max(1.5, 0.3 * cap);
         const plateR = 0.6 * halfH;
-        // Übergänge: das Muster wird über mehrere mm ausgeblendet (kein Gürtel, keine Kante);
-        // die Unterkante (Fläche zeigt nach unten) zusätzlich ≤ 40° für den Druck
-        const feather = plateMode === 'none' ? 0 : Math.max(6.0, 4.0 * a);   // Muster-Ausblendung außerhalb des Rechtecks
-        const rimRamp = 0.8;                                                    // Schildrand (steil, definiert)
-        const rampSide = feather;
-        const rampBottom = plateMode === 'none' ? 0 : Math.max(feather, (level + a) / tan40);
-        const rampTop = feather;
         // Eierbecher: Band unter dem Rand halten
         if (!isVase) {
           const maxY = H - 3.0 - halfH - rampTop;
@@ -961,7 +978,7 @@ export function bendTextOntoCup(textGeo, info, textPos = 0.55) {
   return { arc: wdt / rMid, depth };
 }
 
-/** Maximale Textbreite als Bogen (144°) — für UI-Feedback. */
+/** Maximale Textbreite als Bogen (200°, ab 130° läuft der Text um die Seite) — für UI-Feedback. */
 export function maxTextArc() {
   return MAX_TEXT_ARC;
 }

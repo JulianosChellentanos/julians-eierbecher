@@ -1,6 +1,6 @@
 // OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing)
 import { makeExport } from './modelfactory.js';
-import { copyText, formatCode } from './designcode.js';
+import { copyText, formatCode, esc } from './designcode.js';
 import { PRODUCTS, PATTERNS, FLOWS, FONTS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
 
@@ -68,7 +68,7 @@ function totals() {
 
 export function itemTitle(it) {
   const prod = PRODUCTS[it.product];
-  const preset = it.config.preset === 'eigene' ? 'Eigene Form' : (prod.presets[it.config.preset]?.label || it.config.preset);
+  const preset = it.config.preset === 'eigene' ? 'Eigene Form' : (prod.presets[it.config.preset]?.label || 'Unbekannt');
   return `${prod.label} „${preset}“`;
 }
 export function itemSub(it) {
@@ -135,11 +135,11 @@ function renderCart() {
       const { off, line } = linePrice(it);
       const nextTier = (pricing.products[it.product].discounts || []).find((t) => t.qty > it.qty);
       return `<div class="cart-item">
-        <img src="${it.thumb}" alt="">
+        <img src="${esc(it.thumb)}" alt="">
         <div class="ci-main">
-          <b>${itemTitle(it)}</b>
-          <small>${itemSub(it)}</small>
-          ${it.code ? `<button class="ci-code" data-code="${it.code}" title="Design-Code kopieren — damit kannst du dieses Design jederzeit wieder laden">🔖 ${formatCode(it.code)}</button>` : ''}
+          <b>${esc(itemTitle(it))}</b>
+          <small>${esc(itemSub(it))}</small>
+          ${it.code ? `<button class="ci-code" data-code="${esc(it.code)}" title="Design-Code kopieren — damit kannst du dieses Design jederzeit wieder laden">🔖 ${esc(formatCode(it.code))}</button>` : ''}
           <div class="ci-qty">
             <span class="ci-step"><button data-i="${i}" data-d="-1">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1">+</button></span>
             ${off ? `<span class="ci-off">−${off} %</span>` : ''}
@@ -192,9 +192,9 @@ function renderCheckoutSummary() {
   const t = checkoutTotals();
   $('#co-summary').innerHTML = cart.map((it) => {
     const { off, line } = linePrice(it);
-    return `<div><span>${it.qty}× ${itemTitle(it)}${off ? ` <em>(−${off} %)</em>` : ''}</span><b>${fmt(line)}</b></div>`;
+    return `<div><span>${it.qty}× ${esc(itemTitle(it))}${off ? ` <em>(−${off} %)</em>` : ''}</span><b>${fmt(line)}</b></div>`;
   }).join('') + `
-    ${coupon ? `<div><span>🎟️ Gutschein „${coupon.code}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
+    ${coupon ? `<div><span>🎟️ Gutschein „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
     <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>`;
 }

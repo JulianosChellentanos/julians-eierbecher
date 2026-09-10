@@ -33,7 +33,13 @@ export const fontAllowsStyle = (fontKey, style) => {
 };
 
 export const TEXT_FLANK_DEG = 55;          // steilste Unterseite (FDM ohne Stützen)
-export const MAX_TEXT_ARC = (110 * Math.PI) / 180; // Text darf max. 110° des Umfangs belegen (bleibt ganz auf der Vorderseite)
+// Bogenmaße des Textes auf dem Umfang (Bogenlänge / Radius an der Textzeile):
+//  FRONT_TEXT_ARC — bis hierhin ist der Text von vorn in einem Blick lesbar; längere Texte werden
+//                   zuerst bis zur kleinsten druckbaren Größe (minCap) verkleinert …
+//  MAX_TEXT_ARC   — … und dürfen erst dann um die Seiten laufen (Hinweis „zum Lesen drehen“).
+//                   Über 200° bleibt kein Platz mehr für Kartusche/Rampe vor der Naht bei θ = ±180°.
+export const FRONT_TEXT_ARC = (130 * Math.PI) / 180;
+export const MAX_TEXT_ARC = (200 * Math.PI) / 180;
 
 const PX = 20;      // Raster-Auflösung (px/mm)
 const PAD = 2.0;    // Rand (mm)
@@ -131,6 +137,22 @@ function layoutGlyphs(font, fallbackFont, text, cap, fontKey) {
     x += (g.ha || 0) * scale + rule.tracking * cap;
   }
   return { glyphs, missing };
+}
+
+/**
+ * Textmaße (mm) ohne Rasterung — für die Größenwahl, bevor das Höhenfeld gebaut wird.
+ * Breite und Höhe skalieren exakt linear mit `cap` (Vorschub, Laufweite und Konturen ∝ Schriftgrad),
+ * eine Messung genügt also für alle Größen.
+ * @returns {{width:number,height:number,missing:string}} width 0 = kein darstellbares Zeichen
+ */
+export function measureText({ font, fallbackFont, fontKey, text, cap }) {
+  const { glyphs, missing } = layoutGlyphs(font, fallbackFont, text, cap, fontKey);
+  if (!glyphs.length) return { width: 0, height: 0, missing };
+  let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity;
+  for (const loops of glyphs) for (const loop of loops) for (const q of loop) {
+    if (q[0] < minx) minx = q[0]; if (q[0] > maxx) maxx = q[0]; if (q[1] < miny) miny = q[1]; if (q[1] > maxy) maxy = q[1];
+  }
+  return { width: maxx - minx, height: maxy - miny, missing };
 }
 
 const fieldCache = new Map();

@@ -30,6 +30,9 @@
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* hidden-Attribut muss auch gegen eigene display-Regeln gewinnen (dialog form, .auth-wrap form, .seg, .slider-row,
+   .pay-row …) — Autor-Deklarationen schlagen sonst das UA-[hidden]. Gleiche Regel wie in admin.html. */
+[hidden] { display: none !important; }
 html { scroll-behavior: smooth; }
 body {
   font-family: var(--sans);
@@ -363,6 +366,13 @@ input[type=range]::-moz-range-thumb {
   margin-bottom: 10px; outline: none; transition: border-color 0.15s;
 }
 #i-text:focus { border-color: var(--ink); }
+/* Zeile unter dem Gravurfeld: links Umfangs-Hinweis (nur bei umlaufendem Text), rechts Zeichenzähler */
+.text-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: -5px 3px 8px; min-height: 1em; }
+.text-meta .tiny { text-align: left; }
+#text-count { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; transition: color 0.15s; }
+#text-count.near { color: var(--accent-dark); font-weight: 700; }
+#text-count.over { color: #b3261e; font-weight: 700; } /* Engine sagt „zu lang“ — kein gültiges „30/30“ */
+#text-warn { margin: -2px 3px 8px; } /* direkt unter dem Feld (nicht unter Slidern/PWA-Banner) */
 .warn { font-size: 0.8rem; color: var(--accent-dark); min-height: 1.1em; }
 
 .swatch-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; }
@@ -1145,3 +1155,9 @@ section[id] { scroll-margin-top: 72px; }
 .tc-label { font-weight: 700; font-size: 0.85rem; margin-bottom: 6px; }
 .tc-label .opt { font-weight: 500; color: var(--ink-soft); font-size: 0.78rem; }
 .swatches-sm .swatch { width: 26px; height: 26px; }
+
+/* Passwort vergessen (Auth-Modal): Link unter dem Login, Hinweis-Text, Reset-Formular */
+.auth-forgot-link { align-self: flex-end; font-size: 0.8rem; margin-top: -4px; }
+.auth-info { font-size: 0.85rem; line-height: 1.45; color: #3f7d4f; text-align: left; margin: 0; }
+.dark .auth-info { color: #8fd19e; }
+#auth-forgot .tiny.left, #auth-reset .tiny.left { margin-bottom: 2px; }

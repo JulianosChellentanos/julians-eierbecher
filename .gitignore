@@ -6,3 +6,4 @@ public/img/gallery/
 
 # Große PNG-Originale der KI-Bildserie (30+ MB) bleiben lokal, die Website nutzt die WebP-Dateien
 public/img/studio/*.png
+tmp-tests/

@@ -3,539 +3,594 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OVJU Admin</title>
+<meta name="robots" content="noindex">
+<title>OVJU Studio — Admin</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>">
 <style>
-  :root{--bg:#f4efe7;--card:#fbf8f2;--ink:#211d18;--soft:#6b6257;--line:#ddd3c3;--acc:#a8563a;--green:#3c7a3c}
-  *{box-sizing:border-box;margin:0}
-  body{font-family:system-ui;background:var(--bg);color:var(--ink);padding:30px 22px;max-width:1240px;margin:0 auto}
-  h1{font-size:1.5rem;margin-bottom:4px} h2{font-size:1.08rem;margin:0 0 14px} h3{font-size:.95rem;margin:16px 0 8px}
-  .muted{color:var(--soft);font-size:.88rem}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-top:14px}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid #eee5d5;vertical-align:top;font-size:.88rem}
-  th{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--soft)}
-  input,select,textarea{padding:8px 10px;border:1.5px solid var(--line);border-radius:9px;font:inherit;background:#fff;max-width:100%}
-  input[type=number]{width:88px} input[type=color]{padding:2px;width:44px;height:36px;cursor:pointer}
-  textarea{width:100%;resize:vertical}
-  button{padding:9px 18px;border-radius:999px;border:none;background:var(--ink);color:var(--bg);font-weight:600;cursor:pointer;font-size:.88rem}
-  button.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
-  button.mini{padding:5px 12px;font-size:.78rem}
-  a{color:var(--acc);font-weight:600;text-decoration:none} a:hover{text-decoration:underline}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
-  label{display:flex;flex-direction:column;gap:4px;font-size:.78rem;font-weight:600;color:var(--soft)}
-  label.inline{flex-direction:row;align-items:center;gap:8px}
-  .tabs{display:flex;gap:6px;margin-top:18px;flex-wrap:wrap}
-  .tabs button{background:transparent;color:var(--soft);border:1.5px solid var(--line)}
-  .tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-  .ok{color:var(--green);font-weight:600} .warn{color:var(--acc)}
-  .badge{font-size:.7rem;padding:2px 9px;border-radius:99px;border:1px solid var(--line);white-space:nowrap}
-  .badge.st-neu{background:#fff3d6}.badge.st-bezahlt{background:#e3f0e3}.badge.st-im-druck{background:#e3ecf6}.badge.st-versendet{background:#eee}.badge.st-storniert{background:#f6e3e3}
-  #login{max-width:380px;margin:80px auto;text-align:center}
-  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  small.h{color:var(--soft);font-weight:400}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
-  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
-  .kpi b{font-size:1.5rem;display:block} .kpi span{font-size:.76rem;color:var(--soft);text-transform:uppercase;letter-spacing:.05em}
-  .bar{height:8px;border-radius:5px;background:var(--acc);min-width:3px}
-  .toplist div{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:.85rem}
-  .toplist span.n{min-width:110px}
-  .sw{width:22px;height:22px;border-radius:50%;border:1px solid rgba(0,0,0,.15);display:inline-block;vertical-align:middle}
-  .order-detail{background:#f8f3ea;border-radius:10px;padding:14px 16px;margin:4px 0 10px}
-  .order-detail .grid{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
-  tr.o-row{cursor:pointer} tr.o-row:hover td{background:#f8f3ea}
-  .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-  .filters input[type=text]{flex:1;min-width:200px}
-  .save-bar{position:sticky;bottom:0;background:var(--bg);padding:14px 0;display:flex;gap:14px;align-items:center}
-  .save-bar[hidden]{display:none}
+  @font-face { font-family: 'Fraunces'; src: url('/fonts/fraunces-latin.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
+  @font-face { font-family: 'Inter'; src: url('/fonts/inter-latin.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
+  :root {
+    --bg: #f4efe7; --bg-soft: #ece5d8; --card: #fbf8f2; --ink: #211d18; --ink-soft: #6b6257;
+    --accent: #c86f4a; --accent-dark: #a8563a; --line: #ddd3c3; --green: #3c6b45; --red: #9a3f3f; --blue: #3f6a9a;
+    --radius: 16px; --shadow: 0 10px 40px rgba(60, 45, 30, .10);
+    --serif: 'Fraunces', Georgia, serif; --sans: 'Inter', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--ink); line-height: 1.5; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+  h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.15; }
+  h1 { font-size: 1.7rem; } h2 { font-size: 1.15rem; margin-bottom: 12px; } h3 { font-size: .98rem; margin: 14px 0 8px; }
+  h2 small, h3 small { font-family: var(--sans); font-weight: 400; color: var(--ink-soft); font-size: .8rem; }
+  p { margin: 0; }
+  .muted { color: var(--ink-soft); font-size: .86rem; }
+  a { color: var(--accent-dark); font-weight: 600; text-decoration: none; } a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82em; background: var(--bg-soft); padding: 1px 6px; border-radius: 6px; }
+  button { font: inherit; cursor: pointer; border: none; border-radius: 999px; padding: 9px 18px; background: var(--ink); color: var(--bg); font-weight: 600; font-size: .88rem; display: inline-flex; align-items: center; gap: 6px; transition: background .15s, transform .1s; white-space: nowrap; }
+  button:hover { background: #3a332b; } button:active { transform: translateY(1px); } button:disabled { opacity: .45; cursor: default; transform: none; }
+  button.ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--line); } button.ghost:hover { background: var(--bg-soft); }
+  button.acc { background: var(--accent); color: #fff; } button.acc:hover { background: var(--accent-dark); }
+  button.mini { padding: 5px 12px; font-size: .78rem; }
+  button.danger { background: transparent; color: var(--red); border: 1.5px solid #e4c3c3; } button.danger:hover { background: #f8e9e9; }
+  button.link { background: none; color: var(--accent-dark); padding: 0; border-radius: 0; font-weight: 600; } button.link:hover { background: none; text-decoration: underline; }
+  input, select, textarea { font: inherit; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 11px; background: #fff; color: var(--ink); max-width: 100%; min-width: 0; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(200, 111, 74, .15); }
+  input[type=number] { width: 100px; } input[type=color] { padding: 2px; width: 44px; height: 38px; cursor: pointer; border-radius: 9px; }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+  input[type=file] { border: none; background: transparent; padding: 0; }
+  textarea { width: 100%; resize: vertical; }
+  label { display: flex; flex-direction: column; gap: 5px; font-size: .76rem; font-weight: 600; color: var(--ink-soft); letter-spacing: .01em; }
+  label.inline { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; color: var(--ink); font-size: .88rem; }
+  label small { font-weight: 400; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 16px; }
+  .card.flat { box-shadow: none; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 14px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .right { margin-left: auto; }
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 10px 11px; text-align: left; border-bottom: 1px solid #eee5d5; vertical-align: top; font-size: .87rem; }
+  th { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-soft); font-weight: 700; white-space: nowrap; }
+  tr.click { cursor: pointer; } tr.click:hover td { background: #f6f0e6; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .badge { display: inline-block; font-size: .7rem; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line); white-space: nowrap; font-weight: 600; background: #fff; line-height: 1.4; }
+  .st-neu { background: #fff3d6; border-color: #eed9a3; } .st-bezahlt { background: #e3f0e3; border-color: #bfd7bf; }
+  .st-im-druck { background: #e3ecf6; border-color: #b8cde6; } .st-gedruckt { background: #ece4f6; border-color: #cfc0e4; }
+  .st-versendet { background: #eee8dc; border-color: #d3c5a9; } .st-abgeschlossen { background: #e6e6e6; border-color: #cfcfcf; }
+  .st-storniert { background: #f6e3e3; border-color: #e5bcbc; color: var(--red); }
+  .pr-offen { background: #fff; } .pr-druckt { background: #e3ecf6; border-color: #b8cde6; } .pr-fertig { background: #e3f0e3; border-color: #bfd7bf; }
+  .sw { width: 20px; height: 20px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .18); display: inline-block; vertical-align: middle; flex: none; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .5); }
+  .sw.sm { width: 13px; height: 13px; }
+  .empty { color: var(--ink-soft); font-size: .88rem; padding: 12px 0; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { border: 1.5px solid var(--line); background: #fff; color: var(--ink-soft); padding: 5px 12px; font-size: .78rem; font-weight: 600; }
+  .chip:hover { background: var(--bg-soft); } .chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .chip .n { opacity: .7; font-weight: 500; margin-left: 4px; }
+  .switch { position: relative; width: 44px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch span { position: absolute; inset: 0; background: var(--line); border-radius: 99px; transition: .2s; cursor: pointer; }
+  .switch span::after { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: .2s; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+  .switch input:checked + span { background: var(--accent); } .switch input:checked + span::after { transform: translateX(18px); }
+  .hint { background: #fbf3e4; border: 1px solid #ecd9b3; border-radius: 12px; padding: 10px 14px; font-size: .84rem; color: #6b5330; }
+  .hint.info { background: #e9f0f7; border-color: #c6d6e8; color: #2f4a66; }
+  kbd { font: 600 .7rem var(--sans); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: var(--ink-soft); background: #fff; }
+
+  /* ---------- Login ---------- */
+  .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: radial-gradient(700px 340px at 18% -10%, rgba(200, 111, 74, .14), transparent 70%), radial-gradient(700px 340px at 85% 0%, rgba(156, 175, 136, .16), transparent 70%); }
+  .login { width: min(400px, 100%); text-align: center; padding: 38px 32px 32px; }
+  .login .logo { font-family: var(--serif); font-size: 1.8rem; font-weight: 700; letter-spacing: .03em; }
+  .login .logo small { display: block; font-family: var(--sans); font-size: .72rem; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-top: 4px; }
+  .login input { width: 100%; text-align: center; font-size: 1rem; margin: 22px 0 12px; padding: 12px; }
+  .login button { width: 100%; justify-content: center; padding: 12px; }
+  .login .err { color: var(--red); font-weight: 600; font-size: .86rem; margin-top: 12px; min-height: 1.2em; }
+
+  /* ---------- Shell ---------- */
+  .shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh; }
+  .side { background: var(--bg-soft); border-right: 1px solid var(--line); padding: 20px 14px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+  .side-head { font-family: var(--serif); font-size: 1.3rem; font-weight: 700; padding: 6px 10px 16px; letter-spacing: .02em; }
+  .side-head small { display: block; font-family: var(--sans); font-size: .66rem; color: var(--accent); font-weight: 700; letter-spacing: .16em; text-transform: uppercase; margin-top: 2px; }
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav button { width: 100%; justify-content: flex-start; text-align: left; gap: 10px; background: transparent; color: var(--ink); border-radius: 12px; padding: 9px 12px; font-weight: 500; font-size: .9rem; }
+  .nav button:hover { background: rgba(255, 255, 255, .6); }
+  .nav button.on { background: var(--card); box-shadow: 0 2px 10px rgba(60, 45, 30, .09); font-weight: 700; }
+  .nav .ic { width: 22px; text-align: center; font-size: 1rem; }
+  .cnt { margin-left: auto; background: var(--accent); color: #fff; font-size: .66rem; padding: 1px 7px; border-radius: 99px; font-weight: 700; }
+  .cnt:empty { display: none; }
+  .side-counters { margin-top: auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: .72rem; color: var(--ink-soft); }
+  .side-counters b { display: block; font-size: 1.35rem; color: var(--ink); font-family: var(--serif); line-height: 1.2; }
+  .side-foot { font-size: .7rem; color: var(--ink-soft); padding: 10px 10px 0; }
+  .main { min-width: 0; display: flex; flex-direction: column; }
+  .top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(14px) saturate(1.2); border-bottom: 1px solid var(--line); }
+  .top-row { display: flex; gap: 12px; align-items: center; padding: 11px 26px; }
+  .brand-m { display: none; font-family: var(--serif); font-weight: 700; font-size: 1.1rem; white-space: nowrap; }
+  .search { flex: 1; min-width: 140px; position: relative; }
+  .search input { width: 100%; padding: 9px 40px 9px 36px; border-radius: 999px; }
+  .search .lupe { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); pointer-events: none; opacity: .6; }
+  .search kbd { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); }
+  .top-actions { display: flex; gap: 8px; }
+  .tabbar { display: none; }
+  .content { padding: 24px 26px 60px; max-width: 1320px; width: 100%; }
+  .pane-head { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 18px; }
+  .pane-head p { color: var(--ink-soft); font-size: .9rem; margin-top: 2px; }
+  .pane[hidden] { display: none; }
+
+  /* ---------- Save-Bar ---------- */
+  .save-bar { position: sticky; bottom: 0; z-index: 15; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(12px); border-top: 1px solid var(--line); padding: 12px 26px; display: flex; gap: 14px; align-items: center; margin-top: auto; }
+  .save-bar[hidden] { display: none; }
+  .save-bar .state { font-size: .84rem; color: var(--ink-soft); }
+  .save-bar .state.dirty { color: var(--accent-dark); font-weight: 600; }
+  .save-bar .state.dirty::before { content: '●'; margin-right: 6px; }
+
+  /* ---------- Übersicht ---------- */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(122px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); min-width: 0; }
+  .kpi b { font-size: 1.3rem; display: block; font-family: var(--serif); font-weight: 600; line-height: 1.2; margin-top: 4px; }
+  .kpi span { font-size: .64rem; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .07em; font-weight: 700; }
+  .todo { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .todo-col { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+  .todo-col h3 { margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+  .todo-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid #f0e8da; font-size: .83rem; }
+  .todo-item:first-of-type { border-top: none; }
+  .todo-item .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .todo-item .age { color: var(--ink-soft); font-size: .74rem; white-space: nowrap; }
+  .todo-item .age.old { color: var(--red); font-weight: 700; }
+  .chart { width: 100%; height: auto; display: block; }
+  .chart rect.bar { fill: var(--accent); transition: fill .15s; }
+  .chart rect.bar:hover { fill: var(--accent-dark); }
+  .chart text { font-family: var(--sans); font-size: 11px; fill: var(--ink-soft); }
+  .chart line { stroke: var(--line); stroke-width: 1; }
+  .toplist div { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: .85rem; }
+  .toplist .n { min-width: 110px; display: flex; align-items: center; gap: 8px; }
+  .toplist .bar { height: 8px; border-radius: 5px; background: var(--accent); min-width: 3px; }
+  .recent div { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid #eee5d5; font-size: .85rem; cursor: pointer; }
+  .recent div:hover { background: #f6f0e6; }
+
+  /* ---------- Bestellungen ---------- */
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .filters select { padding: 7px 10px; font-size: .84rem; }
+  .filters .active-q { background: var(--bg-soft); border-radius: 999px; padding: 5px 12px; font-size: .8rem; display: inline-flex; gap: 8px; align-items: center; }
+  .lines-short { color: var(--ink-soft); font-size: .8rem; }
+  .nowrap { white-space: nowrap; }
+  table.tight th, table.tight td { padding: 9px 6px; font-size: .84rem; }
+  table.tight .badge { font-size: .66rem; padding: 2px 8px; }
+  #orders-table .trk { overflow-wrap: anywhere; }
+  #orders-table .mail { display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  .prog { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; white-space: nowrap; }
+  @media (min-width: 701px) { #mail-log th:nth-child(3), #mail-log td:nth-child(3) { min-width: 260px; } #mail-log td:first-child { white-space: nowrap; } }
+  .prog i { width: 40px; height: 6px; border-radius: 4px; background: var(--bg-soft); overflow: hidden; display: inline-block; }
+  .prog i::before { content: ''; display: block; height: 100%; width: var(--w, 0%); background: var(--green); }
+
+  /* ---------- Drawer ---------- */
+  .drawer-bg { position: fixed; inset: 0; background: rgba(33, 29, 24, .38); z-index: 55; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .drawer-bg.open { opacity: 1; pointer-events: auto; }
+  .drawer { position: fixed; top: 0; right: 0; height: 100dvh; width: min(680px, 100vw); background: var(--card); box-shadow: -10px 0 40px rgba(60, 45, 30, .2); z-index: 60; overflow-y: auto; overscroll-behavior: contain; transform: translateX(102%); transition: transform .25s ease; }
+  .drawer.open { transform: none; }
+  .drawer-head { position: sticky; top: 0; background: color-mix(in srgb, var(--card) 94%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); padding: 14px 22px; display: flex; justify-content: space-between; align-items: center; gap: 10px; z-index: 2; }
+  .drawer-head h2 { margin: 0; font-size: 1.25rem; flex: 1; min-width: 0; }
+  .drawer-head button { flex: none; }
+  .drawer-body { padding: 6px 22px 50px; }
+  .sect { border-top: 1px solid var(--line); padding: 16px 0; }
+  .sect:first-child { border-top: none; }
+  .sect h3 { margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  .sect h3 .right { font-family: var(--sans); font-weight: 500; font-size: .8rem; color: var(--ink-soft); }
+  .stepper { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  .step { display: inline-flex; align-items: center; gap: 6px; font-size: .74rem; font-weight: 600; color: var(--ink-soft); padding: 6px 11px; border-radius: 999px; border: 1.5px solid var(--line); background: #fff; }
+  .step.done { background: var(--bg-soft); color: var(--ink); }
+  .step.cur { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .step.next { border-color: var(--accent); color: var(--accent-dark); cursor: pointer; }
+  .step.next:hover { background: var(--accent); color: #fff; }
+  .step-arrow { color: var(--line); font-size: .8rem; }
+  .tl { list-style: none; padding: 0; margin: 4px 0 0 6px; border-left: 2px solid var(--line); }
+  .tl li { position: relative; padding: 0 0 10px 16px; font-size: .83rem; }
+  .tl li::before { content: ''; position: absolute; left: -7px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--card); }
+  .tl li.sys::before { background: var(--ink-soft); }
+  .tl time { display: block; font-size: .72rem; color: var(--ink-soft); }
+  .tl li:nth-child(n+4) { display: none; } .sect.all .tl li { display: list-item; }
+  .line-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+  .line-card .lc-head { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+  .line-card .lc-qty { font-family: var(--serif); font-size: 1.3rem; font-weight: 700; min-width: 38px; }
+  .line-card .lc-main { flex: 1; min-width: 180px; font-size: .86rem; }
+  .line-card .lc-main b { font-size: .95rem; }
+  .line-card .lc-meta { color: var(--ink-soft); font-size: .8rem; margin-top: 2px; }
+  .line-card .lc-color { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-size: .8rem; align-items: center; }
+  .line-card .lc-color span { display: inline-flex; align-items: center; gap: 6px; }
+  .line-card .lc-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: .86rem; }
+  .kv dt { color: var(--ink-soft); font-size: .78rem; font-weight: 600; padding-top: 2px; }
+  .kv dd { margin: 0; }
+  .addr { font-size: .9rem; line-height: 1.5; }
+
+  /* ---------- Druck ---------- */
+  .pq-head { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: .92rem; }
+  .pq-head b { font-family: var(--serif); font-size: 1.5rem; font-weight: 600; }
+  .pq-group { border-left: 7px solid var(--c, var(--line)); }
+  .pq-group h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pq-group h2 .meta { font-family: var(--sans); font-weight: 500; font-size: .8rem; color: var(--ink-soft); margin-left: auto; }
+  .pq-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; padding: 10px 0; border-top: 1px solid #eee5d5; align-items: center; }
+  .pq-item .q { font-family: var(--serif); font-size: 1.3rem; font-weight: 700; min-width: 36px; }
+  .pq-item .t { font-size: .86rem; min-width: 0; } .pq-item .t b { display: block; }
+  .pq-item .t small { color: var(--ink-soft); }
+  .pq-item .a { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+  /* ---------- Farben ---------- */
+  .color-row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-end; padding: 12px 0; border-bottom: 1px solid #eee5d5; }
+  .color-row:last-child { border-bottom: none; }
+  .color-row .grow { flex: 1; min-width: 150px; }
+  .color-row .f-sw { flex-direction: row; align-items: center; gap: 8px; }
+  .color-row label.inline { padding-bottom: 8px; }
+  .color-row .del { margin-bottom: 4px; }
+  .need-wrap { display: flex; align-items: center; gap: 8px; height: 38px; }
+  .need { height: 8px; border-radius: 5px; background: var(--bg-soft); overflow: hidden; min-width: 90px; }
+  .need i { display: block; height: 100%; width: var(--w, 0%); background: var(--accent); }
+  .need.over i { background: var(--red); }
+
+  /* ---------- Bilder ---------- */
+  .img-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+  .img-list .it { text-align: center; }
+  .img-list img { width: 150px; height: 150px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); display: block; }
+
+  /* ---------- Toasts & Dialoge ---------- */
+  .toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: min(420px, calc(100vw - 36px)); pointer-events: none; }
+  .toast { background: var(--ink); color: var(--bg); padding: 11px 16px; border-radius: 12px; font-size: .86rem; box-shadow: var(--shadow); animation: tin .25s ease; }
+  .toast.ok { background: var(--green); color: #fff; } .toast.err { background: var(--red); color: #fff; } .toast.info { background: var(--blue); color: #fff; }
+  @keyframes tin { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+  dialog { margin: auto; border: none; border-radius: 18px; padding: 0; background: var(--card); color: var(--ink); box-shadow: 0 30px 80px rgba(33, 29, 24, .35); width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+  dialog::backdrop { background: rgba(33, 29, 24, .45); }
+  dialog .dlg-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 22px; border-bottom: 1px solid var(--line); }
+  dialog .dlg-head h2 { margin: 0; }
+  dialog .dlg-body { padding: 18px 22px; overflow: auto; max-height: calc(100vh - 170px); }
+  dialog .dlg-foot { padding: 12px 22px; border-top: 1px solid var(--line); display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+  dialog iframe { width: 100%; height: 60vh; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  dialog pre { white-space: pre-wrap; font-size: .8rem; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px; max-height: 50vh; overflow: auto; }
+  dialog input, dialog textarea { width: 100%; }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 1240px) {
+    .shell { grid-template-columns: 204px minmax(0, 1fr); }
+    .side { padding: 18px 10px; }
+    .side-head { font-size: 1.12rem; padding: 4px 8px 12px; }
+    .content { padding: 22px 20px 60px; }
+    .top-row { padding: 11px 20px; }
+    .save-bar { padding: 12px 20px; }
+  }
+  @media (max-width: 999px) {
+    .shell { grid-template-columns: 1fr; }
+    .side { display: none; }
+    .brand-m { display: block; }
+    .top-row { padding: 10px 14px; }
+    .tabbar { display: flex; gap: 4px; overflow-x: auto; padding: 0 10px 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .tabbar::-webkit-scrollbar { display: none; }
+    .tabbar button { background: transparent; color: var(--ink-soft); padding: 7px 12px; font-size: .82rem; font-weight: 600; flex: none; border: 1.5px solid transparent; }
+    .tabbar button.on { background: var(--ink); color: var(--bg); }
+    .content { padding: 16px 14px 60px; }
+    .save-bar { padding: 10px 14px; }
+    .drawer { width: 100vw; }
+    .search kbd { display: none; }
+  }
+  @media (max-width: 700px) {
+    .top-actions .lbl { display: none; }
+    .top-actions button { padding: 8px 11px; }
+    .pane-head h1 { font-size: 1.4rem; }
+    .card { padding: 16px 14px; }
+    table.cards thead { display: none; }
+    table.cards tr { display: block; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; background: #fff; padding: 6px 12px; }
+    table.cards td, table.cards.tight td { display: block; position: relative; border: none; padding: 5px 0 5px 104px; font-size: .85rem; text-align: left; min-height: 28px; overflow-wrap: anywhere; }
+    table.cards td.num { text-align: left; }
+    table.cards td::before { content: attr(data-l); position: absolute; left: 0; top: 7px; width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .64rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); font-weight: 700; }
+    table.cards td:not([data-l]) { padding-left: 0; }
+    table.cards td:not([data-l])::before { display: none; }
+    #orders-table .mail { max-width: 100%; }
+    .drawer-head h2 { font-size: 1.05rem; }
+    .top-actions .opt { display: none; }
+    .brand-m { font-size: .98rem; }
+    .kv { grid-template-columns: 1fr; gap: 2px; }
+    .pq-item { grid-template-columns: auto minmax(0, 1fr); } .pq-item .a { grid-column: 1 / -1; justify-content: flex-start; }
+    /* Tippflächen: Mini-Buttons/Chips ≥ 36 px, Link-Buttons und Bestell-Links ≥ 32 px hoch */
+    button.mini, .chip { padding: 8px 14px; min-height: 36px; }
+    button.link, .todo-item a { padding: 6px 0; min-height: 32px; display: inline-flex; align-items: center; }
+  }
 </style>
 </head>
 <body>
-<div id="login" class="card" hidden>
-  <h1>🥚 OVJU Admin</h1>
-  <p class="muted" style="margin:10px 0 16px">Bitte Admin-Passwort eingeben</p>
-  <div class="row" style="justify-content:center">
-    <input type="password" id="pw" placeholder="Passwort" onkeydown="if(event.key==='Enter')login()">
+
+<!-- ===== Login ===== -->
+<div id="login" class="login-wrap" hidden>
+  <div class="login card">
+    <div class="logo">🥚 OVJU Studio<small>Admin-Bereich</small></div>
+    <p class="muted" style="margin-top:14px">Bitte mit dem Admin-Passwort anmelden.</p>
+    <input type="password" id="pw" placeholder="Passwort" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
     <button onclick="login()">Anmelden</button>
-  </div>
-  <p id="login-err" class="warn" style="margin-top:10px"></p>
-</div>
-
-<div id="app" hidden>
-  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-    <div><h1>🥚 OVJU Admin</h1><div class="muted" id="subline"></div></div>
-    <div class="row">
-      <button class="ghost mini" onclick="downloadCSV()">⬇ CSV-Export</button>
-      <button class="ghost mini" onclick="downloadBackup()">💾 Backup</button>
-      <button class="ghost mini" onclick="logout()">Abmelden</button>
-    </div>
-  </div>
-  <div class="tabs" id="tabs"></div>
-
-  <!-- 📊 Dashboard -->
-  <div id="pane-dash">
-    <div class="kpis" id="kpis"></div>
-    <div class="row" style="align-items:stretch">
-      <div class="card" style="flex:1;min-width:260px"><h2>🎨 Meistbestellte Farben</h2><div class="toplist" id="top-colors"></div></div>
-      <div class="card" style="flex:1;min-width:260px"><h2>🏺 Produkte</h2><div class="toplist" id="top-products"></div></div>
-      <div class="card" style="flex:1.4;min-width:300px"><h2>🕑 Letzte Bestellungen</h2><div id="recent"></div></div>
-    </div>
-  </div>
-
-  <!-- 📦 Bestellungen -->
-  <div id="pane-orders" hidden>
-    <div class="card">
-      <div class="filters">
-        <input type="text" id="f-search" placeholder="🔍 Suche: Name, E-Mail, Bestell-/Rechnungsnummer …" oninput="renderOrders()">
-        <select id="f-status" onchange="renderOrders()">
-          <option value="">Alle Status</option>
-          <option>neu</option><option>bezahlt</option><option>im-druck</option><option>versendet</option><option>storniert</option>
-        </select>
-      </div>
-      <div style="overflow-x:auto"><table id="orders-table"></table></div>
-    </div>
-  </div>
-
-  <!-- 🎨 Farben -->
-  <div id="pane-colors" hidden>
-    <div class="card">
-      <h2>🎨 Filament-Farben <small class="h">— was hier aktiv ist, können Kunden im Konfigurator wählen</small></h2>
-      <p class="muted" style="margin-bottom:12px">Neues Filament gekauft? Farbe anlegen. Rolle leer? Haken raus (Farbe verschwindet sofort aus dem Shop) oder ganz löschen.</p>
-      <table id="colors-table"></table>
-      <button class="ghost" style="margin-top:12px" onclick="addColor()">+ Farbe hinzufügen</button>
-    </div>
-  </div>
-
-  <!-- 🖼️ Bilder -->
-  <div id="pane-images" hidden>
-    <div class="card">
-      <h2>🖼️ Produktfotos &amp; Galerie <small class="h">— erscheinen sofort auf der Startseite</small></h2>
-      <p class="muted" style="margin-bottom:14px">
-        <b>Galerie</b>-Fotos füllen die Sektion „Zuhause bei OVJU“.
-        Ein Foto der Kategorie <b>Eierbecher</b> bzw. <b>Vase</b> ersetzt zusätzlich das Render-Bild der jeweiligen Produktkarte.
-      </p>
-      <div class="row">
-        <select id="img-cat">
-          <option value="galerie">Galerie</option>
-          <option value="eierbecher">Eierbecher (Produktkarte)</option>
-          <option value="vase">Vase (Produktkarte)</option>
-        </select>
-        <input type="file" id="img-file" accept="image/jpeg,image/png,image/webp" multiple>
-        <button onclick="uploadImages()">⬆ Hochladen</button>
-        <span id="img-msg" class="ok"></span>
-      </div>
-      <div id="img-list" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:18px"></div>
-    </div>
-  </div>
-
-  <!-- 💰 Preise -->
-  <div id="pane-pricing" hidden>
-    <div class="card">
-      <h2>💰 Preise</h2>
-      <div class="grid">
-        <label>Eierbecher (€/Stück)<input type="number" step="0.1" id="s-egg-single"></label>
-        <label>Untersetzer (€/Stück)<input type="number" step="0.1" id="s-egg-saucer"></label>
-        <label>Vase (€/Stück)<input type="number" step="0.1" id="s-vase-single"></label>
-        <label>Gravur-Aufpreis (€/Stück)<input type="number" step="0.5" id="s-gravur"></label>
-        <label>Größenaufschlag % <small class="h">je +100 % Volumen, vom Grundpreis</small><input type="number" step="5" id="s-vol-pct"></label>
-        <label>Größenaufschlag € <small class="h">je +100 % Volumen, fix</small><input type="number" step="0.5" id="s-vol-eur"></label>
-        <label>Versand pauschal (€)<input type="number" step="0.1" id="s-ship-flat"></label>
-        <label>Versandfrei ab (€)<input type="number" step="1" id="s-ship-free"></label>
-      </div>
-      <h3>🏷️ Mengenrabatte <small class="h">— gleicher Artikel mehrfach</small></h3>
-      <div class="row" style="align-items:flex-start;gap:40px">
-        <div><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost mini" onclick="addTier('egg')">+ Stufe</button></div>
-        <div><b>Vasen</b><div id="tiers-vase"></div><button class="ghost mini" onclick="addTier('vase')">+ Stufe</button></div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>🎟️ Gutscheine</h2>
-      <table id="coupons-table"></table>
-      <button class="ghost" style="margin-top:12px" onclick="addCoupon()">+ Gutschein anlegen</button>
-    </div>
-  </div>
-
-  <!-- 🏢 Firma -->
-  <div id="pane-company" hidden>
-    <div class="card">
-      <h2>🏢 Mein Unternehmen <small class="h">— erscheint auf jeder Rechnung</small></h2>
-      <div class="grid">
-        <label>Firmenname<input id="c-name"></label>
-        <label>Inhaber:in<input id="c-owner"></label>
-        <label>Straße &amp; Nr.<input id="c-street"></label>
-        <label>PLZ<input id="c-zip" style="width:100px"></label>
-        <label>Ort<input id="c-city"></label>
-        <label>E-Mail<input id="c-email"></label>
-        <label>Telefon (optional)<input id="c-phone"></label>
-        <label>USt-IdNr. (optional)<input id="c-ustid"></label>
-        <label>IBAN (für Vorkasse)<input id="c-iban"></label>
-        <label>BIC<input id="c-bic"></label>
-        <label>Bank<input id="c-bank"></label>
-        <label>Rechnungs-Präfix<input id="c-prefix" style="width:140px"></label>
-      </div>
-      <label class="inline" style="margin-top:12px"><input type="checkbox" id="c-klein" style="width:auto"> Kleinunternehmer nach § 19 UStG (keine USt ausweisen)</label>
-    </div>
-  </div>
-
-  <!-- 💙 PayPal -->
-  <div id="pane-paypal" hidden>
-    <div class="card">
-      <h2>💙 PayPal <small class="h">— REST-App-Zugangsdaten aus dem <a href="https://developer.paypal.com" target="_blank">PayPal-Developer-Dashboard</a></small></h2>
-      <div class="grid">
-        <label>Client-ID<input id="pp-id"></label>
-        <label>Secret<input type="password" id="pp-secret"></label>
-      </div>
-      <div class="row" style="margin-top:12px">
-        <label class="inline"><input type="checkbox" id="pp-enabled" style="width:auto"> PayPal im Checkout anbieten</label>
-        <label class="inline"><input type="checkbox" id="pp-sandbox" style="width:auto"> Sandbox-Modus (Testzahlungen)</label>
-      </div>
-    </div>
-  </div>
-
-  <!-- ⚙️ System -->
-  <div id="pane-system" hidden>
-    <div class="card">
-      <h2>🔐 Admin-Passwort</h2>
-      <label>Neues Passwort (leer = unverändert)<input type="password" id="s-adminkey" placeholder="••••••" style="max-width:260px"></label>
-    </div>
-    <div class="card">
-      <h2>💾 Datensicherung</h2>
-      <p class="muted">Backup lädt Einstellungen + alle Bestelldaten als JSON herunter. Die STL-Dateien liegen auf dem Server unter <code>orders/</code>.</p>
-      <button class="ghost" style="margin-top:10px" onclick="downloadBackup()">💾 Backup herunterladen</button>
-      <button class="ghost" style="margin-top:10px" onclick="downloadCSV()">⬇ Bestellungen als CSV</button>
-    </div>
-  </div>
-
-  <div class="save-bar" id="save-bar" hidden>
-    <button onclick="saveSettings()">💾 Einstellungen speichern</button><span id="save-msg" class="ok"></span>
+    <p id="login-err" class="err"></p>
   </div>
 </div>
 
-<script>
-const KEY = () => localStorage.getItem('ovju-admin-key') || '';
-let DATA = null;
-let tiers = { egg: [], vase: [] };
-let colors = [];
-let coupons = [];
-const $ = (s) => document.querySelector(s);
-const money = (v) => (v ?? 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-async function api(path, opts = {}) {
-  const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-key': KEY(), ...(opts.headers || {}) } });
-  if (r.status === 401) { showLogin(); throw new Error('auth'); }
-  return r.json();
-}
-function showLogin() { $('#login').hidden = false; $('#app').hidden = true; }
-async function login() {
-  localStorage.setItem('ovju-admin-key', $('#pw').value);
-  try { await load(); } catch { $('#login-err').textContent = 'Falsches Passwort'; }
-}
-function logout() { localStorage.removeItem('ovju-admin-key'); showLogin(); }
-
-const TABS = [
-  ['dash', '📊 Dashboard'], ['orders', '📦 Bestellungen'], ['colors', '🎨 Farben'],
-  ['images', '🖼️ Bilder'],
-  ['pricing', '💰 Preise & Gutscheine'], ['company', '🏢 Firma'], ['paypal', '💙 PayPal'], ['system', '⚙️ System'],
-];
-const SETTINGS_TABS = ['colors', 'pricing', 'company', 'paypal', 'system'];
-function renderTabs() {
-  $('#tabs').innerHTML = TABS.map(([id, l]) => `<button id="tab-${id}" onclick="showTab('${id}')">${l}</button>`).join('');
-}
-function showTab(t) {
-  for (const [id] of TABS) {
-    $(`#pane-${id}`).hidden = id !== t;
-    $(`#tab-${id}`).classList.toggle('on', id === t);
-  }
-  $('#save-bar').hidden = !SETTINGS_TABS.includes(t);
-}
-
-// ---------------------------------------------------------------------------
-// Dashboard
-// ---------------------------------------------------------------------------
-function renderDash() {
-  const orders = DATA.orders.filter(o => o.status !== 'storniert');
-  const now = Date.now(), d30 = 30 * 864e5;
-  const rev = orders.reduce((s, o) => s + (o.total || 0), 0);
-  const rev30 = orders.filter(o => now - new Date(o.createdAt) < d30).reduce((s, o) => s + (o.total || 0), 0);
-  const open = DATA.orders.filter(o => ['neu', 'bezahlt', 'im-druck'].includes(o.status || 'neu')).length;
-  const pieces = orders.flatMap(o => o.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
-  const avg = orders.length ? rev / orders.length : 0;
-  $('#kpis').innerHTML = `
-    <div class="kpi"><span>Umsatz gesamt</span><b>${money(rev)}</b></div>
-    <div class="kpi"><span>Umsatz 30 Tage</span><b>${money(rev30)}</b></div>
-    <div class="kpi"><span>Bestellungen</span><b>${DATA.orders.length}</b></div>
-    <div class="kpi"><span>Offen / zu drucken</span><b>${open}</b></div>
-    <div class="kpi"><span>Ø Bestellwert</span><b>${money(avg)}</b></div>
-    <div class="kpi"><span>Gedruckte Stücke</span><b>${pieces}</b></div>`;
-  $('#subline').textContent = `${DATA.orders.length} Bestellungen · ${open} offen · ${money(rev)} Umsatz`;
-
-  const count = (fn) => {
-    const m = {};
-    for (const o of orders) for (const l of (o.lines || [])) { const k = fn(l); if (k) m[k] = (m[k] || 0) + l.qty; }
-    return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  };
-  const toplist = (entries) => {
-    const max = entries[0]?.[1] || 1;
-    return entries.map(([n, c]) => `<div><span class="n">${esc(n)}</span><div class="bar" style="width:${Math.round(c / max * 130)}px"></div><b>${c}</b></div>`).join('') || '<p class="muted">Noch keine Daten.</p>';
-  };
-  $('#top-colors').innerHTML = toplist(count(l => l.colorName));
-  $('#top-products').innerHTML = toplist(count(l => l.product === 'vase' ? 'Vase' : 'Eierbecher'));
-  $('#recent').innerHTML = DATA.orders.slice(0, 5).map(o => `
-    <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #eee5d5;font-size:.85rem">
-      <span><b>${o.orderId}</b> · ${esc(o.customer?.name || o.name || '')}</span>
-      <span>${o.total ? money(o.total) : '—'} <span class="badge st-${o.status || 'neu'}">${o.status || 'neu'}</span></span>
-    </div>`).join('') || '<p class="muted">Noch keine Bestellungen.</p>';
-}
-
-// ---------------------------------------------------------------------------
-// Bestellungen
-// ---------------------------------------------------------------------------
-const STATI = ['neu', 'bezahlt', 'im-druck', 'versendet', 'storniert'];
-let openDetail = null;
-function lineLabel(l) {
-  const c = l.config || {};
-  return `${l.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${c.pattern || ''} · ${c.height} mm · ${esc(l.colorName || '')}` +
-    (c.text ? ` · Gravur „${esc(c.text)}“` : '') + (l.saucer ? ' · 🍽️ Untersetzer' : '');
-}
-function renderOrders() {
-  const q = ($('#f-search').value || '').toLowerCase();
-  const st = $('#f-status').value;
-  const list = DATA.orders.filter(o => {
-    if (st && (o.status || 'neu') !== st) return false;
-    if (!q) return true;
-    return JSON.stringify([o.orderId, o.invoiceNo, o.customer?.name, o.customer?.email, o.customer?.city, o.name, o.email]).toLowerCase().includes(q);
-  });
-  $('#orders-table').innerHTML = `<tr><th>Bestellung</th><th>Kunde</th><th>Summe</th><th>Zahlung</th><th>Status</th></tr>` +
-    (list.map(o => {
-      const detail = openDetail === o.orderId ? `<tr><td colspan="5"><div class="order-detail">${orderDetail(o)}</div></td></tr>` : '';
-      return `<tr class="o-row" onclick="toggleDetail('${o.orderId}')">
-        <td><b>${o.orderId}</b><br><small class="muted">${new Date(o.createdAt).toLocaleString('de-DE')}</small>
-          ${o.invoiceNo ? `<br><a href="/orders/${o.orderId}/rechnung.html" target="_blank" onclick="event.stopPropagation()">🧾 ${esc(o.invoiceNo)}</a>` : ''}</td>
-        <td>${esc(o.customer?.name || o.name || '')}<br><small class="muted">${esc(o.customer?.email || o.email || '')}</small></td>
-        <td>${o.total ? money(o.total) : '—'}${o.coupon ? `<br><small class="muted">🎟️ ${esc(o.coupon.code)}</small>` : ''}</td>
-        <td><small>${esc(o.payment || '—')}</small> ${o.paymentStatus === 'bezahlt' ? '✅' : ''}</td>
-        <td><span class="badge st-${o.status || 'neu'}">${o.status || 'neu'}</span>${o.trackingNo ? `<br><small class="muted">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
-      </tr>${detail}`;
-    }).join('') || '<tr><td colspan="5" class="muted">Keine Treffer.</td></tr>');
-}
-function toggleDetail(id) {
-  openDetail = openDetail === id ? null : id;
-  renderOrders();
-}
-function orderDetail(o) {
-  const mail = (subject, body) =>
-    `mailto:${encodeURIComponent(o.customer?.email || o.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  const name = (o.customer?.name || o.name || '').split(' ')[0];
-  const lines = (o.lines || []).map(l => `<div>• ${l.qty}× ${lineLabel(l)} ${l.off ? `<span class="badge">−${l.off} %</span>` : ''}
-    — <a href="/orders/${o.orderId}/${encodeURIComponent(l.stlFile)}" download onclick="event.stopPropagation()">⬇ ${/\.3mf$/i.test(l.stlFile) ? '3MF (2 Filamente)' : 'STL'}</a></div>`).join('')
-    || (o.stlFile ? `<a href="/orders/${o.orderId}/${encodeURIComponent(o.stlFile)}" download onclick="event.stopPropagation()">⬇ STL (Alt-Format)</a>` : '');
-  return `<div onclick="event.stopPropagation()">
-    <div class="grid">
-      <div><h3>📍 Lieferadresse</h3>${esc(o.customer?.name || '')}<br>${esc(o.customer?.street || '')}<br>${esc(o.customer?.zip || '')} ${esc(o.customer?.city || '')}
-        ${o.customer?.note ? `<br><small class="muted">📝 ${esc(o.customer.note)}</small>` : ''}</div>
-      <div><h3>🖨️ Positionen</h3>${lines}</div>
-      <div><h3>📮 Versand &amp; Status</h3>
-        <div class="row"><select id="st-${o.orderId}">${STATI.map(s => `<option ${((o.status||'neu')===s)?'selected':''}>${s}</option>`).join('')}</select></div>
-        <div class="row" style="margin-top:8px"><input type="text" id="tr-${o.orderId}" placeholder="Sendungsnummer" value="${esc(o.trackingNo || '')}" style="width:200px"></div>
-        <div class="row" style="margin-top:8px"><textarea id="nt-${o.orderId}" rows="2" placeholder="Interne Notiz …">${esc(o.adminNote || '')}</textarea></div>
-        <div class="row" style="margin-top:8px"><button class="mini" onclick="saveOrder('${o.orderId}')">💾 Speichern</button><span id="om-${o.orderId}" class="ok"></span></div>
-      </div>
-      <div><h3>✉️ E-Mail-Vorlagen</h3>
-        <a href="${mail(`Deine OVJU-Bestellung ${o.orderId}`, `Hallo ${name},\n\nvielen Dank für deine Bestellung! Sobald deine Zahlung eingeht, legen wir los.\n\nRechnung: http://${location.host}/orders/${o.orderId}/rechnung.html\n\nLiebe Grüße\nOVJU`)}">📧 Zahlungserinnerung</a><br>
-        <a href="${mail(`Dein OVJU-Druck läuft! (${o.orderId})`, `Hallo ${name},\n\ndein Design liegt gerade auf dem Druckbett — Schicht für Schicht entsteht dein Unikat! 🖨️\n\nLiebe Grüße\nOVJU`)}">📧 Druck gestartet</a><br>
-        <a href="${mail(`Deine OVJU-Bestellung ist unterwegs 📦`, `Hallo ${name},\n\ndein Paket ist unterwegs!${o.trackingNo ? `\nSendungsnummer: ${o.trackingNo}` : ''}\n\nViel Freude damit!\nOVJU`)}">📧 Versandbestätigung</a>
-      </div>
+<!-- ===== App ===== -->
+<div id="app" class="shell" hidden>
+  <aside class="side">
+    <div class="side-head">🥚 OVJU Studio<small>Admin</small></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-counters">
+      <div>Offene Bestellungen<b id="cnt-open">0</b></div>
+      <div>Zu drucken (Stück)<b id="cnt-queue">0</b></div>
     </div>
-  </div>`;
-}
-async function saveOrder(id) {
-  await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({
-    orderId: id, status: $(`#st-${id}`).value, trackingNo: $(`#tr-${id}`).value, adminNote: $(`#nt-${id}`).value,
-  })});
-  const o = DATA.orders.find(x => x.orderId === id);
-  o.status = $(`#st-${id}`).value; o.trackingNo = $(`#tr-${id}`).value; o.adminNote = $(`#nt-${id}`).value;
-  $(`#om-${id}`).textContent = '✅';
-  setTimeout(() => { const el = $(`#om-${id}`); if (el) el.textContent = ''; }, 2000);
-  renderDash();
-}
+    <div class="side-foot" id="side-foot"></div>
+  </aside>
 
-// ---------------------------------------------------------------------------
-// Farben (Filament-Verwaltung)
-// ---------------------------------------------------------------------------
-const FINISHES = { matt: 'Matt', glanz: 'Glänzend', metall: 'Metallic/Silk' };
-function renderColors() {
-  $('#colors-table').innerHTML = `<tr><th></th><th>Name</th><th>Farbwert</th><th>Finish</th><th>Notiz (z. B. Hersteller, Restmenge)</th><th>Im Shop</th><th></th></tr>` +
-    colors.map((c, i) => `<tr>
-      <td><span class="sw" style="background:${esc(c.hex)}"></span></td>
-      <td><input type="text" value="${esc(c.name)}" onchange="colors[${i}].name=this.value" style="width:140px"></td>
-      <td><input type="color" value="${esc(c.hex)}" onchange="colors[${i}].hex=this.value;renderColors()"> <code>${esc(c.hex)}</code></td>
-      <td><select onchange="colors[${i}].finish=this.value">${Object.entries(FINISHES).map(([k, l]) =>
-        `<option value="${k}" ${(c.finish || 'matt') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
-      <td><input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA Silk, 600 g übrig" style="width:100%"></td>
-      <td style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"></td>
-      <td><button class="ghost mini" onclick="colors.splice(${i},1);renderColors()">🗑</button></td>
-    </tr>`).join('');
-}
-function addColor() {
-  colors.push({ id: 'farbe-' + Date.now().toString(36), name: 'Neue Farbe', hex: '#a0a0a0', finish: 'matt', note: '', active: true });
-  renderColors();
-}
+  <div class="main">
+    <header class="top">
+      <div class="top-row">
+        <div class="brand-m">🥚 OVJU Studio</div>
+        <div class="search">
+          <span class="lupe">🔍</span>
+          <input type="search" id="g-search" placeholder="Bestellungen, Kunden, Rechnungsnummern durchsuchen …" autocomplete="off">
+          <kbd>/</kbd>
+        </div>
+        <div class="top-actions">
+          <button class="ghost mini opt" onclick="downloadCSV()" title="Bestellungen als CSV">⬇ <span class="lbl">CSV</span></button>
+          <button class="ghost mini opt" onclick="downloadBackup()" title="Backup (JSON)">💾 <span class="lbl">Backup</span></button>
+          <button class="ghost mini" onclick="logout()" title="Abmelden">⏏ <span class="lbl">Abmelden</span></button>
+        </div>
+      </div>
+      <nav class="tabbar" id="tabbar"></nav>
+    </header>
 
-// ---------------------------------------------------------------------------
-// Bilder (Galerie & Produktfotos)
-// ---------------------------------------------------------------------------
-async function loadImages() {
-  const imgs = await (await fetch('/api/gallery')).json();
-  $('#img-list').innerHTML = imgs.map((g) => `
-    <div style="text-align:center">
-      <img src="${g.file}" style="width:150px;height:150px;object-fit:cover;border-radius:12px;border:1px solid var(--line)">
-      <div style="margin-top:5px"><span class="badge">${g.cat}</span>
-        <button class="ghost mini" onclick="deleteImage('${g.file.split('/').pop()}')">🗑</button></div>
-    </div>`).join('') || '<p class="muted">Noch keine Fotos — lade deine Produktbilder hoch!</p>';
-}
-async function uploadImages() {
-  const files = $('#img-file').files;
-  if (!files.length) { $('#img-msg').textContent = 'Bitte Datei(en) wählen'; return; }
-  const cat = $('#img-cat').value;
-  let done = 0;
-  for (const f of files) {
-    const r = await fetch(`/api/admin/gallery?cat=${cat}&name=${encodeURIComponent(f.name)}`, {
-      method: 'PUT', headers: { 'x-admin-key': KEY(), 'Content-Type': f.type }, body: f,
-    });
-    if (r.ok) done++;
-  }
-  $('#img-msg').textContent = `✅ ${done} Foto(s) hochgeladen — live auf der Seite`;
-  $('#img-file').value = '';
-  setTimeout(() => $('#img-msg').textContent = '', 3500);
-  loadImages();
-}
-async function deleteImage(name) {
-  await fetch(`/api/admin/gallery/${name}`, { method: 'DELETE', headers: { 'x-admin-key': KEY() } });
-  loadImages();
-}
+    <div class="content">
 
-// ---------------------------------------------------------------------------
-// Preise, Rabatte, Gutscheine
-// ---------------------------------------------------------------------------
-function renderTiers() {
-  for (const [k, sel] of [['egg', '#tiers-egg'], ['vase', '#tiers-vase']]) {
-    $(sel).innerHTML = tiers[k].map((t, i) => `<div class="row" style="margin:6px 0">
-      ab <input type="number" min="2" value="${t.qty}" onchange="tiers['${k}'][${i}].qty=+this.value">
-      Stück → <input type="number" min="0" max="90" value="${t.off}" onchange="tiers['${k}'][${i}].off=+this.value"> % Rabatt
-      <button class="ghost mini" onclick="tiers['${k}'].splice(${i},1);renderTiers()">✕</button></div>`).join('');
-  }
-}
-function addTier(k) { tiers[k].push({ qty: 2, off: 10 }); renderTiers(); }
+      <!-- 📊 Übersicht -->
+      <section id="pane-dash" class="pane" hidden>
+        <div class="pane-head"><div><h1>Übersicht</h1><p id="subline"></p></div><div class="muted" id="dash-date"></div></div>
+        <div class="kpis" id="kpis"></div>
+        <div class="card"><h2>📋 Heute zu tun</h2><div class="todo" id="todo"></div></div>
+        <div class="grid2">
+          <div class="card"><h2>📈 Umsatz der letzten 30 Tage <small id="chart-sum"></small></h2><div id="chart"></div></div>
+          <div class="card"><h2>🕑 Letzte Bestellungen</h2><div class="recent" id="recent"></div></div>
+          <div class="card"><h2>🎨 Meistbestellte Farben</h2><div class="toplist" id="top-colors"></div></div>
+          <div class="card"><h2>🏺 Produkte</h2><div class="toplist" id="top-products"></div></div>
+        </div>
+      </section>
 
-function renderCoupons() {
-  $('#coupons-table').innerHTML = `<tr><th>Code</th><th>Art</th><th>Wert</th><th>Mindestbestellwert (€)</th><th>Aktiv</th><th></th></tr>` +
-    coupons.map((c, i) => `<tr>
-      <td><input type="text" value="${esc(c.code)}" onchange="coupons[${i}].code=this.value.toUpperCase()" style="width:140px;text-transform:uppercase"></td>
-      <td><select onchange="coupons[${i}].type=this.value">
-        <option value="percent" ${c.type === 'percent' ? 'selected' : ''}>% Rabatt</option>
-        <option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>€ Betrag</option></select></td>
-      <td><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value"></td>
-      <td><input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value"></td>
-      <td style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="coupons[${i}].active=this.checked"></td>
-      <td><button class="ghost mini" onclick="coupons.splice(${i},1);renderCoupons()">🗑</button></td>
-    </tr>`).join('');
-}
-function addCoupon() {
-  coupons.push({ code: 'OSTERN10', type: 'percent', value: 10, minOrder: 0, active: true });
-  renderCoupons();
-}
+      <!-- 📦 Bestellungen -->
+      <section id="pane-orders" class="pane" hidden>
+        <div class="pane-head"><div><h1>Bestellungen</h1><p id="orders-sub"></p></div></div>
+        <div class="card">
+          <div class="filters">
+            <div class="chips" id="f-status"></div>
+            <select id="f-pay" onchange="renderOrders()"><option value="">Alle Zahlarten</option><option value="vorkasse">Vorkasse</option><option value="paypal">PayPal</option></select>
+            <select id="f-period" onchange="renderOrders()"><option value="">Gesamter Zeitraum</option><option value="7">Letzte 7 Tage</option><option value="30">Letzte 30 Tage</option><option value="90">Letzte 90 Tage</option><option value="year">Dieses Jahr</option></select>
+            <span id="f-active"></span>
+          </div>
+          <div class="tbl-wrap"><table id="orders-table" class="cards tight"></table></div>
+        </div>
+      </section>
 
-// ---------------------------------------------------------------------------
-// Einstellungen befüllen & speichern
-// ---------------------------------------------------------------------------
-function fillSettings() {
-  const s = DATA.settings;
-  $('#s-egg-single').value = s.pricing.eierbecher.single;
-  $('#s-egg-saucer').value = s.pricing.eierbecher.untersetzer;
-  $('#s-vase-single').value = s.pricing.vase.single;
-  $('#s-gravur').value = s.pricing.gravur ?? 3;
-  $('#s-vol-pct').value = s.pricing.volumen?.prozent ?? 60;
-  $('#s-vol-eur').value = s.pricing.volumen?.euro ?? 0;
-  $('#s-ship-flat').value = s.pricing.shipping.flat;
-  $('#s-ship-free').value = s.pricing.shipping.freeFrom;
-  tiers.egg = structuredClone(s.pricing.eierbecher.discounts);
-  tiers.vase = structuredClone(s.pricing.vase.discounts);
-  colors = structuredClone(s.colors || []);
-  coupons = structuredClone(s.coupons || []);
-  renderTiers(); renderColors(); renderCoupons();
-  const c = s.company;
-  $('#c-name').value = c.name; $('#c-owner').value = c.owner; $('#c-street').value = c.street;
-  $('#c-zip').value = c.zip; $('#c-city').value = c.city; $('#c-email').value = c.email;
-  $('#c-phone').value = c.phone; $('#c-ustid').value = c.ustId; $('#c-iban').value = c.iban;
-  $('#c-bic').value = c.bic; $('#c-bank').value = c.bank; $('#c-prefix').value = s.invoicePrefix;
-  $('#c-klein').checked = c.kleinunternehmer;
-  $('#pp-id').value = s.paypal.clientId; $('#pp-secret').value = s.paypal.secret;
-  $('#pp-enabled').checked = s.paypal.enabled; $('#pp-sandbox').checked = s.paypal.sandbox;
-}
-async function saveSettings() {
-  const patch = {
-    pricing: {
-      currency: 'EUR',
-      eierbecher: { single: +$('#s-egg-single').value, untersetzer: +$('#s-egg-saucer').value, discounts: tiers.egg },
-      vase: { single: +$('#s-vase-single').value, discounts: tiers.vase },
-      gravur: +$('#s-gravur').value,
-      volumen: { prozent: +$('#s-vol-pct').value, euro: +$('#s-vol-eur').value },
-      shipping: { flat: +$('#s-ship-flat').value, freeFrom: +$('#s-ship-free').value },
-    },
-    company: {
-      name: $('#c-name').value, owner: $('#c-owner').value, street: $('#c-street').value,
-      zip: $('#c-zip').value, city: $('#c-city').value, email: $('#c-email').value,
-      phone: $('#c-phone').value, ustId: $('#c-ustid').value, kleinunternehmer: $('#c-klein').checked,
-      iban: $('#c-iban').value, bic: $('#c-bic').value, bank: $('#c-bank').value,
-    },
-    paypal: {
-      enabled: $('#pp-enabled').checked, sandbox: $('#pp-sandbox').checked,
-      clientId: $('#pp-id').value, secret: $('#pp-secret').value,
-    },
-    invoicePrefix: $('#c-prefix').value,
-    colors, coupons,
-  };
-  if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
-  await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
-  if (patch.adminKey) localStorage.setItem('ovju-admin-key', patch.adminKey);
-  DATA.settings = { ...DATA.settings, ...patch };
-  $('#save-msg').textContent = '✅ Gespeichert — wirkt sofort im Shop';
-  setTimeout(() => $('#save-msg').textContent = '', 3000);
-}
+      <!-- 🖨️ Druck -->
+      <section id="pane-print" class="pane" hidden>
+        <div class="pane-head"><div><h1>Druckwarteschlange</h1><p>Alle bezahlten Positionen, die noch nicht fertig gedruckt sind — gruppiert nach Filament.</p></div></div>
+        <div class="card"><div class="pq-head" id="pq-head"></div><div class="chips" id="pq-filter" style="margin-top:12px"></div></div>
+        <div id="pq-groups"></div>
+        <div class="grid2">
+          <div class="card"><h2>🔥 Gerade im Druck</h2><div id="pq-printing"></div></div>
+          <div class="card"><h2>✅ Zuletzt fertig</h2><div id="pq-done"></div></div>
+        </div>
+      </section>
 
-// ---------------------------------------------------------------------------
-// Export & Backup
-// ---------------------------------------------------------------------------
-async function downloadCSV() {
-  const r = await fetch('/api/admin/orders.csv', { headers: { 'x-admin-key': KEY() } });
-  if (r.status === 401) return showLogin();
-  const blob = await r.blob();
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'ovju-bestellungen.csv';
-  a.click();
-}
-async function downloadBackup() {
-  const data = await api('/api/admin/export');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-  a.download = `ovju-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-}
+      <!-- 👥 Kunden -->
+      <section id="pane-customers" class="pane" hidden>
+        <div class="pane-head"><div><h1>Kunden</h1><p>Konten und Gastbesteller, zusammengeführt über die E-Mail-Adresse. Klick filtert die Bestellliste.</p></div></div>
+        <div class="card"><div class="tbl-wrap"><table id="customers-table" class="cards"></table></div></div>
+      </section>
 
-async function load() {
-  DATA = await api('/api/admin/data');
-  $('#login').hidden = true;
-  $('#app').hidden = false;
-  renderTabs();
-  showTab('dash');
-  renderDash();
-  renderOrders();
-  fillSettings();
-  loadImages();
-}
-load().catch(() => {});
-</script>
+      <!-- 🎨 Farben -->
+      <section id="pane-colors" class="pane" data-settings hidden>
+        <div class="pane-head"><div><h1>Filament-Farben</h1><p>Was hier aktiv ist, können Kunden im Konfigurator wählen. Rolle leer? Haken raus — die Farbe verschwindet sofort aus dem Shop.</p></div><button class="ghost" onclick="addColor()">+ Farbe hinzufügen</button></div>
+        <div class="card"><div id="colors-list"></div></div>
+      </section>
+
+      <!-- 🖼️ Bilder -->
+      <section id="pane-images" class="pane" hidden>
+        <div class="pane-head"><div><h1>Produktfotos &amp; Galerie</h1><p>Erscheinen sofort auf der Startseite. <b>Galerie</b>-Fotos füllen „Zuhause bei OVJU“; ein Foto der Kategorie <b>Eierbecher</b> bzw. <b>Vase</b> ersetzt zusätzlich das Render-Bild der Produktkarte.</p></div></div>
+        <div class="card">
+          <div class="row">
+            <select id="img-cat"><option value="galerie">Galerie</option><option value="eierbecher">Eierbecher (Produktkarte)</option><option value="vase">Vase (Produktkarte)</option></select>
+            <input type="file" id="img-file" accept="image/jpeg,image/png,image/webp" multiple>
+            <button onclick="uploadImages()">⬆ Hochladen</button>
+          </div>
+          <div class="img-list" id="img-list"></div>
+        </div>
+      </section>
+
+      <!-- 💰 Preise & Gutscheine -->
+      <section id="pane-pricing" class="pane" data-settings hidden>
+        <div class="pane-head"><div><h1>Preise &amp; Gutscheine</h1><p>Der Server ist die einzige Preisquelle — Änderungen wirken sofort im Shop.</p></div></div>
+        <div class="card">
+          <h2>💰 Grundpreise</h2>
+          <div class="grid">
+            <label>Eierbecher (€/Stück)<input type="number" step="0.1" id="s-egg-single"></label>
+            <label>Untersetzer (€/Stück)<input type="number" step="0.1" id="s-egg-saucer"></label>
+            <label>Vase (€/Stück)<input type="number" step="0.1" id="s-vase-single"></label>
+            <label>Gravur-Aufpreis (€/Stück)<input type="number" step="0.5" id="s-gravur"></label>
+            <label>Größenaufschlag % <small>je +100 % Volumen, vom Grundpreis</small><input type="number" step="5" id="s-vol-pct"></label>
+            <label>Größenaufschlag € <small>je +100 % Volumen, fix</small><input type="number" step="0.5" id="s-vol-eur"></label>
+            <label>Versand pauschal (€)<input type="number" step="0.1" id="s-ship-flat"></label>
+            <label>Versandfrei ab (€)<input type="number" step="1" id="s-ship-free"></label>
+          </div>
+          <h3>🏷️ Mengenrabatte <small>— gleicher Artikel mehrfach</small></h3>
+          <div class="row" style="align-items:flex-start;gap:40px">
+            <div><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost mini" onclick="addTier('egg')">+ Stufe</button></div>
+            <div><b>Vasen</b><div id="tiers-vase"></div><button class="ghost mini" onclick="addTier('vase')">+ Stufe</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>🎟️ Gutscheine</h2>
+          <div class="tbl-wrap"><table id="coupons-table" class="cards"></table></div>
+          <button class="ghost" style="margin-top:12px" onclick="addCoupon()">+ Gutschein anlegen</button>
+        </div>
+      </section>
+
+      <!-- 🏢 Firma -->
+      <section id="pane-company" class="pane" data-settings hidden>
+        <div class="pane-head"><div><h1>Mein Unternehmen</h1><p>Erscheint auf jeder Rechnung und in E-Mails.</p></div></div>
+        <div class="card">
+          <div class="grid">
+            <label>Firmenname<input id="c-name"></label>
+            <label>Inhaber:in<input id="c-owner"></label>
+            <label>Straße &amp; Nr.<input id="c-street"></label>
+            <label>PLZ<input id="c-zip" style="width:120px"></label>
+            <label>Ort<input id="c-city"></label>
+            <label>E-Mail<input id="c-email"></label>
+            <label>Telefon (optional)<input id="c-phone"></label>
+            <label>USt-IdNr. (optional)<input id="c-ustid"></label>
+            <label>IBAN (für Vorkasse)<input id="c-iban"></label>
+            <label>BIC<input id="c-bic"></label>
+            <label>Bank<input id="c-bank"></label>
+            <label>Rechnungs-Präfix<input id="c-prefix" style="width:160px"></label>
+          </div>
+          <label class="inline" style="margin-top:14px"><input type="checkbox" id="c-klein"> Kleinunternehmer nach § 19 UStG (keine USt ausweisen)</label>
+        </div>
+      </section>
+
+      <!-- 💙 PayPal -->
+      <section id="pane-paypal" class="pane" data-settings hidden>
+        <div class="pane-head"><div><h1>PayPal</h1><p>REST-App-Zugangsdaten aus dem <a href="https://developer.paypal.com" target="_blank" rel="noopener">PayPal-Developer-Dashboard</a>.</p></div></div>
+        <div class="card">
+          <div class="grid">
+            <label>Client-ID<input id="pp-id" autocomplete="off"></label>
+            <label>Secret<input type="password" id="pp-secret" autocomplete="new-password"></label>
+          </div>
+          <div class="row" style="margin-top:14px;gap:22px">
+            <label class="inline"><input type="checkbox" id="pp-enabled"> PayPal im Checkout anbieten</label>
+            <label class="inline"><input type="checkbox" id="pp-sandbox"> Sandbox-Modus (Testzahlungen)</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- ✉️ E-Mail -->
+      <section id="pane-mail" class="pane" data-settings hidden>
+        <div class="pane-head"><div><h1>E-Mail</h1><p>SMTP-Zugang für Bestellbestätigungen, Status-Mails und Kopien an dich.</p></div>
+          <label class="inline"><span class="switch"><input type="checkbox" id="m-enabled"><span></span></span> E-Mail-Versand aktiv</label></div>
+        <div id="mail-notready" class="hint info" style="margin-bottom:14px" hidden>Der eigentliche Versand (Testmail, Vorschau, Protokoll) ist noch nicht eingerichtet — die Zugangsdaten kannst du trotzdem schon speichern.</div>
+        <div class="card">
+          <h2>📮 SMTP-Server</h2>
+          <div class="row" style="margin-bottom:12px">
+            <span class="muted">Voreinstellung:</span>
+            <button class="ghost mini" onclick="mailPreset('gmail')">Gmail</button>
+            <button class="ghost mini" onclick="mailPreset('strato')">Strato</button>
+            <button class="ghost mini" onclick="mailPreset('ionos')">IONOS</button>
+            <button class="ghost mini" onclick="mailPreset('gmx')">GMX</button>
+            <button class="ghost mini" onclick="mailPreset('webde')">WEB.DE</button>
+            <button class="ghost mini" onclick="mailPreset('allinkl')">All-Inkl</button>
+          </div>
+          <div id="m-hint" class="hint" style="margin-bottom:12px" hidden></div>
+          <div class="grid">
+            <label>Host<input id="m-host" placeholder="smtp.example.de" autocomplete="off"></label>
+            <label>Port<input type="number" id="m-port" placeholder="465"></label>
+            <label>Verschlüsselung<select id="m-secure"><option value="ssl">SSL/TLS (465)</option><option value="starttls">STARTTLS (587)</option><option value="none">Unverschlüsselt</option></select></label>
+            <label>Benutzername<input id="m-user" autocomplete="off"></label>
+            <label>Passwort<input type="password" id="m-pass" autocomplete="new-password"></label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>✍️ Absender &amp; Empfänger</h2>
+          <div class="grid">
+            <label>Absender-Adresse <small>muss zum SMTP-Konto gehören</small><input id="m-from" placeholder="shop@ovju.de"></label>
+            <label>Absender-Name<input id="m-fromname" placeholder="OVJU"></label>
+            <label>Antwort-Adresse (Reply-To)<input id="m-replyto" placeholder="optional"></label>
+            <label>Admin-Adresse (Kopien an mich)<input id="m-adminto" placeholder="ich@example.de"></label>
+            <label>Öffentliche Shop-Adresse <small>für Links in E-Mails</small><input id="m-publicurl" placeholder="https://ovju.de"></label>
+          </div>
+          <p class="muted" style="margin-top:10px">Absender-Adresse: Gmail schreibt fremde Absender auf die Konto-Adresse um (außer verifizierte „Senden als“-Aliase); Strato, IONOS, GMX und WEB.DE lehnen Absender ab, die nicht zum Postfach gehören. Eigene Domain: SPF-Eintrag des Providers setzen und DKIM aktivieren, sonst landen Mails im Spam.</p>
+          <div class="row" style="margin-top:14px;gap:22px">
+            <label class="inline"><input type="checkbox" id="m-admincopy"> Kopie neuer Bestellungen an mich</label>
+            <label class="inline"><input type="checkbox" id="m-autostatus"> Kunden bei Statuswechsel automatisch informieren</label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>🧪 Testmail</h2>
+          <div class="row">
+            <input type="email" id="m-testto" placeholder="Empfänger, z. B. deine eigene Adresse" style="flex:1;min-width:220px">
+            <button class="ghost" onclick="mailTest(this)">Testmail senden</button>
+          </div>
+          <p class="muted" style="margin-top:8px">Nutzt die oben eingetragenen (auch ungespeicherten) Zugangsdaten und zeigt das SMTP-Protokoll.</p>
+        </div>
+        <div class="card">
+          <h2>📜 Versandprotokoll <button class="ghost mini right" onclick="loadMailLog()">Aktualisieren</button></h2>
+          <div class="tbl-wrap"><table id="mail-log" class="cards"></table></div>
+        </div>
+      </section>
+
+      <!-- ⚙️ System -->
+      <section id="pane-system" class="pane" data-settings hidden>
+        <div class="pane-head"><div><h1>System</h1><p>Zugang, Sicherung und Schätzwerte für die Druckplanung.</p></div></div>
+        <div class="grid2">
+          <div class="card">
+            <h2>🔐 Admin-Passwort</h2>
+            <label>Neues Passwort <small>(leer = unverändert)</small><input type="password" id="s-adminkey" placeholder="••••••" autocomplete="new-password" style="max-width:280px"></label>
+          </div>
+          <div class="card">
+            <h2>🖨️ Druck-Schätzwerte <small>je Stück bei Normalhöhe</small></h2>
+            <div class="grid">
+              <label>Eierbecher: Minuten<input type="number" id="p-min-egg" min="1"></label>
+              <label>Eierbecher: Gramm<input type="number" id="p-g-egg" min="1"></label>
+              <label>Vase: Minuten<input type="number" id="p-min-vase" min="1"></label>
+              <label>Vase: Gramm<input type="number" id="p-g-vase" min="1"></label>
+            </div>
+            <p class="muted" style="margin-top:10px">Skalierung mit der Höhe ≈ (Höhe / Normalhöhe)<sup>1,5</sup> × Breite². Normalhöhe: Eierbecher 58 mm, Vase 150 mm. Untersetzer +35 % Zeit / +40 % Material.</p>
+          </div>
+          <div class="card">
+            <h2>💾 Datensicherung</h2>
+            <p class="muted">Backup lädt Einstellungen + alle Bestelldaten als JSON. Die Modell-Dateien liegen auf dem Server unter <code>orders/</code>.</p>
+            <div class="row" style="margin-top:12px">
+              <button class="ghost" onclick="downloadBackup()">💾 Backup herunterladen</button>
+              <button class="ghost" onclick="downloadCSV()">⬇ Bestellungen als CSV</button>
+            </div>
+          </div>
+          <div class="card">
+            <h2>ℹ️ Info</h2>
+            <dl class="kv" id="sys-info"></dl>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <div class="save-bar" id="save-bar" hidden>
+      <button onclick="saveSettings()" id="save-btn">💾 Einstellungen speichern</button>
+      <span class="state" id="save-state">Alles gespeichert</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Bestell-Drawer ===== -->
+<div class="drawer-bg" id="drawer-bg" onclick="closeOrder()"></div>
+<aside class="drawer" id="drawer" aria-label="Bestelldetails">
+  <div class="drawer-head"><h2 id="drawer-title"></h2><button class="ghost mini" onclick="closeOrder()">✕ Schließen</button></div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<div class="toasts" id="toasts"></div>
+
+<!-- ===== Dialoge ===== -->
+<dialog id="dlg-mail">
+  <div class="dlg-head"><h2>✉️ Freitext-Mail</h2><button class="ghost mini" onclick="document.getElementById('dlg-mail').close()">✕</button></div>
+  <div class="dlg-body">
+    <p class="muted" id="dlg-mail-to" style="margin-bottom:10px"></p>
+    <label>Betreff<input id="dlg-mail-subject"></label>
+    <label style="margin-top:10px">Text<textarea id="dlg-mail-text" rows="8"></textarea></label>
+  </div>
+  <div class="dlg-foot"><button class="ghost" onclick="mailFreitext('preview')">👁 Vorschau</button><button onclick="mailFreitext('send')">Senden</button></div>
+</dialog>
+<dialog id="dlg-preview">
+  <div class="dlg-head"><h2 id="dlg-preview-title">Vorschau</h2><button class="ghost mini" onclick="document.getElementById('dlg-preview').close()">✕</button></div>
+  <div class="dlg-body"><p class="muted" id="dlg-preview-subject" style="margin-bottom:8px"></p><iframe id="dlg-preview-frame" sandbox="" title="E-Mail-Vorschau"></iframe></div>
+  <div class="dlg-foot"><button class="ghost" onclick="document.getElementById('dlg-preview').close()">Schließen</button><button id="dlg-preview-send" hidden>Jetzt senden</button></div>
+</dialog>
+<dialog id="dlg-log">
+  <div class="dlg-head"><h2 id="dlg-log-title">Protokoll</h2><button class="ghost mini" onclick="document.getElementById('dlg-log').close()">✕</button></div>
+  <div class="dlg-body"><p id="dlg-log-state" style="margin-bottom:8px;font-weight:600"></p><pre id="dlg-log-pre"></pre></div>
+  <div class="dlg-foot"><button class="ghost" onclick="document.getElementById('dlg-log').close()">Schließen</button></div>
+</dialog>
+
+<script src="/js/admin/admin.js"></script>
 </body>
 </html>

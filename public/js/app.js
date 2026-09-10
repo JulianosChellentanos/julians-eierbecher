@@ -5,7 +5,7 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
   buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
-  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, TEXT_STYLES, FONT_RULES, fontAllowsStyle, isIntegratedTextStyle,
+  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, TEXT_STYLES, FONT_RULES, fontAllowsStyle, isIntegratedTextStyle, FRONT_TEXT_ARC,
 } from './geometry.js';
 import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
@@ -41,6 +41,8 @@ let userInteracted = false;
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
+// Grundbereich des Schriftgrößen-Reglers (mm) — markActiveFont() hebt die Untergrenze je Schrift später an
+const TEXTSIZE_RANGE = [+$('#s-textsize').min, +$('#s-textsize').max];
 
 // ---------------------------------------------------------------------------
 // Content laden & Seite füllen
@@ -519,6 +521,7 @@ async function rebuildText() {
   const opts = $('#gravur-options'); opts.classList.remove('disabled');
   $('#text-fix')?.remove();
   const ti = (currentInfo && currentInfo.text) || {};
+  updateTextMeta();
   // Download-Button: Farbschrift liefert ein 3MF mit zwei Teilen statt STL
   const is3mf = !!txt && !ti.disabled && exportExt(currentConfig()) === '3mf';
   $('#btn-download').textContent = is3mf ? '⬇ 3MF' : '⬇ STL';
@@ -537,6 +540,26 @@ async function rebuildText() {
     return;
   }
   warn.textContent = ti.warn || '';
+}
+
+// Zeichenzähler unter dem Gravurfeld („12/30“, ab 4 Zeichen vor dem Limit in Warnfarbe; rot mit der echten Grenze,
+// wenn die Engine den Text als zu lang abschaltet — beim Eierbecher sind je nach Form/Schrift oft nur 15–20 Zeichen
+// möglich) und ein dezenter Hinweis, wie viel Umfang ein umlaufender Text belegt (nur über FRONT_TEXT_ARC — die
+// Warnung steht in #text-warn). Im input-Handler ist currentInfo noch alt; rebuildText() ruft nach dem Rebuild erneut auf.
+function updateTextMeta() {
+  const inp = $('#i-text');
+  const max = inp.maxLength > 0 ? inp.maxLength : 30;
+  const n = state.text.length;
+  const count = $('#text-count');
+  const ti = (currentInfo && currentInfo.text) || {};
+  const over = !!state.text.trim() && !!ti.disabled && !!ti.maxChars;
+  count.textContent = over ? `${n}/${max} — zu lang, hier max. ca. ${ti.maxChars}` : `${n}/${max}`;
+  count.classList.toggle('over', over);
+  count.classList.toggle('near', !over && n >= max - 4);
+  const wraps = !!state.text.trim() && !ti.disabled && (ti.arcDeg || 0) > (FRONT_TEXT_ARC * 180) / Math.PI + 0.5;
+  const arc = $('#text-arc');
+  arc.hidden = !wraps;
+  arc.textContent = wraps ? `belegt ${Math.round(ti.arcDeg)}° des Umfangs` : '';
 }
 
 const debounce = (fn, ms) => {
@@ -809,7 +832,8 @@ function initControls() {
   bindSlider('#s-textpos', 'textPos', (v) => `${Math.round(v * 100)} %`, rebuildTextSoon);
 
   $('#i-text').addEventListener('input', (e) => {
-    state.text = e.target.value.slice(0, 16);
+    state.text = e.target.value.slice(0, 30);
+    updateTextMeta();
     rebuildTextSoon();
   });
 
@@ -961,9 +985,9 @@ async function applyDesign(cfg, code) {
     depth: num('depth', 0, 6),
     twist: num('twist', -2, 2),
     flowWaves: Math.round(num('flowWaves', 1, 8)),
-    textSize: num('textSize', 4, 10),
+    textSize: num('textSize', TEXTSIZE_RANGE[0], TEXTSIZE_RANGE[1]),
     textPos: num('textPos', 0.15, 0.8),
-    text: String(cfg.text || '').slice(0, 16),
+    text: String(cfg.text || '').slice(0, 30),
     textStyle: TEXT_STYLES[cfg.textStyle] ? cfg.textStyle : 'gestanzt',
     textColor: cfg.textColor || state.textColor,
     saucer: product === 'eierbecher' && !!cfg.saucer,
@@ -1215,5 +1239,6 @@ async function renderShowcase() {
       rebuild();
       frameCamera();
     },
+    text: () => (currentInfo && currentInfo.text) || null,
   };
 })();

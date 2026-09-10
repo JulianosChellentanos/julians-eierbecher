@@ -3,10 +3,9 @@
 // im localStorage, geteilte Listen werden per Code/Link nur gelesen.
 import { addToCart, itemTitle, itemSub } from './cart.js';
 import { showToast, IS_MOBILE } from './mobile.js';
-import { copyText, formatCode, normalizeCode } from './designcode.js';
+import { copyText, formatCode, normalizeCode, esc } from './designcode.js';
 
 const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const OCCASIONS = {
   hochzeit: { label: 'Hochzeit', icon: '💍' },
