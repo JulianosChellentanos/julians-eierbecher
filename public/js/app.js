@@ -12,7 +12,10 @@ import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { makeSTL, makeExport, exportExt, loadFont } from './modelfactory.js';
-import { initCart, addToCart, getPricing, fmt, discountTeaser, volumeSurcharge, setCodeProvider, getCart } from './cart.js';
+import {
+  initCart, addToCart, getPricing, fmt, fmtPlus, discountTeaser, setCodeProvider, getCart,
+  setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge,
+} from './cart.js';
 import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } from './designcode.js';
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
@@ -82,12 +85,16 @@ async function loadContent() {
     if (Array.isArray(live) && live.length) colors = live;
   } catch { /* Fallback: content.json */ }
   content.colors = colors;
-  // Matt zuerst, dann Glanz/Metallic — mit Finish-Effekt auf dem Swatch
+  setColors(colors); // Farbaufpreise (aufpreis je Farbe) für Preislogik & Warenkorb
+  // Matt zuerst, dann Glanz/Metallic — mit Finish-Effekt auf dem Swatch; Aufpreis als kleines Badge
   const order = { matt: 0, glanz: 1, metall: 2 };
   colors.sort((a, b) => (order[a.finish || 'matt'] ?? 0) - (order[b.finish || 'matt'] ?? 0));
-  $('#swatches').innerHTML = colors.map((c) => `
+  $('#swatches').innerHTML = colors.map((c) => {
+    const sur = Math.max(0, Number(c.aufpreis) || 0);
+    return `
     <button class="swatch sw-${c.finish || 'matt'}" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}" data-finish="${c.finish || 'matt'}"
-      style="--sw:${c.hex}" title="${c.name}${(c.finish || 'matt') !== 'matt' ? ' · ' + FINISH_LABEL[c.finish] : ''}"><span></span></button>`).join('');
+      style="--sw:${c.hex}" title="${c.name}${(c.finish || 'matt') !== 'matt' ? ' · ' + FINISH_LABEL[c.finish] : ''}${sur > 0 ? ' · ' + fmtPlus(sur) + ' je Stück' : ''}"><span></span>${sur > 0 ? `<i class="sur sur-sw">${fmtPlus(sur)}</i>` : ''}</button>`;
+  }).join('');
   $$('#swatches .swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
   setColor(colors[0]);
   // Schriftfarbe (Stil „Farbschrift“): gleiche Palette, zweites Filament
@@ -107,35 +114,47 @@ function renderHeroHint() {
 }
 function renderPrices() {
   renderHeroHint();
-  const pp = getPricing().products[state.product];
-  const size = volumeSurcharge(state.product, { height: state.height, width: state.width });
-  // Gravur-Aufpreis nur, wenn Text da ist UND die Gravur nicht per Regel deaktiviert wurde (Server rechnet identisch)
-  const gravur = (state.text.trim() && !currentInfo?.text?.disabled) ? (getPricing().gravur ?? 3) : 0;
-  const total = pp.single + size + gravur;
+  if (!getPricing()) return; // Preise noch nicht geladen
+  // Gleiche Aufschlüsselung wie Warenkorb & Server (pricing.js): Grund + Untersetzer + Gravur + Farbschrift + Muster + Farbe + Größe.
+  // currentConfig() leert den Text, wenn die Gravur per Regel deaktiviert ist → dann auch kein Gravur-Aufpreis.
+  const item = { product: state.product, saucer: state.saucer, config: currentConfig(), color: state.color, colorName: state.colorName };
+  const q = unitParts(item);
+  const total = unitPrice(item);
+  const labels = [
+    q.muster > 0 ? `${fmt(q.muster)} ${PATTERNS[state.pattern] || 'Muster'}` : '',
+    q.gravur > 0 ? `${fmt(q.gravur)} Gravur` : '',
+    q.farbschrift > 0 ? `${fmt(q.farbschrift)} Farbschrift` : '',
+    q.farbe > 0 ? `${fmt(q.farbe)} Farbe ${state.colorName}` : '',
+    q.untersetzer > 0 ? `${fmt(q.untersetzer)} Untersetzer` : '',
+    q.groesse > 0 ? `${fmt(q.groesse)} Größe` : '',
+  ].filter(Boolean);
   animateMoney($('#price'), total, fmt);
   animateMoney($('#mb-price'), total, fmt);
-  const extras = [size > 0 ? `inkl. ${fmt(size)} Größe` : '', gravur > 0 ? `inkl. ${fmt(gravur)} Gravur` : ''].filter(Boolean).join(' · ');
-  setMobilePrice(undefined, extras || 'pro Stück');
+  // Mobile-Leiste: auf schmalen Handys reicht der Platz nur für die Summe der Aufpreise („inkl. 9,50 € Aufpreise“)
+  const surSum = Math.round((q.muster + q.gravur + q.farbschrift + q.farbe + q.untersetzer + q.groesse) * 100) / 100;
+  const narrow = window.innerWidth <= 430 && labels.length > 1;
+  setMobilePrice(undefined, labels.length ? (narrow ? `inkl. ${fmt(surSum)} Aufpreise` : `inkl. ${labels.join(' · ')}`) : 'pro Stück');
   $('#price-hint').textContent = discountTeaser(state.product);
+  // Aufpreis-Zeile unter dem Preis („inkl. 3,00 € Lamellen · 2,00 € Farbschrift · 1,00 € Farbe Gold“)
   const badge = $('#price-size');
-  if (size > 0) {
-    badge.hidden = false;
-    badge.textContent = `inkl. ${fmt(size)} Größenaufschlag (XL-Format = mehr Filament & Druckzeit)${gravur > 0 ? ` · ${fmt(gravur)} Gravur` : ''}`;
-  } else {
-    badge.hidden = true;
-  }
+  badge.hidden = !labels.length;
+  if (labels.length) badge.textContent = `inkl. ${labels.join(' · ')}${q.groesse > 0 ? ' (XL-Format = mehr Filament & Druckzeit)' : ''}`;
 }
 
 function setColor({ id, hex, name, finish }) {
   const f = finish || 'matt';
   state.color = id; state.colorHex = hex; state.colorName = name; state.colorFinish = f;
   $$('#swatches .swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
-  $('#color-name').textContent = f === 'matt' ? name : `${name} · ${FINISH_LABEL[f]}`;
-  const fn = $('#farbe-name'); if (fn) fn.textContent = `— ${name} · ${FINISH_LABEL[f]}`;
+  // Farbaufpreis (aus /api/colors) mit in die Farbanzeige („Gold · metallic · +1 €“)
+  const sur = colorSurcharge(id, name);
+  const surTxt = sur > 0 ? ` · ${fmtPlus(sur)}` : '';
+  $('#color-name').textContent = (f === 'matt' ? name : `${name} · ${FINISH_LABEL[f]}`) + surTxt;
+  const fn = $('#farbe-name'); if (fn) fn.textContent = `— ${name} · ${FINISH_LABEL[f]}${surTxt}`;
   material.color.set(hex);
   Object.assign(material, FINISH_PROPS[f] || FINISH_PROPS.matt);
   material.needsUpdate = true;
   document.documentElement.style.setProperty('--accent-live', hex);
+  renderPrices(); // Farbaufpreis fließt in den Live-Preis (vor dem Laden der Preise ein No-op)
 }
 
 /** Schriftfarbe für die Farbschrift (zweites Filament) */
@@ -526,8 +545,9 @@ async function rebuildText() {
   const is3mf = !!txt && !ti.disabled && exportExt(currentConfig()) === '3mf';
   $('#btn-download').textContent = is3mf ? '⬇ 3MF' : '⬇ STL';
   $('#btn-download').title = is3mf ? '3MF mit zwei Teilen (Körper + Schrift) — Bambu Studio ordnet die Filamente automatisch zu' : 'STL-Datei herunterladen — druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer & Co.';
+  // Preis immer nachziehen: Gravur/Farbschrift/Muster/Untersetzer hängen am (Neu-)Aufbau — auch wenn der Text gerade gelöscht wurde
+  renderPrices();
   if (!txt || !currentInfo) return;
-  renderPrices(); // Gravur-Aufpreis hängt davon ab, ob die Gravur aktiv ist
   if (ti.disabled) {
     warn.textContent = '⛔ ' + (ti.reason || 'Gravur hier nicht möglich.');
     warn.classList.add('err');
@@ -782,8 +802,13 @@ function markActiveFont() {
   if (state.textSize < minCap) { state.textSize = minCap; sl.value = minCap; $('#s-textsize-val').textContent = `${minCap} mm`; sliderFill(sl); }
 }
 function renderStyleRow() {
-  $('#style-row').innerHTML = Object.entries(TEXT_STYLES).map(([id, st]) => `
-    <button class="style-chip" data-style="${id}" title="${st.hint}"><span class="sc-ic">${st.icon || '✒️'}</span>${st.label}</button>`).join('');
+  // Farbschrift kostet extra (zweites Filament) — Betrag aus /api/pricing als Badge am Chip
+  const fs = Math.max(0, Number(getPricing()?.farbschrift) || 0);
+  $('#style-row').innerHTML = Object.entries(TEXT_STYLES).map(([id, st]) => {
+    const sur = id === 'farbe' ? fs : 0;
+    return `
+    <button class="style-chip" data-style="${id}" title="${st.hint}${sur > 0 ? ' · ' + fmtPlus(sur) + ' je Stück' : ''}"><span class="sc-ic">${st.icon || '✒️'}</span>${st.label}${sur > 0 ? `<span class="sur">${fmtPlus(sur)}</span>` : ''}</button>`;
+  }).join('');
   $$('.style-chip').forEach((b) => b.addEventListener('click', () => {
     if (b.disabled) return;
     state.textStyle = b.dataset.style;
@@ -792,8 +817,17 @@ function renderStyleRow() {
   }));
 }
 
+/** Muster-Aufpreise als kleine Badges an den Musterknöpfen (Beträge aus /api/pricing, erst nach dem Laden) */
+function renderPatternBadges() {
+  $$('.pattern-btn[data-pattern]').forEach((b) => {
+    b.querySelector('.sur')?.remove();
+    const sur = patternSurcharge(b.dataset.pattern);
+    if (sur > 0) { const s = document.createElement('span'); s.className = 'sur'; s.textContent = fmtPlus(sur); b.appendChild(s); }
+  });
+}
+
 function initControls() {
-  $$('.pattern-btn').forEach((b) => b.addEventListener('click', () => {
+  $$('.pattern-btn[data-pattern]').forEach((b) => b.addEventListener('click', () => {
     state.pattern = b.dataset.pattern;
     $$('.pattern-btn').forEach((x) => x.classList.toggle('active', x === b));
     $('#surface-sliders').classList.toggle('disabled', state.pattern === 'glatt');
@@ -853,7 +887,7 @@ function initControls() {
     state.height = hMin + Math.floor(Math.random() * (hMax - hMin));
     syncControls();
     const c = content.colors[Math.floor(Math.random() * content.colors.length)];
-    setColor({ id: c.id, hex: c.hex, name: c.name });
+    setColor(c);
     rebuild();
   });
 
@@ -869,6 +903,7 @@ function initControls() {
     renderer.render(scene, camera);
     addToCart({
       config: designConfig(),
+      color: state.color, // Farb-ID → Farbaufpreis & Bestellzeile
       colorName: state.colorFinish && state.colorFinish !== 'matt'
         ? `${state.colorName} (${FINISH_LABEL[state.colorFinish]})` : state.colorName,
       colorHex: state.colorHex,
@@ -1189,6 +1224,7 @@ async function renderShowcase() {
   renderPresetButtons();
   renderFontRow();
   renderStyleRow();
+  renderPatternBadges();
   renderPrices();
   initControls();
   studioReady = true;

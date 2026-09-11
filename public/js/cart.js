@@ -1,8 +1,15 @@
-// OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing)
+// OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing, Farbaufpreise aus /api/colors;
+// die reine Preisformel lebt in pricing.js und rechnet identisch zu priceItem() auf dem Server)
 import { makeExport } from './modelfactory.js';
 import { copyText, formatCode, esc } from './designcode.js';
 import { PRODUCTS, PATTERNS, FLOWS, FONTS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
+import {
+  setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
+  volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, linePrice,
+} from './pricing.js';
+
+export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice };
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -12,53 +19,26 @@ let pricing = null;
 let cart = [];
 
 export async function initPricing() {
-  if (!pricing) pricing = await (await fetch('/api/pricing')).json();
+  if (!pricing) { pricing = await (await fetch('/api/pricing')).json(); setPricing(pricing); }
+  // Farbliste (mit Aufpreisen) setzt normalerweise der Konfigurator per setColors(); Fallback: selbst laden
+  if (!getColors().length) {
+    try { const live = await (await fetch('/api/colors')).json(); if (Array.isArray(live)) setColors(live); } catch { /* ohne Farbaufpreise weiter */ }
+  }
   return pricing;
-}
-export function getPricing() { return pricing; }
-export function fmt(v) {
-  return v.toLocaleString('de-DE', { style: 'currency', currency: pricing?.currency || 'EUR' });
-}
-/** "2 Stück −20 % · 4 Stück −35 %" für die Preisbox */
-export function discountTeaser(product) {
-  const tiers = pricing?.products?.[product]?.discounts || [];
-  return tiers.map((t) => `${t.qty} Stück −${t.off} %`).join(' · ');
 }
 
 function loadCart() {
   try { cart = JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch { cart = []; }
+  // Ältere Zeilen ohne Farb-ID: über den Farbnamen nachziehen (Farbaufpreis & Bestellung brauchen die ID)
+  let changed = false;
+  for (const it of cart) {
+    if (!it.color) { const c = colorByRef(it.config?.color, it.colorName); if (c) { it.color = c.id; changed = true; } }
+  }
+  if (changed) localStorage.setItem(LS_KEY, JSON.stringify(cart));
 }
 function saveCart() {
   localStorage.setItem(LS_KEY, JSON.stringify(cart));
   renderBadge();
-}
-function discountFor(product, qty) {
-  let off = 0;
-  for (const t of (pricing.products[product]?.discounts || [])) if (qty >= t.qty && t.off > off) off = t.off;
-  return off;
-}
-/** Größenaufschlag (identische Formel wie auf dem Server) */
-export function volumeSurcharge(product, config) {
-  const vol = pricing?.volumen || {};
-  const h0 = pricing?.normalHeight?.[product] || 1;
-  const h = Number(config?.height) || h0;
-  const w = Number(config?.width) || 1;
-  const extra = Math.max(0, (h / h0) * w * w - 1);
-  if (extra <= 0) return 0;
-  const base = pricing.products[product].single;
-  return Math.round(extra * ((vol.prozent || 0) / 100 * base + (vol.euro || 0)) * 100) / 100;
-}
-
-function unitPrice(item) {
-  const p = pricing.products[item.product];
-  return Math.round((p.single
-    + (item.product === 'eierbecher' && item.saucer ? p.untersetzer : 0)
-    + (String(item.config?.text || '').trim() ? (pricing.gravur || 0) : 0)
-    + volumeSurcharge(item.product, item.config)) * 100) / 100;
-}
-function linePrice(item) {
-  const off = discountFor(item.product, item.qty);
-  return { off, line: Math.round(unitPrice(item) * item.qty * (1 - off / 100) * 100) / 100 };
 }
 function totals() {
   const subtotal = Math.round(cart.reduce((s, it) => s + linePrice(it).line, 0) * 100) / 100;
@@ -71,28 +51,48 @@ export function itemTitle(it) {
   const preset = it.config.preset === 'eigene' ? 'Eigene Form' : (prod.presets[it.config.preset]?.label || 'Unbekannt');
   return `${prod.label} „${preset}“`;
 }
+/** Zeile unter dem Titel — mit allen Aufpreisen (Muster, Farbe, Gravur/Farbschrift, Untersetzer, XL-Format) */
 export function itemSub(it) {
   const c = it.config;
+  const q = unitParts(it);
+  const plus = (v) => (v > 0 ? ` +${fmt(v)}` : '');
   const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` (${FLOWS[c.flow] || 'Spirale'})` : '';
-  return `${PATTERNS[c.pattern] || c.pattern}${flow} · ${c.height} mm · ${it.colorName}` +
-    (c.text ? ` · ${c.textStyle === 'farbe' ? '🎨' : c.textStyle === 'gehaemmert' ? '🔨' : c.textStyle === 'gestanzt' ? '🪙' : '✒️'} „${c.text}“ (+${fmt(pricing.gravur || 0)})` : '') +
-    (it.saucer ? ' · 🍽️ Untersetzer' : '');
+  const icon = c.textStyle === 'farbe' ? '🎨' : c.textStyle === 'gehaemmert' ? '🔨' : c.textStyle === 'gestanzt' ? '🪙' : '✒️';
+  return `${PATTERNS[c.pattern] || c.pattern}${flow}${plus(q.muster)} · ${c.height} mm · ${it.colorName}${plus(q.farbe)}` +
+    (c.text ? ` · ${icon} „${c.text}“ (+${fmt(q.gravur)}${q.farbschrift > 0 ? ` · Farbschrift +${fmt(q.farbschrift)}` : ''})` : '') +
+    (it.saucer ? ` · 🍽️ Untersetzer${plus(q.untersetzer)}` : '') +
+    (q.groesse > 0 ? ` · XL-Format${plus(q.groesse)}` : '');
+}
+/** Kompakte Aufpreis-Liste („Lamellen +3,00 € · Farbschrift +2,00 € · Farbe +1,00 €“) für Kasse & Co. */
+export function partsText(it) {
+  const q = unitParts(it);
+  return [
+    q.muster > 0 ? `${PATTERNS[it.config?.pattern] || 'Muster'} +${fmt(q.muster)}` : '',
+    q.gravur > 0 ? `Gravur +${fmt(q.gravur)}` : '',
+    q.farbschrift > 0 ? `Farbschrift +${fmt(q.farbschrift)}` : '',
+    q.farbe > 0 ? `Farbe +${fmt(q.farbe)}` : '',
+    q.untersetzer > 0 ? `Untersetzer +${fmt(q.untersetzer)}` : '',
+    q.groesse > 0 ? `XL-Format +${fmt(q.groesse)}` : '',
+  ].filter(Boolean).join(' · ');
 }
 
 // ---------------------------------------------------------------------------
 // In den Warenkorb
 // ---------------------------------------------------------------------------
-export function addToCart({ config, colorName, colorHex, thumb, code }, opts = {}) {
+export function addToCart({ config, color, colorName, colorHex, thumb, code }, opts = {}) {
   const qty = Math.max(1, Math.min(50, Math.round(opts.qty || 1)));
+  // Farb-ID (Körperfarbe) — der Server rechnet damit den Farbaufpreis; Design-Codes tragen sie in config.color
+  const colorId = color || config?.color || colorByRef(null, colorName)?.id || null;
   // Identisches Design (gleiche Konfiguration & Farbe) → Menge erhöhen (Rabatt!)
   const sig = JSON.stringify({ ...config, colorName });
   const existing = cart.find((it) => it.sig === sig);
   if (existing) {
     existing.qty = Math.min(50, existing.qty + qty);
     if (code && !existing.code) existing.code = code;
+    if (colorId && !existing.color) existing.color = colorId;
   } else {
     cart.push({
-      sig, product: config.product, config, colorName, colorHex, thumb, code: code || null,
+      sig, product: config.product, config, color: colorId, colorName, colorHex, thumb, code: code || null,
       saucer: !!config.saucer, qty,
     });
   }
@@ -192,7 +192,8 @@ function renderCheckoutSummary() {
   const t = checkoutTotals();
   $('#co-summary').innerHTML = cart.map((it) => {
     const { off, line } = linePrice(it);
-    return `<div><span>${it.qty}× ${esc(itemTitle(it))}${off ? ` <em>(−${off} %)</em>` : ''}</span><b>${fmt(line)}</b></div>`;
+    const parts = partsText(it);
+    return `<div><span>${it.qty}× ${esc(itemTitle(it))}${off ? ` <em>(−${off} %)</em>` : ''}${parts ? `<br><small class="co-parts">inkl. ${esc(parts)}</small>` : ''}</span><b>${fmt(line)}</b></div>`;
   }).join('') + `
     ${coupon ? `<div><span>🎟️ Gutschein „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
@@ -267,7 +268,7 @@ function setupPayPal() {
 function cartPayload() {
   return cart.map((it) => ({
     product: it.product, qty: it.qty, saucer: it.saucer,
-    config: it.config, colorName: it.colorName, code: it.code || null,
+    config: it.config, color: it.color || null, colorName: it.colorName, code: it.code || null,
   }));
 }
 

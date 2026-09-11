@@ -79,7 +79,7 @@ export async function addDesignToList(code, designCode, qty = 1) {
 }
 
 // --- Rendering ----------------------------------------------------------------
-const fakeItem = (it) => ({ product: it.config?.product || 'vase', config: it.config || {}, colorName: hooks.colorInfo?.(it.config?.color)?.name || '', saucer: !!it.config?.saucer });
+const fakeItem = (it) => ({ product: it.config?.product || 'vase', config: it.config || {}, color: it.config?.color || null, colorName: hooks.colorInfo?.(it.config?.color)?.name || '', saucer: !!it.config?.saucer });
 
 function renderHome() {
   view = 'home'; current = null;
@@ -198,7 +198,7 @@ function renderList(list) {
   const toCart = (it, silent) => {
     const col = hooks.colorInfo?.(it.config?.color);
     addToCart({
-      config: it.config, code: it.code,
+      config: it.config, code: it.code, color: it.config?.color || null,
       colorName: col ? (col.finish && col.finish !== 'matt' ? `${col.name} (${col.finish === 'metall' ? 'metallic' : 'glänzend'})` : col.name) : '',
       colorHex: col?.hex || '#cccccc', thumb: `/api/design/${it.code}/thumb`,
     }, { qty: it.qty || 1, silent });

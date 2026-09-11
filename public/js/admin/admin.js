@@ -27,6 +27,13 @@ const fmtDur = (min) => (min >= 60 ? `${(Math.round(min / 60 * 10) / 10).toLocal
 const STATUS_FLOW = ['neu', 'bezahlt', 'im-druck', 'gedruckt', 'versendet', 'abgeschlossen'];
 const CARRIERS = { dhl: 'DHL', hermes: 'Hermes', dpd: 'DPD', gls: 'GLS', post: 'Deutsche Post', sonstige: 'Sonstige' };
 const PATTERNS = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', lamellen: 'Lamellen', zickzack: 'Zickzack', querwellen: 'Querwellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' };
+const MUSTER_KEYS = Object.keys(PATTERNS);   // Aufpreis-Felder #s-muster-<key> (Vertrag „Aufpreise“)
+/** Betrag in € ≥ 0 auf 2 Nachkommastellen — leer/Unsinn/negativ wird 0 (gleiche Regel wie euro() im Server) */
+const euro = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0; };
+/** Feldwert für Aufpreis-Eingaben: 0 bleibt leer (Platzhalter „0“), sonst der Betrag */
+const euroField = (v) => (euro(v) > 0 ? euro(v) : '');
+/** Kleines Badge „+3 €“ für Aufpreise > 0, sonst leer */
+const plusBadge = (v) => (euro(v) > 0 ? `<span class="badge plus" title="Aufpreis je Stück">+${euro(v).toLocaleString('de-DE', { maximumFractionDigits: 2 })} €</span>` : '');
 const PRESETS = { flasche: 'Flasche', kugel: 'Kugel', tropfen: 'Tropfen', zylinder: 'Zylinder', kurve: 'Kurve', kelch: 'Kelch', schale: 'Schale', tulpe: 'Tulpe', eigene: 'Eigene Form' };
 const FONTS = { helvetiker: 'Modern', optimer: 'Soft', gentilis: 'Fein', droid_sans: 'Kräftig', droid_serif: 'Klassisch', marcellus: 'Edel', greatvibes: 'Kalligrafie' };
 const TEXT_STYLES = { gestanzt: 'Gestanzt', gepraegt: 'Geprägt', gehaemmert: 'Gehämmert', kissen: 'Kissen', farbe: 'Farbschrift' };
@@ -154,6 +161,16 @@ function gravurText(l) {
   if (!String(c.text || '').trim()) return '';
   const tc = textColorOf(l);
   return `„${c.text}“ · ${TEXT_STYLES[c.textStyle] || 'Gestanzt'} · ${FONTS[c.font] || c.font || 'Modern'}${tc ? ` · Schrift ${tc.name}` : ''}`;
+}
+/** Aufpreise einer Bestellzeile aus der Server-Aufschlüsselung l.parts — nur Teile > 0; Grundpreis ist kein Aufpreis,
+ *  Untersetzer steht schon in lineMeta (🍽️), Größe dagegen nirgends separat → mit aufführen. Ältere Zeilen ohne parts: leer. */
+function surchargeLine(l) {
+  const parts = l.parts;
+  if (!parts || typeof parts !== 'object') return '';
+  const c = l.config || {};
+  const list = [['Gravur', parts.gravur], [PATTERNS[c.pattern] || 'Muster', parts.muster], ['Farbschrift', parts.farbschrift], ['Farbe', parts.farbe], ['Größe', parts.groesse]]
+    .filter(([, v]) => euro(v) > 0);
+  return list.length ? `Aufpreise: ${list.map(([k, v]) => `${k} ${money(v)}`).join(' · ')}` : '';
 }
 function estimate(l) {
   const pr = DATA.settings.printing || { minutesEgg: 75, minutesVase: 210, gramsEgg: 22, gramsVase: 110 };
@@ -354,7 +371,7 @@ function renderDrawer() {
 
   // Positionen
   const lines = (o.lines || []).map((l, i) => {
-    const col = lineColor(l), tc = textColorOf(l), pr = l.print || { status: 'offen' }, g = gravurText(l), e = estimate(l);
+    const col = lineColor(l), tc = textColorOf(l), pr = l.print || { status: 'offen' }, g = gravurText(l), e = estimate(l), sur = surchargeLine(l);
     return `<div class="line-card">
       <div class="lc-head">
         <div class="lc-qty">${l.qty}×</div>
@@ -363,6 +380,7 @@ function renderDrawer() {
           ${g ? `<div class="lc-meta">✒️ ${esc(g)}</div>` : ''}
           <div class="lc-color"><span><span class="sw" style="background:${esc(col.hex)}"></span>${esc(col.name)}${col.finish && col.finish !== 'matt' ? ` <small class="muted">(${FINISHES[col.finish] || col.finish})</small>` : ''}</span>
             ${tc ? `<span><span class="sw" style="background:${esc(tc.hex)}"></span>Schrift: ${esc(tc.name)}</span>` : ''}</div>
+          ${sur ? `<div class="lc-sur">💶 ${esc(sur)}</div>` : ''}
         </div>
         <div style="text-align:right">${l.unit != null ? `<b>${money(l.line)}</b><br><small class="muted">${money(l.unit)}/Stk.</small>` : ''}</div>
       </div>
@@ -650,11 +668,12 @@ function renderColors() {
     const n = need[c.id] || need[c.name] || 0;
     const over = c.stock && n > c.stock;
     return `<div class="color-row">
-      <label class="f-sw"><span class="sw" style="background:${esc(c.hex)}"></span><input type="color" value="${esc(c.hex)}" onchange="colors[${i}].hex=this.value;renderColors()" title="${esc(c.hex)}"></label>
+      <label class="f-sw"><span class="sw" style="background:${esc(c.hex)}"></span><input type="color" value="${esc(c.hex)}" onchange="colors[${i}].hex=this.value;renderColors()" title="${esc(c.hex)}">${plusBadge(c.aufpreis)}</label>
       <label>Name<input type="text" value="${esc(c.name)}" onchange="colors[${i}].name=this.value" style="width:130px"></label>
       <label>Finish<select onchange="colors[${i}].finish=this.value">${Object.entries(FINISHES).map(([k, l]) => `<option value="${k}" ${(c.finish || 'matt') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="grow">Notiz<input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA Silk"></label>
       <label>Bestand (g)<input type="number" min="0" step="10" value="${c.stock ?? ''}" placeholder="—" onchange="colors[${i}].stock=this.value===''?null:+this.value;renderColors()" style="width:88px"></label>
+      <label>Aufpreis (€)<input type="number" min="0" step="0.5" value="${euroField(c.aufpreis)}" placeholder="0" title="Aufpreis je Stück für diese Körperfarbe (leer = 0)" onchange="colors[${i}].aufpreis=euro(this.value);renderColors()" style="width:88px"></label>
       <label>Offener Bedarf<div class="need-wrap"><div class="need ${over ? 'over' : ''}" style="width:80px"><i style="--w:${Math.round(n / maxNeed * 100)}%"></i></div><small>${n ? `${Math.round(n)} g${over ? ' ⚠️' : ''}` : '—'}</small></div></label>
       <label class="inline"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"> Im Shop</label>
       <button class="ghost mini del" data-del-color="${i}" title="Farbe löschen">🗑</button>
@@ -666,7 +685,7 @@ function deleteColor(i) {
   colors.splice(i, 1); setDirty(true); renderColors();
 }
 function addColor() {
-  colors.push({ id: 'farbe-' + Date.now().toString(36), name: 'Neue Farbe', hex: '#a0a0a0', finish: 'matt', note: '', stock: null, active: true });
+  colors.push({ id: 'farbe-' + Date.now().toString(36), name: 'Neue Farbe', hex: '#a0a0a0', finish: 'matt', note: '', stock: null, aufpreis: 0, active: true });
   setDirty(true); renderColors();
   show('colors');
 }
@@ -833,6 +852,9 @@ function fillSettings() {
   $('#s-egg-saucer').value = s.pricing.eierbecher.untersetzer;
   $('#s-vase-single').value = s.pricing.vase.single;
   $('#s-gravur').value = s.pricing.gravur ?? 3;
+  // Aufpreise (Vertrag): Farbschrift zusätzlich zur Gravur, Muster je Key — fehlender Key = 0 (leeres Feld)
+  $('#s-farbschrift').value = euroField(s.pricing.farbschrift ?? 0);
+  for (const k of MUSTER_KEYS) $(`#s-muster-${k}`).value = euroField(s.pricing.muster?.[k] ?? 0);
   $('#s-vol-pct').value = s.pricing.volumen?.prozent ?? 60;
   $('#s-vol-eur').value = s.pricing.volumen?.euro ?? 0;
   $('#s-ship-flat').value = s.pricing.shipping.flat;
@@ -867,12 +889,17 @@ function setDirty(v) {
   el.classList.toggle('dirty', v);
 }
 async function saveSettings() {
+  // Farbaufpreis je Farbe immer als Zahl ≥ 0 mitschicken (ältere Farben ohne Feld → 0)
+  for (const c of colors) c.aufpreis = euro(c.aufpreis);
   const patch = {
     pricing: {
       currency: 'EUR',
       eierbecher: { single: +$('#s-egg-single').value, untersetzer: +$('#s-egg-saucer').value, discounts: tiers.egg },
       vase: { single: +$('#s-vase-single').value, discounts: tiers.vase },
       gravur: +$('#s-gravur').value,
+      // Aufpreise: pricing wird serverseitig als Ganzes ersetzt → alle Muster-Keys explizit (0 = kein Aufpreis)
+      farbschrift: euro($('#s-farbschrift').value),
+      muster: Object.fromEntries(MUSTER_KEYS.map((k) => [k, euro($(`#s-muster-${k}`).value)])),
       volumen: { prozent: +$('#s-vol-pct').value, euro: +$('#s-vol-eur').value },
       shipping: { flat: +$('#s-ship-flat').value, freeFrom: +$('#s-ship-free').value },
     },

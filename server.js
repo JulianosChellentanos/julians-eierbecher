@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
-import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage } from './lib/mail-templates.js';
+import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText } from './lib/mail-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -57,6 +57,16 @@ const MIME = {
 // Einstellungen (data/settings.json) — Preise, Rabatte, Firma, PayPal, Admin
 // ---------------------------------------------------------------------------
 const SETTINGS_FILE = path.join(DATA, 'settings.json');
+// Aufpreise: bekannte Muster-Keys (Spiegel von geometry.js PATTERNS) — unbekannte Keys werden verworfen
+const MUSTER_KEYS = ['glatt', 'rippen', 'wellen', 'lamellen', 'zickzack', 'querwellen', 'gehaemmert', 'skelett', 'koralle'];
+/** Betrag in € ≥ 0 auf 2 Nachkommastellen — Strings werden gewandelt, Unsinn/negativ wird 0 */
+const euro = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0; };
+/** Muster-Aufpreise (Key → €): nur bekannte Muster, Zahlen ≥ 0 */
+function sanitizeMuster(m) {
+  const out = {};
+  if (m && typeof m === 'object') for (const k of MUSTER_KEYS) if (m[k] !== undefined) out[k] = euro(m[k]);
+  return out;
+}
 const DEFAULT_SETTINGS = {
   adminKey: 'ovju-admin',
   invoicePrefix: 'RE-2026-',
@@ -73,6 +83,9 @@ const DEFAULT_SETTINGS = {
     },
     shipping: { flat: 4.90, freeFrom: 39 },
     gravur: 3.00,
+    // Aufpreise je Stück: Muster (Key → €, fehlender Key = 0) und Farbschrift (zusätzlich zur Gravur)
+    muster: { lamellen: 3 },
+    farbschrift: 2,
     // Größenaufschlag: mehr Volumen = mehr Filament & Druckzeit.
     // relVol = (Höhe/Normalhöhe) · Breitenfaktor² ; Aufschlag nur oberhalb Normal.
     volumen: { prozent: 60, euro: 0 },
@@ -121,6 +134,10 @@ function loadSettings() {
   }
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
+  // Migration Aufpreise: Muster (Betreiber-Wunsch: Lamellen +3 €), Farbschrift +2 €
+  settings.pricing.muster = (settings.pricing.muster && typeof settings.pricing.muster === 'object')
+    ? sanitizeMuster(settings.pricing.muster) : { lamellen: 3 };
+  settings.pricing.farbschrift = typeof settings.pricing.farbschrift === 'number' ? euro(settings.pricing.farbschrift) : 2;
   settings.printing = { ...DEFAULT_SETTINGS.printing, ...(settings.printing || {}) };
   settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
   // Migration: Finishes (matt/glanz/metall) + bekannte Silk-/Glossy-PLA-Farben
@@ -138,6 +155,8 @@ function loadSettings() {
     for (const c of neu) if (!have.has(c.id)) settings.colors.push({ ...c, active: true });
     settings.colorsV2 = true;
   }
+  // Migration: Farbaufpreis je Körperfarbe (€/Stück, Standard 0)
+  for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
   saveSettings();
 }
 async function saveSettings() {
@@ -441,19 +460,46 @@ function gravurAllowed(c) {
   if ((c?.pattern === 'lamellen' || c?.pattern === 'koralle') && depth > 2.5) return false;
   return true;
 }
+/**
+ * Körperfarbe einer Position: per Farb-ID (item.color), sonst über den Anzeigenamen — alte Warenkorb-Items
+ * kennen nur colorName, ggf. mit Finish-Zusatz („Gold · metallic“ / „Gold (metallic)“), der abgeschnitten wird.
+ */
+function colorOfItem(item) {
+  const cols = settings.colors || [];
+  const id = typeof item?.color === 'string' ? item.color : '';
+  if (id) { const c = cols.find((x) => x.id === id); if (c) return c; }
+  const raw = String(item?.colorName || '').trim();
+  if (!raw) return null;
+  const plain = raw.replace(/\s*(?:·\s*[^·()]*|\([^()]*\))\s*$/, '').trim();
+  return cols.find((x) => x.name === raw) || (plain && cols.find((x) => x.name === plain)) || null;
+}
+/**
+ * Stückpreis = Grundpreis + Untersetzer + Gravur + Farbschrift + Muster-Aufpreis + Farbaufpreis + Größe;
+ * dieselbe Formel rechnet der Client in cart.js (unitPrice). parts = Aufschlüsselung in € (0 = nicht zutreffend).
+ */
 function priceItem(item) {
   const p = settings.pricing[item.product];
   if (!p) throw new Error('Unbekanntes Produkt');
   const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
-  let unit = p.single;
-  if (item.product === 'eierbecher' && item.saucer) unit += p.untersetzer;
-  if (String(item.config?.text || '').trim() && gravurAllowed(item.config)) unit += settings.pricing.gravur || 0;
-  unit += volumeSurcharge(item.product, item.config, p.single);
-  unit = Math.round(unit * 100) / 100;
+  const c = item.config || {};
+  const hasText = !!String(c.text || '').trim() && gravurAllowed(c);
+  const col = colorOfItem(item);
+  const parts = {
+    grund: euro(p.single),
+    untersetzer: item.product === 'eierbecher' && item.saucer ? euro(p.untersetzer) : 0,
+    gravur: hasText ? euro(settings.pricing.gravur) : 0,
+    farbschrift: hasText && c.textStyle === 'farbe' ? euro(settings.pricing.farbschrift) : 0,
+    muster: euro(settings.pricing.muster?.[c.pattern]),
+    farbe: euro(col?.aufpreis),
+    groesse: volumeSurcharge(item.product, c, p.single),
+  };
+  const unit = Math.round(Object.values(parts).reduce((s, v) => s + v, 0) * 100) / 100;
   const off = discountFor(item.product, qty);
   const lineFull = unit * qty;
   const line = Math.round(lineFull * (1 - off / 100) * 100) / 100;
-  return { qty, unit, off, lineFull: Math.round(lineFull * 100) / 100, line };
+  // color = aufgelöste Farb-ID (Fallback über den Namen), sonst die vom Client gesendete ID
+  const color = col?.id || (typeof item.color === 'string' ? item.color.slice(0, 40) : null);
+  return { qty, unit, off, lineFull: Math.round(lineFull * 100) / 100, line, parts, color };
 }
 function computeTotals(items, couponCode) {
   const lines = items.map((it) => ({ ...it, ...priceItem(it) }));
@@ -598,12 +644,15 @@ function esc(s) {
 }
 function itemLabel(it) {
   const c = it.config || {};
+  const sur = surchargeList(it).filter((x) => x.key !== 'gravur').map((x) => x.label);
   const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen', lamellen: 'Lamellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' }[c.pattern] || c.pattern;
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
     (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} — 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
-    (it.code ? ` · Design-Code ${it.code}` : '');
+    (it.code ? ` · Design-Code ${it.code}` : '') +
+    // Aufpreise (Muster/Farbschrift/Farbe) nur wenn > 0 — Gravur/Untersetzer stehen schon im Label
+    (sur.length ? ` · Aufpreis ${sur.join('/')}` : '');
 }
 
 // Anzeigenamen für Druckzettel & Admin (Spiegel der Client-Labels)
@@ -709,9 +758,13 @@ function invoiceHTML(order) {
     ? `Bezahlt per PayPal am ${new Date(order.createdAt).toLocaleDateString('de-DE')}.`
     : `Bitte überweise den Gesamtbetrag innerhalb von 14 Tagen unter Angabe der Rechnungsnummer:<br>
        <b>${esc(co.iban)}</b>${co.bic ? ` · BIC: ${esc(co.bic)}` : ''}${co.bank ? ` · ${esc(co.bank)}` : ''}`;
-  const rows = order.lines.map((l) => `
-    <tr><td>${esc(itemLabel(l))}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
-    <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`).join('');
+  // Aufpreis-Zeile (aus l.parts; ältere Bestellungen ohne parts zeigen keine) — Untersetzer/Größe stecken wie bisher im Einzelpreis
+  const rows = order.lines.map((l) => {
+    const sur = surchargeText(l, settings);
+    return `
+    <tr><td>${esc(itemLabel(l))}${sur ? `<br><small class="muted">${esc(sur)}</small>` : ''}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
+    <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`;
+  }).join('');
   return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Rechnung ${esc(order.invoiceNo)}</title>
   <style>
     body{font-family:system-ui;color:#1d1a16;max-width:800px;margin:40px auto;padding:0 24px;font-size:14px;line-height:1.5}
@@ -863,7 +916,7 @@ async function handleCheckout(req, res) {
     customer,
     lines: totals.lines.map((l, i) => ({
       product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
-      colorName: l.colorName, unit: l.unit, off: l.off, line: l.line,
+      color: l.color, colorName: l.colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
       // Farbschrift (zweites Filament) kommt als 3MF mit zwei Teilen, sonst STL
       stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
@@ -946,6 +999,8 @@ const server = http.createServer(async (req, res) => {
         },
         shipping: pr.shipping,
         gravur: pr.gravur,
+        muster: pr.muster || {},
+        farbschrift: pr.farbschrift || 0,
         volumen: pr.volumen,
         normalHeight: NORMAL_HEIGHT,
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
@@ -1147,14 +1202,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/colors') {
-      return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish }) => ({ id, name, hex, finish: finish || 'matt' })));
+      return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish, aufpreis }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis) })));
     }
     if (req.method === 'POST' && p === '/api/quote') {
       const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
       const t = computeTotals(items || [], couponCode);
       return send(res, 200, {
         ok: true,
-        lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line })),
+        lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line, parts: l.parts, color: l.color })),
         subtotal: t.subtotal, coupon: t.coupon, couponValid: couponCode ? !!t.coupon : null,
         shipping: t.shipping, total: t.total,
       });
@@ -1217,10 +1272,21 @@ const server = http.createServer(async (req, res) => {
         if (typeof patch.adminKey !== 'string' || patch.adminKey.trim().length < 8) return send(res, 400, { ok: false, error: 'Admin-Passwort: mindestens 8 Zeichen' });
         settings.adminKey = patch.adminKey.trim();
       }
+      if (patch.pricing !== undefined && (!patch.pricing || typeof patch.pricing !== 'object' || Array.isArray(patch.pricing))) {
+        return send(res, 400, { ok: false, error: 'Preise: ungültiges Format' });
+      }
+      const prevPricing = settings.pricing;
       // Nur bekannte Wurzel-Schlüssel übernehmen
       for (const k of ['pricing', 'company', 'invoicePrefix', 'colors', 'coupons', 'printing']) {
         if (patch[k] !== undefined) settings[k] = patch[k];
       }
+      // Aufpreise: Muster nur mit bekannten Keys, Zahlen ≥ 0; Farbschrift ≥ 0 — fehlen sie im Patch, bleiben die alten Werte
+      if (patch.pricing !== undefined) {
+        settings.pricing.muster = patch.pricing.muster !== undefined ? sanitizeMuster(patch.pricing.muster) : (prevPricing.muster || {});
+        settings.pricing.farbschrift = patch.pricing.farbschrift !== undefined ? euro(patch.pricing.farbschrift) : (prevPricing.farbschrift ?? 0);
+      }
+      // Farbaufpreis je Farbe: Zahl ≥ 0 erzwingen
+      if (Array.isArray(settings.colors)) for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
       // PayPal: Secret-Maske wie beim SMTP-Passwort — leer = gespeichertes behalten, null = löschen
       if (patch.paypal && typeof patch.paypal === 'object') {
         const prev = settings.paypal || {};

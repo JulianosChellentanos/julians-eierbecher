@@ -1139,7 +1139,8 @@ section[id] { scroll-margin-top: 72px; }
   .showcase-price { white-space: nowrap; }
   .mtab { min-width: 56px; padding: 8px 6px; font-size: 0.66rem; }
   .mb-price b { font-size: 1.1rem; }
-  .mb-price small { display: none; }
+  /* Aufschlüsselung („inkl. 3,00 € Lamellen · …“) bleibt auch auf Phones sichtbar – Breite wird unten begrenzt, Rest per Ellipsis */
+  .mb-price small { display: block; font-size: 0.62rem; }
   .mb-cart { font-size: 0.9rem; }
   .product-tab { flex-direction: column; gap: 2px; padding: 8px 6px; }
   .product-tab small { font-size: 0.7rem; }
@@ -1161,3 +1162,38 @@ section[id] { scroll-margin-top: 72px; }
 .auth-info { font-size: 0.85rem; line-height: 1.45; color: #3f7d4f; text-align: left; margin: 0; }
 .dark .auth-info { color: #8fd19e; }
 #auth-forgot .tiny.left, #auth-reset .tiny.left { margin-bottom: 2px; }
+
+/* ---------- Aufpreis-Badges („+3 €“ an Muster, Farbschrift-Chip und Farbfeldern; Beträge aus dem Admin) ---------- */
+.sur {
+  display: inline-block; font-family: var(--sans); font-size: 0.62rem; font-weight: 700; line-height: 1;
+  padding: 3px 6px; border-radius: 99px; white-space: nowrap; letter-spacing: 0.01em;
+  background: color-mix(in srgb, var(--accent) 14%, var(--card)); color: var(--accent-dark);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+/* Musterknöpfe: Badge in der oberen Ecke, damit der Knopf nicht breiter wird (4er-Raster auf dem Desktop) */
+.pattern-btn[data-pattern] { position: relative; }
+.pattern-btn[data-pattern] .sur { position: absolute; top: -6px; right: -3px; padding: 2px 5px; font-size: 0.58rem; }
+.pattern-btn.active .sur { background: color-mix(in srgb, var(--accent) 20%, var(--card)); }
+/* Stil-Chip „Farbschrift“: Badge als dritte Zeile unter dem Label */
+.style-chip .sur { margin-top: 2px; padding: 2px 5px; font-size: 0.58rem; }
+/* Farbfelder: kleines Preisschild am unteren Rand des Kreises */
+#swatches .swatch { position: relative; }
+.swatch .sur-sw {
+  position: absolute; right: -6px; bottom: -4px; z-index: 1; font-style: normal;
+  padding: 2px 4px; font-size: 0.56rem; background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+}
+.swatch:hover .sur-sw { transform: scale(0.9); }
+.dark .sur { background: color-mix(in srgb, var(--accent) 26%, var(--card)); color: #eaa984; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.dark .swatch .sur-sw { background: var(--bg-soft); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
+/* Aufschlüsselung in der Kasse („inkl. Lamellen +3,00 € · Farbe +1,00 €“) */
+.co-parts { display: block; color: var(--ink-soft); font-size: 0.74rem; line-height: 1.35; margin-top: 1px; }
+/* Mobile-Leiste: lange Aufpreis-Zeile abschneiden statt die Leiste zu sprengen.
+   Feste Obergrenze nötig: ein Prozentwert begrenzt die Eigenbreite einer nowrap-Zeile in der auto-Spalte nicht,
+   die Spalte würde wachsen und den Warenkorb-Knopf auf 0 drücken. 100vw − 260px lässt dem Knopf ≥ ~120 px (390 px → 130 px, 360 px → 100 px). */
+.mb-price small { overflow: hidden; text-overflow: ellipsis; max-width: min(220px, calc(100vw - 260px)); }
+@media (max-width: 980px) {
+  .pattern-btn[data-pattern] .sur { top: -5px; right: 0; }
+  .swatch .sur-sw { right: -4px; bottom: -2px; font-size: 0.6rem; }
+}

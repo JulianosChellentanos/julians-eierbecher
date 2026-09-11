@@ -195,6 +195,7 @@
   .line-card .lc-meta { color: var(--ink-soft); font-size: .8rem; margin-top: 2px; }
   .line-card .lc-color { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-size: .8rem; align-items: center; }
   .line-card .lc-color span { display: inline-flex; align-items: center; gap: 6px; }
+  .line-card .lc-sur { color: var(--ink-soft); font-size: .78rem; margin-top: 5px; }
   .line-card .lc-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: .86rem; }
   .kv dt { color: var(--ink-soft); font-size: .78rem; font-weight: 600; padding-top: 2px; }
@@ -224,6 +225,14 @@
   .need { height: 8px; border-radius: 5px; background: var(--bg-soft); overflow: hidden; min-width: 90px; }
   .need i { display: block; height: 100%; width: var(--w, 0%); background: var(--accent); }
   .need.over i { background: var(--red); }
+  .badge.plus { background: #fbf3e4; border-color: #ecd9b3; color: #6b5330; font-size: .66rem; padding: 2px 8px; }
+  .color-row .f-sw .badge.plus { margin-left: 2px; }
+
+  /* ---------- Aufpreise (Preise & Gutscheine) ---------- */
+  table.muster { max-width: 460px; }
+  table.muster th, table.muster td { padding: 6px 8px; vertical-align: middle; }
+  table.muster td:last-child { text-align: right; white-space: nowrap; }
+  table.muster input[type=number] { width: 96px; }
 
   /* ---------- Bilder ---------- */
   .img-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
@@ -420,6 +429,28 @@
             <div><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost mini" onclick="addTier('egg')">+ Stufe</button></div>
             <div><b>Vasen</b><div id="tiers-vase"></div><button class="ghost mini" onclick="addTier('vase')">+ Stufe</button></div>
           </div>
+        </div>
+        <div class="card">
+          <h2>💶 Aufpreise</h2>
+          <p class="muted" style="margin-bottom:12px">Aufpreise je Stück, zusätzlich zum Grundpreis — leer oder 0 = kein Aufpreis. Aufpreise je Filament-Farbe stellst du im Bereich <a href="#colors">Farben</a> ein.</p>
+          <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,320px))">
+            <label>Farbschrift (€/Stück) <small>— zusätzlich zum Gravur-Aufpreis</small><input type="number" step="0.5" min="0" id="s-farbschrift" placeholder="0"></label>
+          </div>
+          <h3>🌀 Muster <small>— Aufpreis je Stück</small></h3>
+          <div class="tbl-wrap"><table class="muster">
+            <thead><tr><th>Muster</th><th style="text-align:right">Aufpreis (€/Stück)</th></tr></thead>
+            <tbody>
+              <tr><td>Glatt</td><td><input type="number" step="0.5" min="0" id="s-muster-glatt" placeholder="0"></td></tr>
+              <tr><td>Rippen</td><td><input type="number" step="0.5" min="0" id="s-muster-rippen" placeholder="0"></td></tr>
+              <tr><td>Wellen</td><td><input type="number" step="0.5" min="0" id="s-muster-wellen" placeholder="0"></td></tr>
+              <tr><td>Lamellen</td><td><input type="number" step="0.5" min="0" id="s-muster-lamellen" placeholder="0"></td></tr>
+              <tr><td>Zickzack</td><td><input type="number" step="0.5" min="0" id="s-muster-zickzack" placeholder="0"></td></tr>
+              <tr><td>Querwellen</td><td><input type="number" step="0.5" min="0" id="s-muster-querwellen" placeholder="0"></td></tr>
+              <tr><td>Gehämmert</td><td><input type="number" step="0.5" min="0" id="s-muster-gehaemmert" placeholder="0"></td></tr>
+              <tr><td>Voronoi</td><td><input type="number" step="0.5" min="0" id="s-muster-skelett" placeholder="0"></td></tr>
+              <tr><td>Fjordwelle</td><td><input type="number" step="0.5" min="0" id="s-muster-koralle" placeholder="0"></td></tr>
+            </tbody>
+          </table></div>
         </div>
         <div class="card">
           <h2>🎟️ Gutscheine</h2>
