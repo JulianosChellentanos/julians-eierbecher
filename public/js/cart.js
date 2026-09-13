@@ -2,7 +2,7 @@
 // die reine Preisformel lebt in pricing.js und rechnet identisch zu priceItem() auf dem Server)
 import { makeExport } from './modelfactory.js';
 import { copyText, formatCode, esc } from './designcode.js';
-import { PRODUCTS, PATTERNS, FLOWS, FONTS } from './geometry.js';
+import { PRODUCTS, PATTERNS, FLOWS, FONTS, RIMS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
 import {
   setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
@@ -58,7 +58,9 @@ export function itemSub(it) {
   const plus = (v) => (v > 0 ? ` +${fmt(v)}` : '');
   const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` (${FLOWS[c.flow] || 'Spirale'})` : '';
   const icon = c.textStyle === 'farbe' ? '🎨' : c.textStyle === 'gehaemmert' ? '🔨' : c.textStyle === 'gestanzt' ? '🪙' : '✒️';
-  return `${PATTERNS[c.pattern] || c.pattern}${flow}${plus(q.muster)} · ${c.height} mm · ${it.colorName}${plus(q.farbe)}` +
+  // Randoption nur nennen, wenn sie vom Standard (glatt) abweicht („Wulstrand“ / „Musterkante“)
+  const rim = c.rim && c.rim !== 'glatt' && RIMS[c.rim] ? ` · ${RIMS[c.rim]}` : '';
+  return `${PATTERNS[c.pattern] || c.pattern}${flow}${plus(q.muster)} · ${c.height} mm${rim} · ${it.colorName}${plus(q.farbe)}` +
     (c.text ? ` · ${icon} „${c.text}“ (+${fmt(q.gravur)}${q.farbschrift > 0 ? ` · Farbschrift +${fmt(q.farbschrift)}` : ''})` : '') +
     (it.saucer ? ` · 🍽️ Untersetzer${plus(q.untersetzer)}` : '') +
     (q.groesse > 0 ? ` · XL-Format${plus(q.groesse)}` : '');

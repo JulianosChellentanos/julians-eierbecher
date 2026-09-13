@@ -12,7 +12,7 @@ let dirty = false;        // ungespeicherte Einstellungen
 let CUR = null;           // geöffnete Bestellnummer (Drawer)
 let HIST_ALL = false;     // Verlauf im Drawer komplett ausgeklappt
 let PANE = 'dash';
-const F = { q: '', status: '', pay: '', period: '', email: '' };   // Bestell-Filter
+const F = { q: '', status: '', pay: '', period: '', email: '', rekla: false };   // Bestell-Filter (rekla = nur offene Reklamationen)
 let pqColor = '';         // Filter der Druckwarteschlange
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -38,6 +38,22 @@ const PRESETS = { flasche: 'Flasche', kugel: 'Kugel', tropfen: 'Tropfen', zylind
 const FONTS = { helvetiker: 'Modern', optimer: 'Soft', gentilis: 'Fein', droid_sans: 'Kräftig', droid_serif: 'Klassisch', marcellus: 'Edel', greatvibes: 'Kalligrafie' };
 const TEXT_STYLES = { gestanzt: 'Gestanzt', gepraegt: 'Geprägt', gehaemmert: 'Gehämmert', kissen: 'Kissen', farbe: 'Farbschrift' };
 const FINISHES = { matt: 'Matt', glanz: 'Glänzend', metall: 'Metallic/Silk' };
+const RIM_LABELS = { glatt: 'Glatter Rand', muster: 'Musterkante', wulst: 'Wulstrand' };   // Oberer Rand (config.rim) — „glatt“ ist Standard und wird nicht genannt
+// Reklamation (order.reklamation): Labels kommen mit /api/admin/data (reklaStatus/reklaArt), Fallback = lib/mail-templates.js
+const REKLA_STATUS = { offen: 'Reklamation offen', ruecksendung: 'Rücksendung erwartet', eingegangen: 'Ware eingegangen', erledigt: 'Erledigt', abgelehnt: 'Abgelehnt' };
+const REKLA_ART = { nachdruck: 'Nachdruck', gutschein: 'Gutschrift als Gutschein-Code', ueberweisung: 'Erstattung per Überweisung', paypal: 'Erstattung per PayPal' };
+const REKLA_OPEN = ['offen', 'ruecksendung', 'eingegangen'];   // noch in Bearbeitung
+const RK_PHASE_LABEL = { angelegt: 'Bestätigung', eingegangen: 'Ware eingegangen', erledigt: 'Erledigt', abgelehnt: 'Abgelehnt' };   // Mail-Phasen (kind 'reklamation')
+const rkStLabel = (s) => DATA?.reklaStatus?.[s] || REKLA_STATUS[s] || s;
+const rkArtLabel = (a) => DATA?.reklaArt?.[a] || REKLA_ART[a] || a;
+const reklaOpen = (o) => REKLA_OPEN.includes(o.reklamation?.status);
+/** Erstatteter Betrag (erledigte Gutschrift/Erstattung, kein Nachdruck) — gleiche Regel wie refundAmount() im Server */
+const refundAmount = (o) => (o.reklamation?.status === 'erledigt' && o.reklamation.art !== 'nachdruck' ? euro(o.reklamation.betrag) : 0);
+/** Mail-Phase zur aktuellen Reklamation: offen/ruecksendung → angelegt, sonst = Status */
+const reklaPhase = (r) => ({ offen: 'angelegt', ruecksendung: 'angelegt', eingegangen: 'eingegangen', erledigt: 'erledigt', abgelehnt: 'abgelehnt' }[r?.status] || 'angelegt');
+/** IBAN bis auf die letzten 4 Zeichen maskiert, in Vierergruppen */
+const maskIban = (s) => { const c = String(s || '').replace(/\s+/g, ''); return c ? ('•'.repeat(Math.max(0, c.length - 4)) + c.slice(-4)).replace(/(.{4})/g, '$1 ').trim() : ''; };
+let RK_NEW = false;       // Drawer: Formular „neue Reklamation“ trotz vorhandener (abgelehnter/erledigter Nachdruck-)Reklamation zeigen
 const stLabel = (s) => DATA?.statusLabels?.[s] || s;
 // Status, für die es eine Kunden-Mail-Vorlage gibt („neu“ bekommt die Bestellbestätigung); Wahrheit auf dem Server, Fallback = lib/mail-templates.js
 const MAIL_STATUSES = ['bezahlt', 'im-druck', 'gedruckt', 'versendet', 'storniert', 'abgeschlossen'];
@@ -124,8 +140,9 @@ function updateCounters() {
   $('#cnt-queue').textContent = q;
   $('#nav-cnt-orders').textContent = open || '';
   $('#nav-cnt-print').textContent = q || '';
-  const rev = DATA.orders.filter((o) => st(o) !== 'storniert').reduce((s, o) => s + (o.total || 0), 0);
-  $('#subline').textContent = `${DATA.orders.length} Bestellungen · ${open} offen · ${money(rev)} Umsatz gesamt`;
+  const rev = DATA.orders.filter((o) => st(o) !== 'storniert').reduce((s, o) => s + (o.total || 0) - refundAmount(o), 0);   // netto: abzüglich erledigter Erstattungen
+  const rk = DATA.orders.filter(reklaOpen).length;
+  $('#subline').textContent = `${DATA.orders.length} Bestellungen · ${open} offen${rk ? ` · ${rk} Reklamation${rk === 1 ? '' : 'en'}` : ''} · ${money(rev)} Umsatz gesamt`;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +171,8 @@ const lineTitle = (l) => `${prodLabel(l)} „${PRESETS[l.config?.preset] || l.co
 function lineMeta(l) {
   const c = l.config || {};
   const patt = PATTERNS[c.pattern] || c.pattern || '';
-  return `${patt}${c.pattern && c.pattern !== 'glatt' && c.depth != null ? ` ${String(c.depth).replace('.', ',')} mm` : ''} · ${c.height} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}${l.saucer ? ' · 🍽️ Untersetzer' : ''}`;
+  const rim = c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${RIM_LABELS[c.rim]}` : '';   // Vertrag „Oberer Rand“: nur ≠ glatt
+  return `${patt}${c.pattern && c.pattern !== 'glatt' && c.depth != null ? ` ${String(c.depth).replace('.', ',')} mm` : ''}${rim} · ${c.height} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}${l.saucer ? ' · 🍽️ Untersetzer' : ''}`;
 }
 function gravurText(l) {
   const c = l.config || {};
@@ -214,12 +232,16 @@ function renderDash() {
   const now = Date.now(), d30 = 30 * 864e5;
   const rev = orders.reduce((s, o) => s + (o.total || 0), 0);
   const rev30 = orders.filter((o) => now - new Date(o.createdAt) < d30).reduce((s, o) => s + (o.total || 0), 0);
+  // Erledigte Erstattungen/Gutschriften (kein Nachdruck) mindern den Umsatz — Server liefert dasselbe in DATA.kpi.erstattet
+  const refunds = orders.reduce((s, o) => s + refundAmount(o), 0);
+  const refunds30 = orders.filter((o) => now - new Date(o.createdAt) < d30).reduce((s, o) => s + refundAmount(o), 0);
+  const refundLine = (v) => (v > 0 ? `<small class="kpi-sub">− ${money(v)} Erstattungen</small>` : '');
   const open = all.filter((o) => ['neu', 'bezahlt', 'im-druck', 'gedruckt'].includes(st(o))).length;
   const printed = all.flatMap((o) => o.lines || []).filter((l) => l.print?.status === 'fertig').reduce((s, l) => s + (l.qty || 0), 0);
   const avg = orders.length ? rev / orders.length : 0;
   $('#kpis').innerHTML = `
-    <div class="kpi"><span>Umsatz gesamt</span><b>${money(rev)}</b></div>
-    <div class="kpi"><span>Umsatz 30 Tage</span><b>${money(rev30)}</b></div>
+    <div class="kpi"><span>Umsatz gesamt</span><b>${money(rev - refunds)}</b>${refundLine(refunds)}</div>
+    <div class="kpi"><span>Umsatz 30 Tage</span><b>${money(rev30 - refunds30)}</b>${refundLine(refunds30)}</div>
     <div class="kpi"><span>Bestellungen</span><b>${all.length}</b></div>
     <div class="kpi"><span>Offen</span><b>${open}</b></div>
     <div class="kpi"><span>Ø Bestellwert</span><b>${money(avg)}</b></div>
@@ -232,12 +254,14 @@ function renderDash() {
   const toPrint = all.filter((o) => inQueue(o) && progress(o).done === 0 && progress(o).printing === 0);
   const printing = all.filter((o) => st(o) === 'im-druck' || (inQueue(o) && progress(o).printing > 0));
   const toShip = all.filter((o) => st(o) === 'gedruckt');
+  const reklas = all.filter(reklaOpen).sort((a, b) => (b.reklamation.updatedAt || '').localeCompare(a.reklamation.updatedAt || ''));
   const col = (title, list, fn) => `<div class="todo-col"><h3>${title} <span class="badge">${list.length}</span></h3>${list.slice(0, 8).map(fn).join('') || '<p class="muted">Nichts offen.</p>'}${list.length > 8 ? `<p class="muted" style="margin-top:6px">+ ${list.length - 8} weitere</p>` : ''}</div>`;
   $('#todo').innerHTML =
     col('💶 Zahlung ausstehend', unpaid, (o) => item(o, `<span class="age ${ageDays(o.createdAt) > 7 ? 'old' : ''}">${ageText(o.createdAt, true)}</span><button class="mini acc" onclick="markPaid('${esc(o.orderId)}')" title="Zahlung eingegangen">✓ bezahlt</button>`)) +
     col('🧱 Zu drucken', toPrint, (o) => item(o, `<span class="age">${pieces(o)} Stk.</span>`)) +
     col('🔥 Im Druck', printing, (o) => { const p = progress(o); return item(o, `<span class="age">${p.done}/${p.total}</span>`); }) +
-    col('📮 Zu versenden', toShip, (o) => item(o, `<button class="mini ghost" onclick="openOrder('${esc(o.orderId)}')">Versand</button>`));
+    col('📮 Zu versenden', toShip, (o) => item(o, `<button class="mini ghost" onclick="openOrder('${esc(o.orderId)}')">Versand</button>`)) +
+    col('↩️ Reklamationen', reklas, (o) => item(o, `<span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkArtLabel(o.reklamation.art))}">${esc(rkStLabel(o.reklamation.status))}</span><button class="mini ghost" onclick="openOrder('${esc(o.orderId)}')">Öffnen</button>`));
 
   // Umsatz 30 Tage (Inline-SVG-Balken, eine Serie)
   const days = [];
@@ -288,6 +312,7 @@ function orderMatches(o) {
   if (F.status && st(o) !== F.status) return false;
   if (F.pay && (o.payment || 'vorkasse') !== F.pay) return false;
   if (F.email && custEmail(o) !== F.email) return false;
+  if (F.rekla && !reklaOpen(o)) return false;
   if (F.period) {
     const t = new Date(o.createdAt).getTime();
     if (F.period === 'year') { if (new Date(o.createdAt).getFullYear() !== new Date().getFullYear()) return false; }
@@ -295,6 +320,7 @@ function orderMatches(o) {
   }
   if (F.q) {
     const hay = [o.orderId, o.invoiceNo, custName(o), custEmail(o), o.customer?.city, o.customer?.zip, o.trackingNo, o.paypalOrderId,
+      o.reklamation?.gutscheinCode, o.reklamation?.gutschriftNo, o.reklamation?.refundId,   // Gutscheincode / Gutschriftnummer / PayPal-Erstattung
       ...(o.lines || []).map((l) => `${l.colorName} ${l.config?.text || ''} ${PRESETS[l.config?.preset] || ''} ${PATTERNS[l.config?.pattern] || ''}`)].join(' ').toLowerCase();
     if (!hay.includes(F.q)) return false;
   }
@@ -306,9 +332,12 @@ function renderOrders() {
   const base = DATA.orders.filter((o) => { const s = F.status; F.status = ''; const ok = orderMatches(o); F.status = s; return ok; });
   const counts = {};
   for (const o of base) counts[st(o)] = (counts[st(o)] || 0) + 1;
+  // Reklamations-Chip zählt offene Reklamationen (offen/ruecksendung/eingegangen) über alle anderen Filter; „Alle“ hebt ihn mit auf
+  const rkBase = DATA.orders.filter((o) => { const s = F.status, r = F.rekla; F.status = ''; F.rekla = false; const ok = orderMatches(o) && reklaOpen(o); F.status = s; F.rekla = r; return ok; }).length;
   $('#f-status').innerHTML = [['', 'Alle', base.length], ...DATA.statuses.map((s) => [s, stLabel(s), counts[s] || 0])]
     .filter(([s, , n]) => !s || n || s === F.status)
-    .map(([s, l, n]) => `<button class="chip ${F.status === s ? 'on' : ''}" onclick="F.status='${s}';renderOrders()">${esc(l)}<span class="n">${n}</span></button>`).join('');
+    .map(([s, l, n]) => `<button class="chip ${F.status === s ? 'on' : ''}" onclick="F.status='${s}';${s ? '' : 'F.rekla=false;'}renderOrders()">${esc(l)}<span class="n">${n}</span></button>`).join('') +
+    (rkBase || F.rekla ? `<button class="chip rk ${F.rekla ? 'on' : ''}" id="f-rekla" onclick="F.rekla=!F.rekla;renderOrders()" title="Nur Bestellungen mit offener Reklamation">↩️ Reklamation<span class="n">${rkBase}</span></button>` : '');
   const act = [];
   if (F.q) act.push(`Suche „${esc(F.q)}“`);
   if (F.email) act.push(`Kunde ${esc(F.email)}`);
@@ -326,12 +355,12 @@ function renderOrders() {
         <td data-l="Kunde">${esc(custName(o))}<br><small class="muted mail" title="${esc(custEmail(o))}">${esc(custEmail(o))}</small></td>
         <td data-l="Positionen"><span class="lines-short">${lines}</span></td>
         <td data-l="Summe" class="num">${o.total != null ? money(o.total) : '—'}<br><small class="muted">${o.payment === 'paypal' ? 'PayPal' : 'Vorkasse'} ${o.paymentStatus === 'bezahlt' ? '<span title="bezahlt">✅</span>' : '<span title="offen">⏳</span>'}</small>${o.coupon ? `<br><small class="muted">🎟️ ${esc(o.coupon.code)}</small>` : ''}</td>
-        <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
+        <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${o.reklamation ? `<br><span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkStLabel(o.reklamation.status))} · ${esc(rkArtLabel(o.reklamation.art))}">↩️ Reklamation</span>` : ''}${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
         <td data-l="Druck">${p.total ? `<span class="prog"><i style="--w:${Math.round(p.done / p.total * 100)}%"></i>${p.done}/${p.total}</span>` : '—'}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty">Keine Treffer.</td></tr>') + '</tbody>';
 }
-function clearFilters() { F.q = ''; F.email = ''; $('#g-search').value = ''; renderOrders(); }
+function clearFilters() { F.q = ''; F.email = ''; F.rekla = false; $('#g-search').value = ''; renderOrders(); }
 function filterByEmail(email) { F.email = email; F.q = ''; F.status = ''; $('#g-search').value = ''; show('orders'); renderOrders(); }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +370,7 @@ function openOrder(id) {
   if (!DATA.orders.some((o) => o.orderId === id)) return toast('Bestellung nicht gefunden', 'err');
   CUR = id;
   HIST_ALL = false;
+  RK_NEW = false;
   renderDrawer();
   $('#drawer').classList.add('open'); $('#drawer-bg').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -437,6 +467,7 @@ function renderDrawer() {
       </div>
       ${o.shippedAt ? `<p class="muted" style="margin-top:6px">Versendet am ${fmtDT(o.shippedAt)}${o.carrier ? ' mit ' + esc(CARRIERS[o.carrier] || o.carrier) : ''}</p>` : ''}
     </div>
+    ${reklaCard(o)}
     <div class="sect"><h3>Interne Notiz</h3>
       <textarea id="d-note" rows="2" placeholder="Nur für dich sichtbar …">${esc(o.adminNote || '')}</textarea>
       <div class="row" style="margin-top:8px"><button class="ghost mini" onclick="saveNote('${esc(o.orderId)}')">💾 Notiz speichern</button></div>
@@ -576,6 +607,198 @@ async function mailFreitext(mode) {
   if (!r.ok) return toast(r.error || 'Senden fehlgeschlagen', 'err', 5000);
   $('#dlg-mail').close();
   toast('E-Mail gesendet', 'ok');
+}
+
+// ---------------------------------------------------------------------------
+// Reklamation & Rückversand (Drawer-Karte) — Endpoint POST /api/admin/reklamation { orderId, action, notify?, … } → { ok, order }
+// ---------------------------------------------------------------------------
+const RK_TILES = [
+  ['nachdruck', '🖨️', 'Nachdruck', 'neu drucken & senden'], ['gutschein', '🎟️', 'Gutschein-Code', 'Gutschrift als Code'],
+  ['ueberweisung', '🏦', 'Überweisung', 'Erstattung aufs Konto'], ['paypal', '💙', 'PayPal', 'Erstattung über PayPal'],
+];
+const RK_DONE_LABEL = { gutschein: 'Erledigen: Gutschrift + Gutschein-Code erstellen', ueberweisung: 'Erledigen: Gutschrift erstellen (Überweisung selbst ausführen)', paypal: 'Erledigen: PayPal-Erstattung auslösen', nachdruck: 'Erledigen: Nachdruck bestätigen' };
+/** Kunde informieren? Default = Versand aktiv und Auto-Status-Mails an */
+const rkNotifyDefault = () => !!DATA.settings.mail?.enabled && DATA.settings.mail?.autoStatusMails !== false;
+const rkNotifyBox = () => `<label class="inline"><input type="checkbox" id="rk-notify" ${rkNotifyDefault() ? 'checked' : ''}> Kunde per E-Mail informieren</label>`;
+/** Formular „Reklamation anlegen“ (Art als Radio-Kacheln; PayPal nur bei PayPal-Bestellungen) */
+function reklaForm(o, cancel) {
+  const id = esc(o.orderId), total = euro(o.total);
+  const tiles = RK_TILES.map(([a, ic, tt, sub]) => {
+    const off = a === 'paypal' && o.payment !== 'paypal';
+    return `<label class="rk-tile ${off ? 'off' : ''} ${a === 'nachdruck' ? 'on' : ''}" ${off ? 'title="Nur bei Bestellungen, die per PayPal bezahlt wurden"' : ''}><input type="radio" name="rk-art" value="${a}" ${a === 'nachdruck' ? 'checked' : ''} ${off ? 'disabled' : ''} onchange="reklaFormSync()"><span class="ic">${ic}</span><span class="tt">${tt}</span><small>${sub}</small></label>`;
+  }).join('');
+  return `<div id="rk-form">
+      <label>Grund der Reklamation<textarea id="rk-grund" rows="2" placeholder="z. B. Riss im Boden, falsche Farbe, Gravur unleserlich …"></textarea></label>
+      <div class="rk-tiles" id="rk-tiles">${tiles}</div>
+      <div class="row" style="margin-top:10px">
+        <label id="rk-betrag-wrap" hidden>Betrag (€) <small>max. ${money(total)}</small><input type="number" id="rk-betrag" min="0" max="${total}" step="0.01" value="${total}" style="width:120px"></label>
+        <label id="rk-iban-wrap" hidden>IBAN des Kunden <small>optional — spätestens beim Erledigen</small><input id="rk-iban" placeholder="DE00 0000 0000 0000 0000 00" autocomplete="off" style="min-width:260px"></label>
+      </div>
+      <div class="row" style="margin-top:8px;gap:18px">
+        <label class="inline"><input type="checkbox" id="rk-ruecksendung"> Rücksendung der Ware nötig</label>
+        ${rkNotifyBox()}
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="acc" onclick="reklaAnlegen('${id}')">↩️ Reklamation anlegen</button>
+        ${cancel ? '<button class="ghost" onclick="RK_NEW=false;renderDrawer()">Abbrechen</button>' : ''}
+      </div>
+    </div>`;
+}
+/** Sichtbarkeit von Betrag/IBAN je gewählter Art (Fallback zu :has() für die Kachel-Markierung) */
+function reklaFormSync() {
+  const art = $('input[name="rk-art"]:checked')?.value || 'nachdruck';
+  $('#rk-betrag-wrap').hidden = art === 'nachdruck';
+  $('#rk-iban-wrap').hidden = art !== 'ueberweisung';
+  $$('#rk-tiles .rk-tile').forEach((t) => t.classList.toggle('on', t.querySelector('input')?.value === art));
+}
+/** Karte „↩️ Reklamation & Rückversand“: Formular (ohne Reklamation) oder Stepper + Details + Aktionen */
+function reklaCard(o) {
+  const r = o.reklamation, id = esc(o.orderId);
+  const head = (extra = '') => `<div class="sect" id="rk-card"><h3>↩️ Reklamation &amp; Rückversand ${extra}</h3>`;
+  if (!r) return head() + reklaForm(o, false) + '</div>';
+  const open = REKLA_OPEN.includes(r.status);
+  // Stepper: Angelegt → (Rücksendung erwartet → Ware eingegangen) → Erledigt; Abgelehnt separat
+  const needRet = r.ruecksendung || r.status === 'ruecksendung';
+  const flow = ['offen', ...(needRet ? ['ruecksendung'] : []), ...(needRet || r.status === 'eingegangen' ? ['eingegangen'] : []), 'erledigt'];
+  const label = (s) => (s === 'offen' ? 'Angelegt' : rkStLabel(s));
+  const idx = flow.indexOf(r.status);
+  const stepper = r.status === 'abgelehnt'
+    ? `<span class="step cur">✕ ${esc(rkStLabel('abgelehnt'))}</span>${r.note ? `<span class="muted" style="font-size:.8rem">${esc(r.note)}</span>` : ''}`
+    : flow.map((s, i) => `<span class="step ${i < idx ? 'done' : i === idx ? 'cur' : ''}">${i < idx ? '✓ ' : ''}${esc(label(s))}</span>`).join('<span class="step-arrow">›</span>');
+  const phase = reklaPhase(r), sentAt = o.mailsSent?.[`reklamation:${phase}`];
+  const kv = [
+    ['Art', esc(rkArtLabel(r.art))],
+    r.art !== 'nachdruck' ? ['Betrag', `<b>${money(r.betrag)}</b>`] : null,
+    ['Grund', esc(r.grund || '—')],
+    ['Rücksendung', r.ruecksendung ? 'ja — Ware wird zurückgeschickt' : 'nein'],
+    ['Angelegt', fmtDT(r.createdAt) + (r.resolvedAt ? ` · ${r.status === 'abgelehnt' ? 'abgelehnt' : 'erledigt'} ${fmtDT(r.resolvedAt)}` : '')],
+    r.art === 'ueberweisung' ? ['IBAN', r.iban ? `<code title="nur die letzten 4 Zeichen sichtbar">${esc(maskIban(r.iban))}</code>` : (open ? '<input id="rk-iban" placeholder="IBAN des Kunden — nötig zum Erledigen" autocomplete="off" style="min-width:260px">' : '—')] : null,
+    r.gutscheinCode ? ['Gutschein-Code', `<span class="rk-code"><code>${esc(r.gutscheinCode)}</code><button class="ghost mini" data-copy="${esc(r.gutscheinCode)}">📋 Kopieren</button></span>`] : null,
+    r.gutschriftNo ? ['Gutschrift', `<a href="/orders/${id}/gutschrift.html" target="_blank">🧾 ${esc(r.gutschriftNo)}</a>`] : null,
+    r.refundId ? ['PayPal-Erstattung', `<code>${esc(r.refundId)}</code>`] : null,
+    r.note && r.status !== 'abgelehnt' ? ['Notiz', esc(r.note)] : null,
+  ].filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  const again = r.status === 'abgelehnt' || (r.status === 'erledigt' && r.art === 'nachdruck');   // Server erlaubt dann eine neue Reklamation
+  const actions = open ? `
+      ${['offen', 'ruecksendung'].includes(r.status) ? `<button class="mini" onclick="reklaEingegangen('${id}')">📥 Ware eingegangen</button>` : ''}
+      <button class="mini acc" onclick="reklaErledigen('${id}')">✅ ${RK_DONE_LABEL[r.art] || 'Erledigen'}</button>
+      <button class="danger mini" onclick="reklaAblehnen('${id}')">✕ Ablehnen</button>
+      ${['offen', 'ruecksendung'].includes(r.status) ? `<button class="ghost mini" onclick="reklaZurueck('${id}')">↶ Zurücknehmen</button>` : ''}` :
+    (again ? `<button class="ghost mini" onclick="RK_NEW=true;renderDrawer()">+ Neue Reklamation anlegen</button>` : '');
+  return head(`<span class="badge rk-${esc(r.status)}">${esc(rkStLabel(r.status))}</span>`) + `
+      <div class="stepper">${stepper}</div>
+      <dl class="kv" style="margin-top:10px">${kv}</dl>
+      ${open ? `<div class="row" style="margin-top:10px">${rkNotifyBox()}</div>` : ''}
+      <div class="row" style="margin-top:8px">${actions}</div>
+      <div class="row" style="margin-top:10px">
+        <span class="muted">Mail „${esc(RK_PHASE_LABEL[phase])}“${sentAt ? ` · ✅ gesendet ${fmtDT(sentAt)}` : ''}</span>
+        <button class="ghost mini" onclick="reklaMail('${id}','preview')">👁 Vorschau</button>
+        <button class="ghost mini" onclick="reklaMail('${id}','send')">📧 Senden</button>
+      </div>
+      ${RK_NEW && again ? `<div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--line)"><b style="font-size:.9rem">Neue Reklamation</b>${reklaForm(o, true)}</div>` : ''}
+    </div>`;
+}
+/** POST /api/admin/reklamation — Fehler lesbar (z. B. PayPal), 404 = Server noch ohne Endpoint */
+async function reklaApi(body) {
+  const r = await api('/api/admin/reklamation', { method: 'POST', body: JSON.stringify(body) });
+  if (r.notReady) { toast('Reklamationen sind auf dem Server noch nicht eingerichtet — bitte später noch einmal versuchen.', 'info', 5000); return null; }
+  if (!r.ok) { toast('❌ ' + (r.error || 'Fehler'), 'err', 7000); return null; }
+  if (r.info) toast(r.info, 'info', 5000);
+  return r;
+}
+const rkNotify = () => { const el = $('#rk-notify'); return el ? !!el.checked : rkNotifyDefault(); };
+async function reklaAnlegen(id) {
+  const o = DATA.orders.find((x) => x.orderId === id);
+  if (!o) return;
+  const grund = $('#rk-grund').value.trim();
+  const art = $('input[name="rk-art"]:checked')?.value || 'nachdruck';
+  if (!grund) return toast('Bitte einen Grund angeben', 'err');
+  if (!REKLA_ART[art]) return toast('Bitte eine Art wählen', 'err');
+  const total = euro(o.total);
+  const betrag = art === 'nachdruck' ? undefined : euro($('#rk-betrag').value);
+  if (betrag !== undefined && (betrag <= 0 || betrag > total + 1e-9)) return toast(`Betrag muss zwischen 0,01 € und ${money(total)} (Bestellsumme) liegen`, 'err');
+  const ruecksendung = !!$('#rk-ruecksendung').checked, notify = rkNotify();
+  const iban = art === 'ueberweisung' ? $('#rk-iban').value.trim() : '';
+  const what = art === 'nachdruck' ? 'Nachdruck — alle Positionen gehen zurück in die Druckwarteschlange' : `${rkArtLabel(art)} über ${money(betrag)}`;
+  if (!confirm(`Reklamation für ${id} anlegen?\n${what}${ruecksendung ? '\nRücksendung der Ware wird erwartet.' : ''}${notify ? '\nDer Kunde wird per E-Mail informiert.' : ''}`)) return;
+  const body = { orderId: id, action: 'anlegen', art, grund, ruecksendung, notify };
+  if (betrag !== undefined) body.betrag = betrag;
+  if (iban) body.iban = iban;
+  const r = await reklaApi(body);
+  if (!r) return;
+  RK_NEW = false;
+  applyOrder(r.order);
+  toast(`Reklamation für ${id} angelegt${art === 'nachdruck' ? ' — Positionen wieder in der Druckwarteschlange' : ''}`, 'ok');
+}
+async function reklaEingegangen(id) {
+  const note = prompt('Ware eingegangen — Notiz zum Zustand (optional):', '');
+  if (note === null) return;
+  const r = await reklaApi({ orderId: id, action: 'eingegangen', note: note.trim(), notify: rkNotify() });
+  if (!r) return;
+  applyOrder(r.order);
+  toast(`${id}: Ware eingegangen`, 'ok');
+}
+async function reklaErledigen(id) {
+  const o = DATA.orders.find((x) => x.orderId === id), r0 = o?.reklamation;
+  if (!r0) return;
+  const body = { orderId: id, action: 'erledigen', notify: rkNotify() };
+  if (r0.art === 'ueberweisung' && !r0.iban) {
+    const iban = ($('#rk-iban')?.value || '').trim();
+    if (!iban) return toast('Für die Erstattung per Überweisung fehlt die IBAN des Kunden', 'err');
+    body.iban = iban;
+  }
+  const what = { gutschein: `Gutschrift über ${money(r0.betrag)} erstellen und einen Gutschein-Code anlegen`, ueberweisung: `Gutschrift über ${money(r0.betrag)} erstellen — die Überweisung führst du selbst aus`,
+    paypal: `${money(r0.betrag)} über PayPal erstatten (Geld geht sofort raus)`, nachdruck: 'Nachdruck als erledigt bestätigen' }[r0.art] || 'Reklamation erledigen';
+  if (!confirm(`${id}: ${what}?${body.notify ? '\nDer Kunde wird per E-Mail informiert.' : ''}`)) return;
+  const r = await reklaApi(body);
+  if (!r) return;
+  applyOrder(r.order);
+  const rr = r.order.reklamation || {};
+  toast(`${id} erledigt${rr.gutscheinCode ? ` · Gutschein ${rr.gutscheinCode}` : ''}${rr.gutschriftNo ? ` · Gutschrift ${rr.gutschriftNo}` : ''}${rr.refundId ? ' · PayPal erstattet' : ''}`, 'ok', 6000);
+}
+async function reklaAblehnen(id) {
+  const grund = prompt('Reklamation ablehnen — Begründung für den Kunden:', '');
+  if (grund === null) return;
+  if (!grund.trim()) return toast('Bitte eine Begründung angeben', 'err');
+  const r = await reklaApi({ orderId: id, action: 'ablehnen', grund: grund.trim(), notify: rkNotify() });
+  if (!r) return;
+  applyOrder(r.order);
+  toast(`${id}: Reklamation abgelehnt`, 'ok');
+}
+async function reklaZurueck(id) {
+  if (!confirm(`Reklamation zu ${id} zurücknehmen? Sie wird gelöscht, als wäre sie nie angelegt worden.`)) return;
+  const r = await reklaApi({ orderId: id, action: 'zuruecknehmen' });
+  if (!r) return;
+  applyOrder(r.order);
+  toast(`${id}: Reklamation zurückgenommen`, 'ok');
+}
+/** Reklamations-Mail der aktuellen Phase: Vorschau (Dialog mit „Jetzt senden“) oder direkt senden */
+async function reklaMail(id, mode) {
+  const o = DATA.orders.find((x) => x.orderId === id);
+  if (!o?.reklamation) return;
+  const phase = reklaPhase(o.reklamation);
+  if (mode === 'preview') return mailPreview(id, 'reklamation', { phase });
+  if (!confirm(`Reklamations-Mail „${RK_PHASE_LABEL[phase]}“ an ${custEmail(o)} senden?`)) return;
+  const r = await api('/api/admin/mail-send', { method: 'POST', body: JSON.stringify({ orderId: id, kind: 'reklamation', phase }) });
+  if (r.notReady) return notReady();
+  if (!r.ok) return toast(r.error || 'Senden fehlgeschlagen', 'err', 5000);
+  toast('E-Mail gesendet', 'ok');
+  const rr = await api(`/api/admin/order/${encodeURIComponent(id)}`);   // mailsSent nachladen („✅ gesendet …“)
+  if (rr.ok && rr.order) applyOrder(rr.order);
+}
+/** Text in die Zwischenablage (Fallback execCommand für http://) */
+async function copyText(text) {
+  let ok = false;
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; } } catch { ok = false; }
+  if (!ok) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+    ($$('dialog[open]').pop() || document.body).appendChild(ta);
+    ta.select();
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+  }
+  toast(ok ? `📋 Kopiert: ${text}` : 'Kopieren nicht möglich — bitte markieren und kopieren', ok ? 'ok' : 'err');
 }
 
 // ---------------------------------------------------------------------------
@@ -869,6 +1092,7 @@ function fillSettings() {
   $('#c-zip').value = c.zip || ''; $('#c-city').value = c.city || ''; $('#c-email').value = c.email || '';
   $('#c-phone').value = c.phone || ''; $('#c-ustid').value = c.ustId || ''; $('#c-iban').value = c.iban || '';
   $('#c-bic').value = c.bic || ''; $('#c-bank').value = c.bank || ''; $('#c-prefix').value = s.invoicePrefix || '';
+  $('#c-credit-prefix').value = s.creditPrefix || '';   // Gutschriftnummern (Reklamation): Präfix + nextCredit
   $('#c-klein').checked = !!c.kleinunternehmer;
   $('#pp-id').value = s.paypal?.clientId || ''; $('#pp-secret').value = s.paypal?.secret || '';
   $('#pp-enabled').checked = !!s.paypal?.enabled; $('#pp-sandbox').checked = !!s.paypal?.sandbox;
@@ -878,7 +1102,7 @@ function fillSettings() {
   $('#p-min-vase').value = p.minutesVase ?? 210; $('#p-g-vase').value = p.gramsVase ?? 110;
   $('#s-adminkey').value = '';
   const info = DATA.info || {};
-  $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(s.invoicePrefix || '')}${String(s.nextInvoice || 1).padStart(4, '0')}</dd>`;
+  $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(s.invoicePrefix || '')}${String(s.nextInvoice || 1).padStart(4, '0')}</dd><dt>Nächste Gutschrift</dt><dd>${esc(s.creditPrefix || 'GS-2026-')}${String(s.nextCredit || 1).padStart(4, '0')}</dd>`;
   $('#side-foot').textContent = `Node ${info.node || ''} · seit ${info.startedAt ? fmtDT(info.startedAt) : '—'}`;
   setDirty(false);
 }
@@ -913,6 +1137,7 @@ async function saveSettings() {
     mail: mailForm(),
     printing: { minutesEgg: +$('#p-min-egg').value || 75, gramsEgg: +$('#p-g-egg').value || 22, minutesVase: +$('#p-min-vase').value || 210, gramsVase: +$('#p-g-vase').value || 110 },
     invoicePrefix: $('#c-prefix').value,
+    creditPrefix: $('#c-credit-prefix').value,
     colors, coupons,
   };
   if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
@@ -985,7 +1210,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const pq = e.target.closest?.('[data-pq]');
     if (pq) { pqColor = pq.dataset.pq; return renderPrint(); }
     const del = e.target.closest?.('[data-del-color]');
-    if (del) deleteColor(+del.dataset.delColor);
+    if (del) return deleteColor(+del.dataset.delColor);
+    const cp = e.target.closest?.('[data-copy]');
+    if (cp) copyText(cp.dataset.copy);
   });
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);

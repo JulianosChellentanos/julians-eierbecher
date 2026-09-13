@@ -58,6 +58,31 @@ function sampleOrder(over = {}) {
   };
 }
 
+/** Bestellung mit Reklamation (Standard: Gutschein, Rücksendung erwartet) — over überschreibt Felder der Reklamation */
+function sampleRekla(over = {}, orderOver = {}) {
+  return sampleOrder({
+    reklamation: {
+      status: 'ruecksendung', art: 'gutschein', grund: 'Riss im Boden der Vase', betrag: 51.75, ruecksendung: true,
+      createdAt: '2026-09-12T10:00:00.000Z', updatedAt: '2026-09-12T10:00:00.000Z', ...over,
+    },
+    ...orderOver,
+  });
+}
+/** Alle Reklamations-Mails (4 Phasen, erledigt je Art) — für Smoke-Test und --render */
+function reklaMails(settings, baseUrl) {
+  const m = (over, phase, orderOver) => T.reklamationMail({ order: sampleRekla(over, orderOver), phase, settings, baseUrl });
+  return {
+    'reklamation-angelegt-ruecksendung': m({}, 'angelegt'),
+    'reklamation-angelegt-ohne-ruecksendung': m({ status: 'offen', art: 'ueberweisung', ruecksendung: false }, 'angelegt'),
+    'reklamation-eingegangen': m({ status: 'eingegangen', note: 'Der Riss ist deutlich zu sehen — geht klar.' }, 'eingegangen'),
+    'reklamation-erledigt-gutschein': m({ status: 'erledigt', gutscheinCode: 'GS-AB12-CD34', gutschriftNo: 'GS-2026-0007', resolvedAt: '2026-09-14T08:00:00.000Z' }, 'erledigt'),
+    'reklamation-erledigt-ueberweisung': m({ status: 'erledigt', art: 'ueberweisung', iban: 'DE89 3704 0044 0532 0130 00', gutschriftNo: 'GS-2026-0008', resolvedAt: '2026-09-14T08:00:00.000Z' }, 'erledigt'),
+    'reklamation-erledigt-paypal': m({ status: 'erledigt', art: 'paypal', refundId: '1AB23456CD789012E', gutschriftNo: 'GS-2026-0009', resolvedAt: '2026-09-14T08:00:00.000Z' }, 'erledigt', { payment: 'paypal', paymentStatus: 'bezahlt', paypalOrderId: '5O190127TN364715T' }),
+    'reklamation-erledigt-nachdruck': m({ status: 'erledigt', art: 'nachdruck', resolvedAt: '2026-09-14T08:00:00.000Z' }, 'erledigt'),
+    'reklamation-abgelehnt': m({ status: 'abgelehnt', note: 'Die Vase wurde laut Foto über 50 °C ausgesetzt (Spülmaschine) — das schließt die Gewährleistung leider aus.', resolvedAt: '2026-09-14T08:00:00.000Z' }, 'abgelehnt'),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Fake-SMTP-Server
 //   opts: { user, pass, mechs: ['PLAIN','LOGIN'], mode: 'plain'|'starttls'|'ssl', key, cert,
@@ -500,6 +525,7 @@ async function smoke() {
     for (const st of Object.keys(T.STATUS_MAIL)) {
       all[`status-${st}`] = T.orderStatus({ order: sampleOrder({ status: st, trackingNo: st === 'versendet' ? '00340434161094000000' : '', carrier: 'dhl', paymentStatus: st === 'storniert' ? 'bezahlt' : 'offen', payment: st === 'storniert' ? 'paypal' : 'vorkasse' }), status: st, settings, baseUrl });
     }
+    Object.assign(all, reklaMails(settings, baseUrl));
     let allOk = true;
     for (const [k, v] of Object.entries(all)) {
       const good = v && typeof v.subject === 'string' && v.subject && typeof v.text === 'string' && (k === 'admin' ? v.text.includes('Admin:') : v.text.includes('Grüße')) && typeof v.html === 'string' && v.html.startsWith('<!DOCTYPE html>') && v.html.length < 60_000;
@@ -526,6 +552,26 @@ async function smoke() {
     check(all.nachricht.subject === 'Kurze Rückfrage <zur Farbe>' && all.nachricht.html.includes('Kurze Rückfrage &lt;zur Farbe&gt;') && all.nachricht.html.includes('Untersetzer haben?<br>Salbei oder Kupfer?') && (all.nachricht.html.match(/<p style="margin:0 0 12px;">/g) || []).length >= 3, 'Freitext: Absätze/Umbrüche, escaped');
     const uw = T.welcome({ user: { name: '', email: 'x@example.com' }, settings, baseUrl });
     check(/^Hallo!/.test(uw.text), 'Ohne Namen: neutrale Anrede');
+    // Reklamation: 4 Phasen × Arten
+    const ra = all['reklamation-angelegt-ruecksendung'];
+    check(/Reklamation eingegangen/.test(ra.subject) && /Musterstraße 1\n00000 Musterstadt/.test(ra.text) && /Sendungsnummer/.test(ra.text) && /Riss im Boden/.test(ra.text) && /Gutschrift über 51,75 €/.test(nb(ra.text)), 'Reklamation angelegt: Rücksendeadresse, Sendungsnummer, Grund, Art');
+    const ro = all['reklamation-angelegt-ohne-ruecksendung'];
+    check(/nichts zurückschicken/.test(ro.text) && /IBAN/.test(ro.text) && !/Musterstraße 1\n/.test(ro.text), 'Reklamation angelegt ohne Rücksendung: kein Adressblock, IBAN-Bitte bei Überweisung');
+    check(/Rücksendung eingegangen/.test(all['reklamation-eingegangen'].subject) && /Gutschein-Code/.test(all['reklamation-eingegangen'].text) && /deutlich zu sehen/.test(all['reklamation-eingegangen'].text), 'Reklamation eingegangen: nächster Schritt + Notiz');
+    const rg = all['reklamation-erledigt-gutschein'];
+    check(/Gutschein-Code/.test(rg.subject) && rg.html.includes('font-size:26px') && rg.html.includes('GS-AB12-CD34') && /GUTSCHEIN-CODE \(51,75 €\): GS-AB12-CD34/.test(nb(rg.text)) && /Checkout/.test(rg.text) && rg.text.includes(`${baseUrl}/orders/OV-260910-A1B2C3/gutschrift.html`) && rg.html.includes('gutschrift.html'), 'Reklamation erledigt (Gutschein): Code groß, Checkout-Hinweis, Gutschrift-Link');
+    const ru = all['reklamation-erledigt-ueberweisung'];
+    check(/5 Werktagen/.test(ru.text) && /…3000/.test(ru.text) && !/DE89 3704/.test(ru.text) && !/DE89 3704/.test(ru.html) && ru.text.includes('gutschrift.html'), 'Reklamation erledigt (Überweisung): 5 Werktage, IBAN nur maskiert');
+    check(/1–3 Tagen/.test(all['reklamation-erledigt-paypal'].text) && /1AB23456CD789012E/.test(all['reklamation-erledigt-paypal'].text), 'Reklamation erledigt (PayPal): 1–3 Tage, Referenz');
+    const rn = all['reklamation-erledigt-nachdruck'];
+    check(/drucken dein Design neu/.test(rn.text) && !/gutschrift\.html/.test(rn.text) && /Nachdruck/.test(rn.subject), 'Reklamation erledigt (Nachdruck): kein Gutschrift-Link');
+    const rx = all['reklamation-abgelehnt'];
+    check(/Spülmaschine/.test(rx.text) && /tut uns wirklich leid/.test(rx.text) && rx.html.includes('50 °C'), 'Reklamation abgelehnt: Begründung, freundlich');
+    let thrown = 0;
+    try { T.reklamationMail({ order: sampleOrder(), phase: 'angelegt', settings, baseUrl }); } catch { thrown++; }
+    try { T.reklamationMail({ order: sampleRekla(), phase: 'storniert', settings, baseUrl }); } catch { thrown++; }
+    check(thrown === 2 && T.REKLA_PHASES.length === 4 && Object.keys(T.REKLA_STATUS).join() === 'offen,ruecksendung,eingegangen,erledigt,abgelehnt' && Object.keys(T.REKLA_ART).join() === 'nachdruck,gutschein,ueberweisung,paypal', 'reklamationMail(): Fehler ohne Reklamation/bei falscher Phase; Labels vollständig');
+    check(T.lineParts({ product: 'vase', config: { preset: 'flasche', pattern: 'rippen', height: 150, rim: 'wulst' } }).includes('Wulstrand') && !T.lineParts({ product: 'vase', config: { preset: 'flasche', rim: 'glatt' } }).join().includes('Rand') && T.lineParts({ product: 'vase', config: { rim: 'muster' } }).includes('Musterkante'), 'lineParts(): Rand nur bei Wulst/Musterkante');
     // Vorlage durch den Encoder: Zeilenlänge bleibt unter 998, Dekodierung identisch
     const built = buildMessage({ from: 'shop@example.com', to: 'mia@example.com', subject: b.subject, text: b.text, html: b.html });
     check(built.raw.split('\r\n').every((l) => l.length <= 998), 'Bestätigungs-HTML kodiert: alle Zeilen ≤ 998');
@@ -560,6 +606,7 @@ function render() {
       status: st, settings, baseUrl,
     });
   }
+  Object.assign(out, reklaMails(settings, baseUrl));
   for (const [k, v] of Object.entries(out)) {
     const f = path.join(TMP, `mail-${k}.html`);
     writeFileSync(f, v.html);

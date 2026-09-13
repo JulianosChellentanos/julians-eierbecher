@@ -117,6 +117,14 @@ export const FLOWS = {
   zick: 'Zickzack',
 };
 
+// Oberer Rand: glatt (Muster läuft oben aus) | muster (Muster bis zur Kante, Kante folgt dem Muster) |
+// wulst (runde Lippe außen, ohne Stützen druckbar). Bei offenen Voronoi-Vasen immer glatt.
+export const RIMS = {
+  glatt: 'Glatter Rand',
+  muster: 'Musterkante',
+  wulst: 'Wulstrand',
+};
+
 // Gravur-Stile (siehe textrelief.js): ALLE Stile werden als Relief direkt in die Wand gerechnet —
 // ein manifold Körper, keine aufgesetzte Schrift mehr.
 export const isIntegratedTextStyle = () => true;
@@ -126,6 +134,7 @@ export const DEFAULTS = {
   preset: 'flasche',
   height: 150,       // mm
   width: 1.0,        // Faktor 0.85..1.15 auf den Maximalradius
+  rim: 'glatt',      // oberer Rand: 'glatt' | 'muster' | 'wulst' (siehe RIMS)
   pattern: 'rippen',
   ribs: 64,          // Anzahl Rippen/Wellen
   depth: 0.9,        // Amplitude in mm (0..1.6)
@@ -146,6 +155,11 @@ const RIM_MIN_WALL = 2.6;   // minimale Randbreite Eierbecher
 const CAVITY_R_MAX = 21.0;  // Ei-Mulde Öffnungsradius (Ei ≈ 44 mm breit)
 const VASE_WALL = 2.2;      // Vasen-Wandstärke (zusätzlich zur Rippen-Tiefe)
 const VASE_FLOOR = 3.0;     // Vasen-Bodendicke
+const RIM_LIP_H = 4.5;      // Wulstrand: Höhe der Lippe (oberste mm)
+const RIM_LIP_OUT = 1.6;    // Wulstrand: Ausladung nach außen (mm); Viertelrundung mit gleichem Radius
+const RIM_LIP_RISE = 2.5;   // Wulstrand: Anstieg als Smoothstep über diese Höhe (max. Steigung 1,5·1,6/2,5 = 0,96 → 44°)
+const VASE_OPEN_WARN = 18;  // Vase: unterhalb dieser Öffnung (Ø mm) Hinweis „eng für Blumen“
+const VASE_OPEN_TIGHT = 10; // … darunter in Rot
 
 // ---------------------------------------------------------------------------
 // Kubische Hermite-Interpolation (Catmull-Rom für nicht-uniforme Knoten)
@@ -243,6 +257,10 @@ export function buildModel(params) {
   const H = Math.min(hMax, Math.max(hMin, p.height));
   const rMax = product.maxRadius * p.width;
   const R = (t) => Math.max(0.08, curve(t)) * rMax; // glatter Außenradius, gegen 0 geklemmt
+  // Oberer Rand (RIMS): Voronoi-Vasen sind offene Schalen ohne Randzone → dort immer glatt
+  const rim = RIMS[p.rim] ? p.rim : 'glatt';
+  const openCells = isVase && p.pattern === 'skelett';
+  const rimEff = openCells ? 'glatt' : rim;
 
   // Ästhetik-Klemmen (aus dem Design-Judge-Panel abgeleitet):
   // (a) Zickzack-Muster braucht ≥ 24 Facetten, sonst liest jede einzeln als Treppe.
@@ -321,12 +339,44 @@ export function buildModel(params) {
 
   // Rippen-Fade: unten glatt (Druckbett), oben sanft auslaufend — ausgefranste
   // Ränder waren der meistgenannte Kritikpunkt im Design-Panel.
+  // Rand „muster“: keine Ausblendung oben, das Muster läuft bis zur Kante durch.
+  const tFadeTop = isQuer ? 0.93 : p.pattern === 'koralle' ? 0.92 : 0.96; // ab hier blendet das Muster oben aus
+  const fadeTop = (t) => (rimEff === 'muster' ? 1 : smoothstep(1.0, tFadeTop, t));
   const fade = (t) => {
     let f = p.pattern === 'koralle' ? smoothstep(0.06, 0.22, t) : smoothstep(0.02, 0.12, t);
-    f *= smoothstep(1.0, isQuer ? 0.93 : p.pattern === 'koralle' ? 0.92 : 0.96, t);
+    f *= fadeTop(t);
     return f;
   };
   const ampAt = (t) => amp * fade(t);
+
+  // Wulstrand: runde Lippe außen über die obersten RIM_LIP_H mm — Profil b(s) über der Höhe s ab Lippenfuß:
+  //   Anstieg  b = OUT·smoothstep(0, rise, s)      (max. Steigung 1,5·OUT/rise ≤ 45° samt Silhouetten-Neigung)
+  //   Plateau  b = OUT                             (bis zum Beginn der Rundung)
+  //   Rundung  b = OUT − ρ + √(ρ² − (s − s₀)²)      (Viertelkreis ρ = OUT → endet an der Oberkante genau auf R(1))
+  // Nur die AUSSEN-Stationen bekommen die Lippe; Innenwand, Ei-Mulde und Textband folgen weiter R(t).
+  // Neigt sich die Grundform oben selbst nach außen, wird der Anstieg gestreckt bzw. die Ausladung verringert,
+  // damit die Gesamt-Silhouette ≤ 45° bleibt (ohne Stützen druckbar).
+  let lipAt = () => 0, lipOut = 0;
+  if (rimEff === 'wulst') {
+    let slopeTop = 0; // stärkste Aufweitung der Grundform in der Lippenzone (dr/dy > 0)
+    for (let s = 0; s < RIM_LIP_H; s += 0.25) {
+      const y = H - RIM_LIP_H + s;
+      slopeTop = Math.max(slopeTop, (R(Math.min(1, (y + 0.25) / H)) - R(y / H)) / 0.25);
+    }
+    const riseMax = RIM_LIP_H - RIM_LIP_OUT;                                     // Anstieg darf bis zum Beginn der Rundung reichen
+    const rise = Math.min(riseMax, Math.max(RIM_LIP_RISE, 1.5 * RIM_LIP_OUT / Math.max(0.05, 1 - slopeTop)));
+    lipOut = Math.min(RIM_LIP_OUT, Math.max(0.6, (1 - slopeTop) * rise / 1.5)); // notfalls flachere Lippe (steil aufweitende Grundform)
+    const rho = lipOut, s0 = RIM_LIP_H - rho;
+    lipAt = (y) => {
+      const s = y - (H - RIM_LIP_H);
+      if (s <= 0) return 0;
+      if (s <= rise) return lipOut * smoothstep(0, rise, s);
+      if (s <= s0) return lipOut;
+      const d = Math.min(rho, s - s0);
+      return lipOut - rho + Math.sqrt(Math.max(0, rho * rho - d * d));
+    };
+  }
+  const Rout = rimEff === 'wulst' ? (t) => R(t) + lipAt(t * H) : R; // Außensilhouette (mit Lippe)
 
   // Oberflächen-Versatz an Position (θ, t)
   const offset = (theta, t) => {
@@ -536,7 +586,7 @@ export function buildModel(params) {
     const lvl = relief.followWave ? offset(theta, relief.tC) : 0;
     return base * (1 - plate) + lvl * plate + (relief.level + tex) * shield + h;
   };
-  const wallR = (theta, y) => R(y / H) + surface(theta, y / H, y);
+  const wallR = (theta, y) => Rout(y / H) + surface(theta, y / H, y);
   // Feinraster nur im Textband: Ringe alle ~0,2 mm, Umfang in ~0,2-mm-Schritten
   // (Vielfaches der Rippenzahl → Grate bleiben auf Vertices). Übergang zu den
   // gröberen Ringen per Reißverschluss-Vernähung in revolve().
@@ -564,13 +614,25 @@ export function buildModel(params) {
     const uniq = [...new Set(kept.map((y) => +y.toFixed(5)))].sort((a, b) => a - b);
     wallYs.length = 0; wallYs.push(...uniq);
   }
+  if (rimEff === 'wulst') {
+    // Lippenzone feiner abtasten: Anstieg alle ~0,3 mm, Rundung nach Winkel (sonst wird der Viertelkreis eckig).
+    // Zeilen innerhalb des Textbands (feines Raster) bleiben wie sie sind.
+    const yLip = H - RIM_LIP_H, rho = lipOut, yRound = yLip + (RIM_LIP_H - rho);
+    const add = (y) => { if (!(relief && y >= relief.y0 - 1e-6 && y <= relief.y1 + 1e-6)) wallYs.push(y); };
+    const nRise = Math.max(6, Math.round((yRound - yLip) / 0.3 * q));
+    for (let i = 0; i <= nRise; i++) add(yLip + (i / nRise) * (yRound - yLip));
+    const nArc = Math.max(6, Math.round(12 * q));
+    for (let i = 1; i < nArc; i++) add(yRound + rho * Math.sin((i / nArc) * Math.PI / 2));
+    const uniq = [...new Set(wallYs.map((y) => +y.toFixed(5)))].sort((a, b) => a - b);
+    wallYs.length = 0; wallYs.push(...uniq);
+  }
   for (const y of wallYs) {
     const t = y / H;
     const inBand = relief && y >= relief.y0 - 1e-6 && y <= relief.y1 + 1e-6;
     stations.push(
       (ampAt(t) > 1e-4 || inBand)
-        ? { y, rFn: (theta) => R(t) + surface(theta, t, y), rot: isQuer ? 0 : p.pattern === 'koralle' ? -(flowPhase(t) * 0.22 + 0.16 * Math.sin(2 * Math.PI * t - 0.8)) : -flowPhase(t), rs: inBand ? RS_T : RS, band: !!inBand }
-        : { y, r: R(t) }
+        ? { y, rFn: (theta) => Rout(t) + surface(theta, t, y), rot: isQuer ? 0 : p.pattern === 'koralle' ? -(flowPhase(t) * 0.22 + 0.16 * Math.sin(2 * Math.PI * t - 0.8)) : -flowPhase(t), rs: inBand ? RS_T : RS, band: !!inBand }
+        : { y, r: Rout(t) }
     );
   }
 
@@ -591,20 +653,69 @@ export function buildModel(params) {
     stations.push({ y: H - D, r: 0 });
     cavityDia = rCav * 2; cavityDepth = D;
   } else {
-    // --- Vase: Innenwand folgt der Silhouette (Wandstärke konstant), Boden dicht
-    const wallEff = VASE_WALL + amp;
-    const rIn = (t) => Math.max(1.4, R(t) - wallEff);
-    const tFloor = VASE_FLOOR / H;
-    stations.push({ y: H, r: rIn(1) });
-    for (let i = 1; i <= INNER_STEPS; i++) {
-      const t = 1 - (1 - tFloor) * (i / INNER_STEPS);
-      stations.push({ y: t * H, r: rIn(t) });
+    // --- Vase: Innenwand folgt der Silhouette, Boden dicht. Wandstärke = VASE_WALL + ampNeeded(t):
+    // die Reserve hinter der Wand ist nur so groß wie das Muster an dieser Höhe noch tief ist — oben, wo es
+    // ausblendet (Rand glatt/wulst), wird die Öffnung entsprechend weiter (rIn(1) = R(1) − VASE_WALL).
+    //   ampNeeded(t) = max( amp·fadeTop(t),                       Muster-Ausblendung oben inkl. Randoption
+    //                       amp im Textband (y0 − 2 … y1 + 2),    Kartusche/Rampen liegen auf voller Musterebene
+    //                       Taschentiefe der Gravur im Textband,  gestanzt/Farbschrift schneiden unter die Wand
+    //                       −min_θ offset(θ, t) in der Ausblendzone )   numerische Talprüfung (Ring-Vertices)
+    // In der Ausblendzone wird die Reserve als Hüllkurve der tiefsten Täler der AUSSENRINGE geführt (zwischen den
+    // Ringen linear — genau die Fläche, die das Mesh dort hat), die Innenwand bekommt dort dieselben Ringhöhen:
+    // so ist die Wand im Mesh exakt VASE_WALL dick, nicht nur analytisch.
+    // Unten bleibt die volle Reserve (Bodenanschluss). Voronoi-Vasen: Schale hat feste Wand VASE_WALL + amp.
+    // Steigungsbegrenzung: die Innenwand darf sich nach oben nicht steiler als 45° aufweiten — gemessen relativ
+    // zur Silhouette (Δr ≤ Δy + max(0, ΔR)): der Übergang von voller Reserve auf VASE_WALL wird dann nach unten
+    // gestreckt (von unten nach oben: r[i] = min(r_roh[i], r[i−1] + Δy + max(0, ΔR))). Die Aufweitung der
+    // Grundform selbst (Bauch) bleibt wie bisher der Silhouette überlassen (Druck-Ampel).
+    const pocketBoost = relief && relief.plateMode === 'none' ? 1 + 0.35 * Math.min(1, relief.a) : 1;
+    const pocket = relief && relief.field.depth < 0 ? -relief.field.depth * pocketBoost : 0;
+    const inReserve = (y) => relief && y >= relief.y0 - 2 && y <= relief.y1 + 2;
+    const dOut = (H - CHAMFER) / WALL_STEPS;              // Ringabstand der Außenwand
+    const yFade = tFadeTop * H - 2 * dOut;                // ab hier (knapp unter der Ausblendung) Hüllkurve statt voller Reserve
+    const fading = !openCells && amp > 0 && rimEff !== 'muster';
+    // Tal-Hüllkurve: je Außenring in der Ausblendzone das tiefste Tal (analytisch amp·fadeTop, dazu die numerische
+    // Talprüfung auf genau den Vertices dieses Rings — θ-Raster samt Verlaufs-Rotation)
+    const envY = [], envR = [];
+    if (fading) for (const y of wallYs) {
+      if (y < yFade) continue;
+      const t = y / H;
+      let a = amp * fadeTop(t);
+      if (a < amp - 1e-6) {
+        const rot = isQuer ? 0 : p.pattern === 'koralle' ? -(flowPhase(t) * 0.22 + 0.16 * Math.sin(2 * Math.PI * t - 0.8)) : -flowPhase(t);
+        let valley = 0;
+        for (let j = 0; j < RS; j++) valley = Math.min(valley, offset((j / RS) * Math.PI * 2 + rot, t));
+        a = Math.max(a, -valley);
+      }
+      envY.push(y); envR.push(R(t) - a);
     }
+    const valleyAt = (y) => { // tiefstes Tal der Außenwand auf Höhe y (Hüllkurve, sonst volle Reserve)
+      if (!envY.length || y < envY[0] - 1e-9) return R(y / H) - amp;
+      let k = 0;
+      while (k < envY.length - 2 && envY[k + 1] < y) k++;
+      const lam = envY[k + 1] > envY[k] ? Math.min(1, Math.max(0, (y - envY[k]) / (envY[k + 1] - envY[k]))) : 0;
+      return envR[k] + (envR[k + 1] - envR[k]) * lam;
+    };
+    // Höhenraster der Innenwand: reguläres Raster, dazu die Außenring-Höhen der Ausblendzone und die Grenzen der Textband-Reserve
+    const ys = new Set([VASE_FLOOR, H]);
+    const tFloor = VASE_FLOOR / H;
+    for (let i = 1; i < INNER_STEPS; i++) ys.add(+((1 - (1 - tFloor) * (i / INNER_STEPS)) * H).toFixed(4));
+    for (const y of envY) if (y > VASE_FLOOR) ys.add(+y.toFixed(4));
+    if (relief) for (const y of [relief.y0 - 2, relief.y1 + 2]) if (y > VASE_FLOOR && y < H) ys.add(+y.toFixed(4));
+    const innerYs = [...ys].sort((a, b) => a - b);
+    const innerR = [];
+    for (let i = 0; i < innerYs.length; i++) {
+      const y = innerYs[i], t = y / H;
+      let r = valleyAt(y) - VASE_WALL;
+      if (inReserve(y)) r = Math.min(r, R(t) - VASE_WALL - Math.max(amp + (relief.followWave ? pocket : 0), pocket));
+      if (i > 0) r = Math.min(r, innerR[i - 1] + (y - innerYs[i - 1]) + Math.max(0, R(t) - R(innerYs[i - 1] / H))); // ≤ 45° Aufweitung nach oben (relativ zur Silhouette)
+      innerR.push(r);
+    }
+    for (let i = innerYs.length - 1; i >= 0; i--) stations.push({ y: innerYs[i], r: Math.max(1.4, innerR[i]) });
     stations.push({ y: VASE_FLOOR, r: 0 });
-    openingDia = rIn(1) * 2;
+    openingDia = Math.max(1.4, innerR[innerR.length - 1]) * 2;
   }
 
-  const openCells = isVase && p.pattern === 'skelett';
   let geometry = openCells
     ? buildVoronoiShell({H,R,rBase,rMax,ribs,amp,flowPhase,quality:q,exportRes:!!p.exportRes,surface,
         band: relief ? { y0: relief.y0, y1: relief.y1, step: fineStep,
@@ -620,6 +731,16 @@ export function buildModel(params) {
     geometry = creaseNormals(geometry, p.pattern === 'gehaemmert' ? 26 : openCells ? 30 : 22, geometry.userData.bandRanges);
   }
 
+  // Öffnungs-Hinweis (Vase): eng für Blumen — weich, nicht blockierend; unter VASE_OPEN_TIGHT zeigt die UI ihn rot
+  let openingWarn = '';
+  if (isVase && openingDia < VASE_OPEN_WARN) {
+    openingWarn = `⚠️ Öffnung nur Ø ${Math.round(openingDia)} mm — bei dieser Form eng für Blumen: breiter stellen oder Form mit weiterer Öffnung wählen`
+      + (rimEff === 'muster' ? ', Tiefe verringern oder Rand „Glatt“ wählen' : '') + '.';
+  }
+  // Außendurchmesser oben: mit Wulst ragt die Lippe über R(1) hinaus
+  let rTopOut = R(1);
+  if (rimEff === 'wulst') for (let s = 0; s <= RIM_LIP_H; s += 0.25) rTopOut = Math.max(rTopOut, Rout((H - RIM_LIP_H + s) / H));
+
   return {
     geometry,
     info: {
@@ -627,16 +748,21 @@ export function buildModel(params) {
       product: p.product,
       height: H,
       maxRadius: rMax,
-      topDiameter: (R(1) + amp) * 2,
+      topDiameter: (rTopOut + amp) * 2,
       baseDiameter: rBase * 2,
       cavityDiameter: cavityDia,
       cavityDepth,
       openingDiameter: openingDia,
+      openingWarn,         // Vase: Hinweistext bei enger Öffnung (< 18 mm), sonst ''
+      openingTight: isVase && openingDia < VASE_OPEN_TIGHT, // < 10 mm → Hinweis in Rot
+      rim,                 // gewählte Randoption (RIMS)
+      rimIgnored: rim !== rimEff, // Voronoi-Vase: Rand bleibt glatt
       radialSegments: RS,
       text: textInfo, // Relief-Gravur: gewählter Stil, ggf. verkleinerte Größe, Warnung
       inlay,          // Farbschrift: eigener Körper für das zweite Filament (3MF-Export), sonst null
       // Für die Text-Prägung: glatter Radius & Muster-Amplitude an Höhe t
       radiusAt: R,
+      outerRadiusAt: Rout, // Außensilhouette inkl. Wulstlippe
       ampAt,
     },
   };

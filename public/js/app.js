@@ -5,7 +5,7 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
   buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
-  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, TEXT_STYLES, FONT_RULES, fontAllowsStyle, isIntegratedTextStyle, FRONT_TEXT_ARC,
+  DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, RIMS, TEXT_STYLES, FONT_RULES, fontAllowsStyle, isIntegratedTextStyle, FRONT_TEXT_ARC,
 } from './geometry.js';
 import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
@@ -529,6 +529,14 @@ function rebuild() {
       + (state.saucer ? ` · Untersetzer Ø ${(saucerInfo.outerRadius * 2).toFixed(0)} mm` : '');
   $('#dim-info').textContent = IS_SMALL ? `${info.height} × Ø ${info.topDiameter.toFixed(0)} mm` : dimLong;
   $('#dim-info').title = dimLong;
+  // Öffnungs-Hinweis (Vase): eng für Blumen — gelb unter Ø 18 mm, rot unter Ø 10 mm (nicht blockierend)
+  const ow = $('#open-warn');
+  ow.hidden = !info.openingWarn;
+  ow.textContent = info.openingWarn || '';
+  ow.classList.toggle('err', !!info.openingTight);
+  // Randoption: bei offenen Voronoi-Vasen ohne Wirkung → Hinweis, Auswahl gedimmt
+  $('#rim-note').hidden = !info.openCells;
+  $('#rim-row').classList.toggle('disabled', !!info.openCells);
 }
 
 let textBuildId = 0;
@@ -844,6 +852,13 @@ function initControls() {
   const sizeChanged = () => { renderPrices(); rebuildSoon(); };
   bindSlider('#s-height', 'height', (v) => `${v} mm`, sizeChanged);
   bindSlider('#s-width', 'width', (v) => `${Math.round(v * 100)} %`, sizeChanged);
+
+  // Oberer Rand: Glatt · Muster bis Kante · Wulst (Vasen & Eierbecher; Voronoi-Vasen bleiben glatt)
+  $$('.rim-btn').forEach((b) => b.addEventListener('click', () => {
+    state.rim = RIMS[b.dataset.rim] ? b.dataset.rim : 'glatt';
+    $$('.rim-btn').forEach((x) => x.classList.toggle('active', x === b));
+    rebuild();
+  }));
   bindSlider('#s-ribs', 'ribs', (v) => `${v}`, rebuildSoon);
   bindSlider('#s-depth', 'depth', (v) => `${v.toFixed(1)} mm`, rebuildSoon);
   bindSlider('#s-twist', 'twist', (v) => v === 0 ? 'gerade' : `${v > 0 ? '+' : ''}${Math.round(v * 180)}°`, rebuildSoon);
@@ -880,6 +895,7 @@ function initControls() {
     state.ribs = 14 + Math.floor(Math.random() * 70);
     state.depth = 0.5 + Math.random() * 1.1;
     state.twist = Math.random() < 0.35 ? 0 : (Math.random() * 3 - 1.5);
+    state.rim = Math.random() < 0.7 ? 'glatt' : Math.random() < 0.5 ? 'wulst' : 'muster';
     const flows = Object.keys(FLOWS);
     state.flow = flows[Math.floor(Math.random() * flows.length)];
     state.flowWaves = 2 + Math.floor(Math.random() * 4);
@@ -976,6 +992,8 @@ function syncControls() {
   $('#s-twist-val').textContent = state.twist === 0 ? 'gerade' : `${state.twist > 0 ? '+' : ''}${Math.round(state.twist * 180)}°`;
   $$('input[type=range]').forEach((el) => sliderFill(el));
   $$('.flow-btn').forEach((x) => x.classList.toggle('active', x.dataset.flow === state.flow));
+  if (!RIMS[state.rim]) state.rim = 'glatt';
+  $$('.rim-btn').forEach((x) => x.classList.toggle('active', x.dataset.rim === state.rim));
   markActiveFont();
   $('#flowwaves-row').hidden = !(state.flow === 'fluss' || state.flow === 'zick');
   $('#s-flowwaves').value = state.flowWaves;
@@ -1012,6 +1030,7 @@ async function applyDesign(cfg, code) {
   const num = (k, lo, hi) => { const v = parseFloat(cfg[k]); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : DEFAULTS[k]; };
   Object.assign(state, {
     pattern: PATTERNS[cfg.pattern] ? cfg.pattern : 'glatt',
+    rim: RIMS[cfg.rim] ? cfg.rim : 'glatt', // Design-Codes ohne rim = glatt (Standard)
     flow: FLOWS[cfg.flow] ? cfg.flow : 'spirale',
     font: FONTS[cfg.font] ? cfg.font : DEFAULTS.font,
     height: num('height', prod.heightRange[0], prod.heightRange[1]),

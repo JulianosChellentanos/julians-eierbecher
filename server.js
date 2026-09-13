@@ -3,12 +3,13 @@
 import http from 'node:http';
 import { createGzip, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
-import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText } from './lib/mail-templates.js';
+import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText,
+  reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS } from './lib/mail-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -26,6 +27,7 @@ const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
 export const hooks = {
   orderCompleted: async (order) => {},
   statusChanged: async (order, prevStatus, opts) => {},
+  reklamation: async (order, phase, opts) => {},
   userRegistered: async (user) => {},
 };
 async function runHook(name, ...args) {
@@ -71,6 +73,9 @@ const DEFAULT_SETTINGS = {
   adminKey: 'ovju-admin',
   invoicePrefix: 'RE-2026-',
   nextInvoice: 1,
+  // Gutschriften (Reklamation): eigener Nummernkreis, vierstellig
+  creditPrefix: 'GS-2026-',
+  nextCredit: 1,
   pricing: {
     currency: 'EUR',
     eierbecher: {
@@ -140,6 +145,9 @@ function loadSettings() {
   settings.pricing.farbschrift = typeof settings.pricing.farbschrift === 'number' ? euro(settings.pricing.farbschrift) : 2;
   settings.printing = { ...DEFAULT_SETTINGS.printing, ...(settings.printing || {}) };
   settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
+  // Gutschrift-Nummernkreis (Reklamationen)
+  if (typeof settings.creditPrefix !== 'string') settings.creditPrefix = DEFAULT_SETTINGS.creditPrefix;
+  settings.nextCredit = Math.max(1, Math.round(Number(settings.nextCredit)) || 1);
   // Migration: Finishes (matt/glanz/metall) + bekannte Silk-/Glossy-PLA-Farben
   if (!settings.colorsV2) {
     for (const c of settings.colors) if (!c.finish) c.finish = 'matt';
@@ -187,7 +195,7 @@ const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2)
 const DESIGNS_FILE = path.join(DATA, 'designs.json');
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // ohne I/L/O/0/1 (verwechselbar)
 const DESIGN_KEYS = ['product', 'preset', 'height', 'width', 'pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves',
-  'text', 'textSize', 'textPos', 'font', 'textStyle', 'textColor', 'saucer', 'customPoints', 'color'];
+  'text', 'textSize', 'textPos', 'font', 'textStyle', 'textColor', 'saucer', 'customPoints', 'color', 'rim'];
 let designs = {};
 function loadDesigns() {
   try { designs = JSON.parse(readFileSync(DESIGNS_FILE, 'utf8')); } catch { designs = {}; }
@@ -198,6 +206,7 @@ function canonicalDesign(cfg) {
   for (const k of DESIGN_KEYS) {
     let v = cfg?.[k];
     if (v === undefined || v === null || v === '' || v === false) continue;
+    if (k === 'rim' && v === 'glatt') continue;   // Standardrand → nicht Teil des Codes (bestehende Codes bleiben gültig)
     if (typeof v === 'number') v = Math.round(v * 1000) / 1000;
     if (k === 'customPoints') {
       if (!Array.isArray(v)) continue;
@@ -371,10 +380,21 @@ async function noteQueued(order, key, subject, to, q) {
   if (q.status === 'wartet' || q.status === 'gesendet') return noteMailSent(order, key, subject, to);
   return noteMailSkipped(order, `E-Mail „${subject}“ an ${to} nicht gesendet: ${q.error || q.status} — liegt im Versandprotokoll`);
 }
-/** Mail zu einer Bestellung rendern (Admin: Vorschau & Versand). kind: bestaetigung | status | freitext */
-function renderOrderMail(order, { kind, status, subject, text } = {}) {
+/** Mail zu einer Bestellung rendern (Admin: Vorschau & Versand). kind: bestaetigung | status | freitext | reklamation (+ phase) */
+function renderOrderMail(order, { kind, status, phase, subject, text } = {}) {
   const baseUrl = baseUrlFor(settings);
   switch (kind) {
+    case 'reklamation': {
+      const ph = String(phase || '');
+      if (!REKLA_PHASES.includes(ph)) throw httpError(400, 'Unbekannte Reklamationsphase (angelegt | eingegangen | erledigt | abgelehnt)');
+      const r = order.reklamation;
+      if (!r) throw httpError(400, 'Zu dieser Bestellung gibt es keine Reklamation');
+      // Nur die Phase zum aktuellen Stand — sonst ginge z. B. eine Ablehnungs-Mail zu einer bereits erledigten Erstattung raus
+      if (REKLA_PHASE_OF[r.status] !== ph) {
+        throw httpError(400, `Phase „${ph}“ passt nicht zum Status der Reklamation (${REKLA_STATUS[r.status] || r.status} → Mail „${REKLA_PHASE_OF[r.status] || '–'}“)`);
+      }
+      return { key: `reklamation:${ph}`, kind: `reklamation:${ph}`, ...reklamationMail({ order, phase: ph, settings, baseUrl }) };
+    }
     case 'bestaetigung':
       return { key: 'bestaetigung', kind, ...orderConfirmation({ order, settings, baseUrl }) };
     case 'status': {
@@ -390,7 +410,7 @@ function renderOrderMail(order, { kind, status, subject, text } = {}) {
       return { key: null, kind, ...customMessage({ order, subject: subj, text: body, settings, baseUrl }) };
     }
     default:
-      throw httpError(400, 'Unbekannte Mail-Art (bestaetigung | status | freitext)');
+      throw httpError(400, 'Unbekannte Mail-Art (bestaetigung | status | freitext | reklamation)');
   }
 }
 
@@ -423,6 +443,17 @@ hooks.statusChanged = async (order, prevStatus, { notify = true } = {}) => {
   const m = orderStatus({ order, status, settings, baseUrl: baseUrlFor(settings) });
   const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, kind: `status:${status}`, ref: order.orderId });
   await noteQueued(order, status, m.subject, cust.email, q);
+};
+// Reklamation angelegt/eingegangen/erledigt/abgelehnt → Kundenmail (je Phase einmal: mailsSent['reklamation:<phase>'])
+hooks.reklamation = async (order, phase, { notify = true } = {}) => {
+  if (!notify || !mailSettings(settings.mail).autoStatusMails || !order.reklamation || !REKLA_PHASES.includes(phase)) return;
+  const key = `reklamation:${phase}`;
+  if (order.mailsSent?.[key]) return;
+  const cust = customerAddress(order);
+  if (!isEmail(cust.email)) return;
+  const m = reklamationMail({ order, phase, settings, baseUrl: baseUrlFor(settings) });
+  const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, kind: key, ref: order.orderId });
+  await noteQueued(order, key, m.subject, cust.email, q);
 };
 // Neues Kundenkonto → Willkommensmail
 hooks.userRegistered = async (user) => {
@@ -604,7 +635,8 @@ function normalizeOrder(order) {
   if (order.trackingNo === undefined) order.trackingNo = '';
   if (order.adminNote === undefined) order.adminNote = '';
   if (order.completedAt === undefined) order.completedAt = null;   // Zeitpunkt des (ersten) /complete
-  if (!order.mailsSent || typeof order.mailsSent !== 'object') order.mailsSent = {};   // { bestaetigung|Status: ISO }
+  if (!order.mailsSent || typeof order.mailsSent !== 'object') order.mailsSent = {};   // { bestaetigung|Status|reklamation:<Phase>: ISO }
+  if (!order.reklamation || typeof order.reklamation !== 'object') order.reklamation = null;   // Reklamation/Rückversand/Gutschrift
   if (!Array.isArray(order.history)) {
     order.history = [{ at: order.createdAt, status: 'neu', note: 'Bestellung eingegangen', by: 'system' }];
     if (order.payment === 'paypal' && order.paymentStatus === 'bezahlt') {
@@ -636,8 +668,12 @@ function setOrderStatus(order, status, note, by = 'admin') {
   return true;
 }
 const orderIsPaid = (o) => o.status === 'bezahlt' || (o.status === 'neu' && o.paymentStatus === 'bezahlt');
+// Atomar (Temp-Datei + rename): ein paralleles listOrders()/readOrder() sieht nie eine halb geschriebene Datei
 async function writeOrder(order) {
-  await writeFile(path.join(ORDERS, order.orderId, 'order.json'), JSON.stringify(order, null, 2));
+  const file = path.join(ORDERS, order.orderId, 'order.json');
+  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  await writeFile(tmp, JSON.stringify(order, null, 2));
+  await rename(tmp, file);
 }
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -649,6 +685,7 @@ function itemLabel(it) {
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
     (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} — 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
+    (c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${RIM_LABELS[c.rim]}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
     (it.code ? ` · Design-Code ${it.code}` : '') +
     // Aufpreise (Muster/Farbschrift/Farbe) nur wenn > 0 — Gravur/Untersetzer stehen schon im Label
@@ -694,7 +731,7 @@ function druckzettelHTML(order) {
       <td class="c big">${l.qty}×</td>
       <td><b>${l.product === 'vase' ? 'Vase' : 'Eierbecher'} „${esc(PRESET_LABELS[c.preset] || c.preset || '')}“</b>${l.saucer ? '<br>+ Untersetzer' : ''}
         <br><small>Pos. ${i + 1}${l.code ? ` · Code ${esc(l.code)}` : ''}</small></td>
-      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}</td>
+      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}</td>
       <td><span class="sw" style="background:${esc(bodyHex)}"></span> ${esc(bodyName)}${finish ? `<br><small>${finish}</small>` : ''}</td>
       <td>${gravur}</td>
       <td class="file">${file}</td>
@@ -803,6 +840,58 @@ function invoiceHTML(order) {
 }
 
 // ---------------------------------------------------------------------------
+// Gutschrift (HTML, druckbar) — orders/<ID>/gutschrift.html, entsteht beim Erledigen einer Reklamation
+// mit Erstattung (Gutschein / Überweisung / PayPal). Aufbau wie die Rechnung, Bezug auf Rechnung & Bestellung.
+// ---------------------------------------------------------------------------
+/** IBAN nur mit den letzten vier Zeichen — das Dokument liegt unter einer erratbaren Adresse */
+const maskIban = (iban) => { const c = String(iban || '').replace(/\s+/g, ''); return c.length >= 4 ? `${c.slice(0, 2)}•• •••• ${c.slice(-4)}` : ''; };
+function creditNoteHTML(order) {
+  const co = settings.company;
+  const r = order.reklamation || {};
+  const betrag = euro(r.betrag);
+  const dateDE = (iso) => new Date(iso || Date.now()).toLocaleDateString('de-DE');
+  const vatNote = co.kleinunternehmer
+    ? 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.'
+    : `Im Gutschriftbetrag enthaltene USt (19 %): ${money(betrag - betrag / 1.19)}`;
+  const how = {
+    gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> — einlösbar im Checkout des Shops, ohne Mindestbestellwert.`,
+    ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${esc(maskIban(r.iban))}` : ''} innerhalb von 5 Werktagen.`,
+    paypal: `Erstattung über PayPal auf das Zahlungskonto der Bestellung${r.refundId ? ` (Referenz ${esc(r.refundId)})` : ''}.`,
+  }[r.art] || esc(REKLA_ART[r.art] || '');
+  const ref = order.invoiceNo ? `Rechnung ${esc(order.invoiceNo)} vom ${esc(dateDE(order.createdAt))} · Bestellung ${esc(order.orderId)}` : `Bestellung ${esc(order.orderId)} vom ${esc(dateDE(order.createdAt))}`;
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Gutschrift ${esc(r.gutschriftNo || '')}</title>
+  <style>
+    body{font-family:system-ui;color:#1d1a16;max-width:800px;margin:40px auto;padding:0 24px;font-size:14px;line-height:1.5}
+    .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
+    h1{font-size:1.5rem;margin:0 0 4px} .muted{color:#6b6257} .sender{font-size:11px;color:#6b6257;margin-bottom:6px}
+    table{width:100%;border-collapse:collapse;margin:22px 0}
+    th,td{padding:9px 10px;border-bottom:1px solid #e5ddce;text-align:left;vertical-align:top}
+    th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b6257}
+    .r{text-align:right;white-space:nowrap} .tot td{border:none;padding:4px 10px}
+    .grand td{font-weight:700;font-size:1.05rem;border-top:2px solid #1d1a16}
+    .note{background:#faf6ee;border:1px solid #e5ddce;border-radius:10px;padding:14px 18px;margin-top:24px}
+    @media print{body{margin:10mm auto}.noprint{display:none}}
+    .noprint{margin-top:30px}.noprint button{padding:10px 22px;border-radius:999px;border:none;background:#1d1a16;color:#fff;font-weight:600;cursor:pointer}
+  </style></head><body>
+  <div class="head">
+    <div><h1>Gutschrift</h1><div class="muted">Nr. ${esc(r.gutschriftNo || '')} · ${esc(dateDE(r.resolvedAt || r.updatedAt))}<br>zu ${ref}</div></div>
+    <div style="text-align:right"><b>${esc(co.name)}</b><br>${esc(co.owner)}<br>${esc(co.street)}<br>${esc(co.zip)} ${esc(co.city)}<br>${esc(co.email)}${co.phone ? '<br>' + esc(co.phone) : ''}${co.ustId ? '<br>USt-IdNr. ' + esc(co.ustId) : ''}</div>
+  </div>
+  <div class="sender">${esc(co.name)} · ${esc(co.street)} · ${esc(co.zip)} ${esc(co.city)}</div>
+  <div><b>${esc(order.customer?.name)}</b><br>${esc(order.customer?.street)}<br>${esc(order.customer?.zip)} ${esc(order.customer?.city)}</div>
+  <table><tr><th>Position</th><th class="r">Betrag</th></tr>
+    <tr><td>Gutschrift zu ${ref}<br><small class="muted">Grund: ${esc(r.grund || '—')}</small></td><td class="r">${money(betrag)}</td></tr></table>
+  <table style="max-width:340px;margin-left:auto">
+    <tr class="tot grand"><td>Gutschriftbetrag</td><td class="r">${money(betrag)}</td></tr>
+  </table>
+  <p class="muted">${vatNote}</p>
+  <div class="note"><b>Art der Erstattung:</b> ${how}</div>
+  <p class="muted" style="margin-top:26px">Diese Gutschrift bezieht sich auf die oben genannte Rechnung bzw. Bestellung${order.invoiceNo ? ' und mindert deren Betrag entsprechend' : ''}. Bei Fragen antworte einfach auf unsere E-Mail.</p>
+  <div class="noprint"><button onclick="print()">🖨️ Drucken / als PDF speichern</button></div>
+  </body></html>`;
+}
+
+// ---------------------------------------------------------------------------
 // PayPal (REST) — aktiv, sobald in den Einstellungen Zugangsdaten hinterlegt sind
 // ---------------------------------------------------------------------------
 function paypalBase() {
@@ -853,6 +942,72 @@ async function verifyPaypalCapture(id) {
   }
   return cap;
 }
+/**
+ * Erstattung (Reklamation) über die PayPal-API: Capture-ID zur PayPal-Order holen, dann Teil-/Vollerstattung.
+ * Wirft Fehler mit lesbarer Meldung; PayPal-Request-Id macht den Aufruf je Reklamation idempotent.
+ */
+async function paypalRefund(order, amount) {
+  if (!paypalEnabled() || !settings.paypal?.secret) throw new Error('PayPal ist nicht aktiviert (Client-ID/Secret fehlen in den Einstellungen)');
+  const id = String(order.paypalOrderId || '');
+  if (!PAYPAL_ID_RE.test(id)) throw new Error('Die Bestellung hat keine gültige PayPal-Zahlungs-ID');
+  const token = await paypalToken();
+  const hdr = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const r = await fetch(`${paypalBase()}/v2/checkout/orders/${id}`, { headers: hdr });
+  const j = r.ok ? await r.json() : null;
+  if (!j) throw new Error(`Zahlung ${id} bei PayPal nicht gefunden (HTTP ${r.status})`);
+  const cap = j.purchase_units?.[0]?.payments?.captures?.[0];
+  if (!cap?.id) throw new Error('Zu dieser Zahlung liegt bei PayPal kein Zahlungseinzug (Capture) vor');
+  const rr = await fetch(`${paypalBase()}/v2/payments/captures/${cap.id}/refund`, {
+    method: 'POST',
+    headers: { ...hdr, 'PayPal-Request-Id': `ovju-rekla-${order.orderId}-${Date.parse(order.reklamation?.createdAt) || 0}` },
+    body: JSON.stringify({
+      amount: { value: Number(amount).toFixed(2), currency_code: cap.amount?.currency_code || settings.pricing.currency },
+      note_to_payer: `Erstattung zu Bestellung ${order.orderId}`,
+    }),
+  });
+  const rj = await rr.json().catch(() => ({}));
+  if (!rr.ok || !['COMPLETED', 'PENDING'].includes(rj.status)) {
+    throw new Error(rj.details?.[0]?.description || rj.message || `PayPal antwortet mit HTTP ${rr.status}`);
+  }
+  return { id: String(rj.id || ''), status: rj.status };
+}
+
+// ---------------------------------------------------------------------------
+// Reklamation / Rückversand / Gutschrift (order.reklamation) — Endpoint POST /api/admin/reklamation
+//   { status: offen|ruecksendung|eingegangen|erledigt|abgelehnt, art: nachdruck|gutschein|ueberweisung|paypal,
+//     grund, betrag, ruecksendung, iban?, gutschriftNo?, gutscheinCode?, refundId?, note?, createdAt, updatedAt, resolvedAt? }
+// ---------------------------------------------------------------------------
+const REKLA_ACTIONS = ['anlegen', 'eingegangen', 'erledigen', 'ablehnen', 'zuruecknehmen'];
+const REKLA_OPEN = ['offen', 'ruecksendung', 'eingegangen'];   // noch in Bearbeitung
+// Welche Kundenmail-Phase zu welchem Reklamationsstatus gehört (Admin-Vorschau/-Versand; Spiegel von reklaPhase() im Admin-UI)
+const REKLA_PHASE_OF = { offen: 'angelegt', ruecksendung: 'angelegt', eingegangen: 'eingegangen', erledigt: 'erledigt', abgelehnt: 'abgelehnt' };
+/** IBAN-Eingabe: nur A–Z/0–9 (Leerzeichen erlaubt), 15–34 Zeichen → Vierergruppen; '' bei leer, null bei ungültig */
+function cleanIban(raw) {
+  const s = String(raw ?? '').toUpperCase().trim();
+  if (!s) return '';
+  if (!/^[A-Z0-9 ]+$/.test(s)) return null;
+  const compact = s.replace(/ /g, '');
+  if (compact.length < 15 || compact.length > 34 || !/^[A-Z]{2}[0-9]{2}/.test(compact)) return null;
+  return compact.replace(/(.{4})/g, '$1 ').trim();
+}
+/** Freitext aus dem Admin: Steuerzeichen raus, Länge begrenzen */
+const clipText = (v, n) => String(v ?? '').replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, ' ').trim().slice(0, n);
+/** Eindeutiger Gutschein-Code GS-XXXX-XXXX (ohne verwechselbare Zeichen), geprüft gegen settings.coupons */
+function newCouponCode() {
+  const taken = new Set((settings.coupons || []).map((c) => String(c?.code || '').trim().toUpperCase()));
+  for (;;) {
+    let c = 'GS-';
+    for (let i = 0; i < 8; i++) c += (i === 4 ? '-' : '') + CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+    if (!taken.has(c)) return c;
+  }
+}
+/** Erstatteter Betrag einer Bestellung (erledigte Gutschrift/Erstattung, kein Nachdruck) — für Umsatz-KPIs */
+const refundAmount = (o) => (o?.reklamation?.status === 'erledigt' && o.reklamation.art !== 'nachdruck' ? euro(o.reklamation.betrag) : 0);
+/** Kundenansicht (Konto): ohne IBAN, Grund und interne Notiz */
+const publicRekla = (r) => (r && typeof r === 'object' ? {
+  status: r.status, art: r.art, betrag: euro(r.betrag), gutscheinCode: r.gutscheinCode || '', gutschriftNo: r.gutschriftNo || '',
+  createdAt: r.createdAt || null, resolvedAt: r.resolvedAt || null,
+} : null);
 
 // ---------------------------------------------------------------------------
 // Bestellungen
@@ -1076,6 +1231,7 @@ const server = http.createServer(async (req, res) => {
           total: o.total, invoiceNo: o.invoiceNo, trackingNo: o.trackingNo || '', carrier: o.carrier || '',
           paidAt: o.paidAt || null, shippedAt: o.shippedAt || null,
           pieces: (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+          reklamation: publicRekla(o.reklamation),   // ohne IBAN/Grund/Notiz
           // Zeitleiste fürs Konto — nur echte Statuswechsel mit Zeitpunkt; interne Notizen (Admin/Automatik/Mail) bleiben hier
           history: (o.history || []).filter((h) => h && h.by !== 'mail')
             .filter((h, i, a) => i === 0 || h.status !== a[i - 1].status)
@@ -1257,10 +1413,14 @@ const server = http.createServer(async (req, res) => {
     const orderIdOk = (id) => typeof id === 'string' && /^[A-Z0-9-]+$/.test(id);
     if (p === '/api/admin/data') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const orders = await listOrders();
       return send(res, 200, {
-        ok: true, settings: adminSettingsView(), orders: await listOrders(),
+        ok: true, settings: adminSettingsView(), orders,
         statuses: STATUSES, statusLabels: STATUS_LABELS, carriers: CARRIER_LABELS, normalHeight: NORMAL_HEIGHT,
         mailStatuses: Object.keys(STATUS_MAIL),   // Status mit Mail-Vorlage (Admin blendet Status-Mail-Knöpfe danach ein)
+        reklaStatus: REKLA_STATUS, reklaArt: REKLA_ART, reklaPhases: REKLA_PHASES,
+        // erledigte Erstattungen/Gutschriften (kein Nachdruck) — Umsatz-KPIs ziehen sie ab
+        kpi: { erstattet: Math.round(orders.reduce((s, o) => s + refundAmount(o), 0) * 100) / 100, erstattungen: orders.filter((o) => refundAmount(o) > 0).length },
         info: { node: process.version, uptime: Math.round(process.uptime()), startedAt: SERVER_STARTED },
       });
     }
@@ -1280,6 +1440,9 @@ const server = http.createServer(async (req, res) => {
       for (const k of ['pricing', 'company', 'invoicePrefix', 'colors', 'coupons', 'printing']) {
         if (patch[k] !== undefined) settings[k] = patch[k];
       }
+      // Gutschrift-Nummernkreis: Präfix als Text (≤ 20 Zeichen), nächste Nummer als ganze Zahl ≥ 1
+      if (patch.creditPrefix !== undefined) settings.creditPrefix = String(patch.creditPrefix ?? '').trim().slice(0, 20) || DEFAULT_SETTINGS.creditPrefix;
+      if (patch.nextCredit !== undefined) settings.nextCredit = Math.max(1, Math.round(Number(patch.nextCredit)) || 1);
       // Aufpreise: Muster nur mit bekannten Keys, Zahlen ≥ 0; Farbschrift ≥ 0 — fehlen sie im Patch, bleiben die alten Werte
       if (patch.pricing !== undefined) {
         settings.pricing.muster = patch.pricing.muster !== undefined ? sanitizeMuster(patch.pricing.muster) : (prevPricing.muster || {});
@@ -1394,6 +1557,123 @@ const server = http.createServer(async (req, res) => {
       if (order.status !== prevStatus) await runHook('statusChanged', order, prevStatus, { notify: !wasPrinted, auto: true });
       return;
     }
+    // Reklamation: anlegen | eingegangen | erledigen | ablehnen | zuruecknehmen — Antwort { ok, order } wie order-update
+    if (req.method === 'POST' && p === '/api/admin/reklamation') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      let body; try { body = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { body = null; }
+      if (!body || typeof body !== 'object') return send(res, 400, { ok: false, error: 'Ungültige Anfrage' });
+      const { orderId, action } = body;
+      if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
+      if (!REKLA_ACTIONS.includes(action)) return send(res, 400, { ok: false, error: 'Unbekannte Aktion (anlegen | eingegangen | erledigen | ablehnen | zuruecknehmen)' });
+      const bad = (msg) => send(res, 400, { ok: false, error: msg });
+      const grund = clipText(body.grund, 500);
+      const note = clipText(body.note, 500);
+      const iban = body.iban === undefined ? undefined : cleanIban(body.iban);
+      if (iban === null) return bad('IBAN ungültig — nur Buchstaben und Ziffern (Leerzeichen erlaubt), 15–34 Zeichen, beginnt mit Länderkennung');
+      let order, phase = null, info = '';
+      const release = await lockOrder(orderId);
+      try {
+        try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
+        const r = order.reklamation;
+        const now = new Date().toISOString();
+        const clearReklaMails = () => { for (const k of Object.keys(order.mailsSent)) if (k.startsWith('reklamation:')) delete order.mailsSent[k]; };
+        switch (action) {
+          case 'anlegen': {
+            // Eine zweite Reklamation nur nach Ablehnung oder erledigtem Nachdruck — erledigte Erstattungen bleiben stehen (kein doppeltes Geld)
+            if (r && !(r.status === 'abgelehnt' || (r.status === 'erledigt' && r.art === 'nachdruck'))) {
+              return bad(`Zu dieser Bestellung gibt es bereits eine Reklamation (${REKLA_STATUS[r.status] || r.status}) — erst erledigen, ablehnen oder zurücknehmen`);
+            }
+            const art = String(body.art || '');
+            if (!REKLA_ART[art]) return bad('Unbekannte Art (nachdruck | gutschein | ueberweisung | paypal)');
+            if (!grund) return bad('Bitte einen Grund angeben');
+            if (art === 'paypal' && !(order.payment === 'paypal' && order.paypalOrderId)) return bad('Erstattung per PayPal geht nur bei Bestellungen, die per PayPal bezahlt wurden');
+            const total = euro(order.total);
+            let betrag = total;
+            if (body.betrag !== undefined && body.betrag !== null && body.betrag !== '') {
+              const n = Number(body.betrag);
+              if (!Number.isFinite(n) || n < 0 || n > total + 1e-9) return bad(`Betrag muss zwischen 0 und ${money(total)} (Bestellsumme) liegen`);
+              betrag = Math.round(n * 100) / 100;
+            }
+            if (art !== 'nachdruck' && betrag <= 0) return bad('Für eine Gutschrift/Erstattung muss der Betrag größer als 0 sein');
+            const ruecksendung = !!body.ruecksendung;
+            order.reklamation = { status: ruecksendung ? 'ruecksendung' : 'offen', art, grund, betrag, ruecksendung, createdAt: now, updatedAt: now };
+            if (art === 'ueberweisung' && iban) order.reklamation.iban = iban;
+            clearReklaMails();   // neue Reklamation = neuer Mailzyklus
+            addHistory(order, order.status, `Reklamation angelegt — ${REKLA_ART[art]}${art !== 'nachdruck' ? ` über ${money(betrag)}` : ''}${ruecksendung ? ', Rücksendung erwartet' : ''}: ${grund}`, 'admin');
+            if (art === 'nachdruck') {
+              // Alle Positionen zurück in die Druckwarteschlange; Bestellstatus wieder „bezahlt“ (bzw. „neu“ bei offener Zahlung)
+              for (const l of order.lines) l.print = { status: 'offen', ...(l.print?.note ? { note: l.print.note } : {}) };
+              const target = order.paymentStatus === 'bezahlt' ? 'bezahlt' : 'neu';
+              if (!setOrderStatus(order, target, `Nachdruck wegen Reklamation: ${grund}`, 'admin')) addHistory(order, order.status, `Nachdruck wegen Reklamation: ${grund}`, 'admin');
+            }
+            phase = 'angelegt';
+            break;
+          }
+          case 'eingegangen': {
+            if (!r) return bad('Keine Reklamation zu dieser Bestellung');
+            if (!['offen', 'ruecksendung'].includes(r.status)) return bad(`„Ware eingegangen“ ist im Status „${REKLA_STATUS[r.status] || r.status}“ nicht möglich`);
+            r.status = 'eingegangen'; r.updatedAt = now;
+            if (note) r.note = note;
+            addHistory(order, order.status, `Rücksendung eingegangen${note ? ': ' + note : ''}`, 'admin');
+            phase = 'eingegangen';
+            break;
+          }
+          case 'erledigen': {
+            if (!r) return bad('Keine Reklamation zu dieser Bestellung');
+            if (r.status === 'erledigt') { info = 'Reklamation war bereits erledigt — nichts geändert'; break; }   // idempotent: keine zweite Gutschrift/Mail
+            if (!REKLA_OPEN.includes(r.status)) return bad(`Erledigen ist im Status „${REKLA_STATUS[r.status] || r.status}“ nicht möglich`);
+            if (r.art === 'ueberweisung' && iban) r.iban = iban;
+            if (r.art === 'ueberweisung' && !r.iban) return bad('Für die Erstattung per Überweisung fehlt die IBAN des Kunden');
+            if (note) r.note = note;
+            if (r.art === 'paypal' && !r.refundId) {
+              try {
+                const ref = await paypalRefund(order, r.betrag);
+                r.refundId = ref.id; r.updatedAt = now;
+                await writeOrder(order);   // Geld ist raus → sofort festhalten, auch wenn ein späterer Schritt scheitert
+              } catch (err) {
+                console.error(`PayPal-Erstattung ${orderId} fehlgeschlagen:`, err?.message || err);
+                return bad(`PayPal-Erstattung nicht möglich: ${err?.message || err}`);
+              }
+            }
+            if (r.art !== 'nachdruck') {
+              if (r.art === 'gutschein' && !r.gutscheinCode) r.gutscheinCode = newCouponCode();
+              if (!r.gutschriftNo) r.gutschriftNo = String(settings.creditPrefix || DEFAULT_SETTINGS.creditPrefix) + String(settings.nextCredit++).padStart(4, '0');
+              if (r.art === 'gutschein' && !settings.coupons.some((c) => String(c?.code || '').toUpperCase() === r.gutscheinCode)) {
+                settings.coupons.push({ code: r.gutscheinCode, type: 'fixed', value: r.betrag, minOrder: 0, active: true, note: `Gutschrift ${r.gutschriftNo} zu ${orderId}` });
+              }
+              await saveSettings();
+            }
+            r.status = 'erledigt'; r.updatedAt = now; r.resolvedAt = now;
+            if (r.gutschriftNo) await writeFile(path.join(ORDERS, orderId, 'gutschrift.html'), creditNoteHTML(order));
+            const detail = { gutschein: `Gutschein ${r.gutscheinCode}`, ueberweisung: `Überweisung ${maskIban(r.iban)}`, paypal: `PayPal-Referenz ${r.refundId || '—'}`, nachdruck: 'Nachdruck' }[r.art];
+            addHistory(order, order.status, `Reklamation erledigt — ${REKLA_ART[r.art]}${r.gutschriftNo ? `, Gutschrift ${r.gutschriftNo} über ${money(r.betrag)}` : ''} (${detail})${note ? ': ' + note : ''}`, 'admin');
+            phase = 'erledigt';
+            break;
+          }
+          case 'ablehnen': {
+            if (!r) return bad('Keine Reklamation zu dieser Bestellung');
+            if (!REKLA_OPEN.includes(r.status)) return bad(`Ablehnen ist im Status „${REKLA_STATUS[r.status] || r.status}“ nicht möglich`);
+            if (!grund) return bad('Bitte eine Begründung für die Ablehnung angeben');
+            r.status = 'abgelehnt'; r.note = grund; r.updatedAt = now; r.resolvedAt = now;
+            addHistory(order, order.status, `Reklamation abgelehnt: ${grund}`, 'admin');
+            phase = 'abgelehnt';
+            break;
+          }
+          case 'zuruecknehmen': {
+            if (!r) return bad('Keine Reklamation zu dieser Bestellung');
+            if (!['offen', 'ruecksendung'].includes(r.status)) return bad(`Zurücknehmen geht nur, solange die Reklamation „${REKLA_STATUS.offen}“ oder „${REKLA_STATUS.ruecksendung}“ ist`);
+            order.reklamation = null;
+            clearReklaMails();
+            addHistory(order, order.status, `Reklamation zurückgenommen (${REKLA_ART[r.art] || r.art})`, 'admin');
+            break;
+          }
+        }
+        await writeOrder(order);
+      } finally { release(); }
+      send(res, 200, info ? { ok: true, order, info } : { ok: true, order });
+      if (phase) await runHook('reklamation', order, phase, { notify: body.notify !== false });
+      return;
+    }
     if (p === '/api/admin/users') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       return send(res, 200, { ok: true, users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt, address: u.address || null })) });
@@ -1418,7 +1698,7 @@ const server = http.createServer(async (req, res) => {
         if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
         return `"${s.replace(/"/g, '""')}"`;
       };
-      const rows = [['Bestellung', 'Datum', 'Status', 'Zahlart', 'Rechnung', 'Name', 'E-Mail', 'Straße', 'PLZ', 'Ort', 'Positionen', 'Gutschein', 'Summe', 'Tracking', 'Versender', 'Bezahlt am', 'Versendet am'].join(';')];
+      const rows = [['Bestellung', 'Datum', 'Status', 'Zahlart', 'Rechnung', 'Name', 'E-Mail', 'Straße', 'PLZ', 'Ort', 'Positionen', 'Gutschein', 'Summe', 'Tracking', 'Versender', 'Bezahlt am', 'Versendet am', 'Reklamation'].join(';')];
       for (const o of orders) {
         rows.push([
           csvEsc(o.orderId), csvEsc(new Date(o.createdAt).toLocaleString('de-DE')), csvEsc(o.status || 'neu'),
@@ -1431,6 +1711,7 @@ const server = http.createServer(async (req, res) => {
           csvEsc(CARRIER_LABELS[o.carrier] || ''),
           csvEsc(o.paidAt ? new Date(o.paidAt).toLocaleString('de-DE') : ''),
           csvEsc(o.shippedAt ? new Date(o.shippedAt).toLocaleString('de-DE') : ''),
+          csvEsc(o.reklamation ? `${REKLA_STATUS[o.reklamation.status] || o.reklamation.status} / ${REKLA_ART[o.reklamation.art] || o.reklamation.art} / ${euro(o.reklamation.betrag).toFixed(2).replace('.', ',')}` : ''),
         ].join(';'));
       }
       res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="ovju-bestellungen.csv"' });
@@ -1524,10 +1805,10 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith('/orders/')) {
       const file = path.normalize(path.join(__dirname, p));
-      // Nur Rechnung (Link in Mails/Konto) und Modelldateien (reine Geometrie) — order.json mit Kundendaten,
+      // Nur Rechnung/Gutschrift (Links in Mails/Konto) und Modelldateien (reine Geometrie) — order.json mit Kundendaten,
       // interner Notiz und Historie wird nie ausgeliefert
       const base = path.basename(file);
-      const allowed = base === 'rechnung.html' || /\.(stl|3mf)$/i.test(base);
+      const allowed = base === 'rechnung.html' || base === 'gutschrift.html' || /\.(stl|3mf)$/i.test(base);
       if (!allowed || !file.startsWith(ORDERS + path.sep) || !existsSync(file) || !statSync(file).isFile()) {
         return send(res, 404, { ok: false, error: 'Nicht gefunden' });
       }

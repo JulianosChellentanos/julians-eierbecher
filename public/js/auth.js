@@ -22,6 +22,10 @@ const TRACKING_URL = {
   gls: (n) => `https://gls-group.eu/DE/de/paketverfolgung?match=${encodeURIComponent(n)}`,
   post: (n) => `https://www.deutschepost.de/de/s/sendungsverfolgung.html?piececode=${encodeURIComponent(n)}`,
 };
+// Reklamation (Spiegel von REKLA_STATUS/REKLA_ART in lib/mail-templates.js) — /api/auth/me liefert je Bestellung
+// reklamation { status, art, betrag, gutscheinCode, gutschriftNo, createdAt, resolvedAt } oder null
+const REKLA_STATUS = { offen: 'Reklamation offen', ruecksendung: 'Rücksendung erwartet', eingegangen: 'Ware eingegangen', erledigt: 'Erledigt', abgelehnt: 'Abgelehnt' };
+const REKLA_ART = { nachdruck: 'Nachdruck', gutschein: 'Gutschrift als Gutschein-Code', ueberweisung: 'Erstattung per Überweisung', paypal: 'Erstattung per PayPal' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDay = (iso) => (iso ? new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) : '');
 /** Sendungsnummer mit Link zur Paketverfolgung (wenn der Versender bekannt ist) */
@@ -33,6 +37,17 @@ function trackingHtml(o) {
   return url
     ? `<small><a href="${esc(url)}" target="_blank" rel="noopener">📮 ${esc(label)} ${esc(n)} → verfolgen</a></small>`
     : `<small>📮 ${label ? esc(label) + ' ' : ''}${esc(n)}</small>`;
+}
+/** Zeile „↩️ Reklamation: Status · Art · Betrag“ — bei erledigtem Gutschein der Code (zum Kopieren), Link zur Gutschrift */
+function reklaHtml(o) {
+  const r = o.reklamation;
+  if (!r || !r.status) return '';
+  const parts = [REKLA_STATUS[r.status] || r.status, REKLA_ART[r.art] || r.art];
+  if (r.art !== 'nachdruck' && r.betrag > 0) parts.push(money(r.betrag));
+  const link = r.gutschriftNo ? ` · <a href="/orders/${encodeURIComponent(o.orderId)}/gutschrift.html" target="_blank">🧾 Gutschrift ${esc(r.gutschriftNo)}</a>` : '';
+  const code = r.status === 'erledigt' && r.art === 'gutschein' && r.gutscheinCode
+    ? `<div class="ao-code" style="margin-top:4px">🎟️ Dein Gutschein-Code: <code style="font-size:.92rem;letter-spacing:.06em;font-weight:700;user-select:all">${esc(r.gutscheinCode)}</code> <small>— markieren, kopieren und im Warenkorb unter „Gutscheincode“ einlösen</small></div>` : '';
+  return `<div class="ao-rekla" style="flex-basis:100%;font-size:.76rem;line-height:1.45;color:var(--ink-soft)">↩️ Reklamation: ${parts.map(esc).join(' · ')}${link}${code}</div>`;
 }
 /** Die letzten Schritte der Bestellung (Historie vom Server: at/status/note), kompakt in einer Zeile */
 function stepsHtml(o) {
@@ -163,6 +178,7 @@ export function openAccount() {
       <div class="ao-right"><b>${o.total ? money(o.total) : '—'}</b>
         ${o.invoiceNo ? `<a href="/orders/${encodeURIComponent(o.orderId)}/rechnung.html" target="_blank">🧾 Rechnung</a>` : ''}</div>
       ${stepsHtml(o)}
+      ${reklaHtml(o)}
     </div>`).join('')
     : '<p class="tiny" style="text-align:left">Noch keine Bestellungen — dein erstes Unikat wartet im Konfigurator! 🎨</p>';
   $('#account-modal').showModal();

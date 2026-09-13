@@ -109,6 +109,7 @@
       <div id="loading" class="loading"><div class="egg-spin">🥚</div>Lade 3D-Studio …</div>
       <canvas id="viewer"></canvas>
       <div class="stage-badge" id="dim-info"></div>
+      <div class="stage-openwarn" id="open-warn" hidden></div>
       <div class="stage-print p-ok" id="print-badge"></div>
       <div class="stage-color"><span id="color-name">Elfenbein</span></div>
       <div class="scene-chips" id="scene-chips"></div>
@@ -146,6 +147,15 @@
           <span>Breite <output id="s-width-val"></output></span>
           <input type="range" id="s-width" min="0.85" max="1.15" step="0.01" value="1">
         </label>
+        <div class="rim-block">
+          <span class="flow-label">Oberer Rand</span>
+          <div class="seg seg-rim" id="rim-row">
+            <button class="rim-btn active" data-rim="glatt" title="Das Muster läuft oben sanft aus, der Rand bleibt glatt"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M4 15V3h16v12"/></svg><span>Glatt</span></button>
+            <button class="rim-btn" data-rim="muster" title="Das Muster läuft bis zur oberen Kante durch — die Kante folgt dem Muster"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M4 15V4q2-2.4 4 0t4 0t4 0t4 0v11"/></svg><span>Muster bis Kante</span></button>
+            <button class="rim-btn" data-rim="wulst" title="Runde Lippe außen am Rand (ca. 1,6 mm) — ohne Stützen druckbar"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M6 15V6M18 15V6"/><circle cx="5.5" cy="4" r="2.4"/><circle cx="18.5" cy="4" r="2.4"/><path d="M8 3h8"/></svg><span>Wulst</span></button>
+          </div>
+          <p class="tiny left rim-note" id="rim-note" hidden>Bei offenen Voronoi-Vasen bleibt der Rand immer glatt.</p>
+        </div>
       </section>
 
       <section class="ctrl" data-tab="muster">
