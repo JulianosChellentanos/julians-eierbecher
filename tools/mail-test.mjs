@@ -58,6 +58,14 @@ function sampleOrder(over = {}) {
   };
 }
 
+/** Bestellung während einer Aktion (−16 % auf alles, Mengenrabatt entfällt): Zeilen mit uvp/aktionProzent/aktionBetrag, order.aktion */
+function sampleAktion() {
+  const o = sampleOrder({ coupon: null, aktion: { id: 'ak-test', name: 'Sommer-Sale', prozent: 16, ersparnis: 10.32 } });
+  o.lines[0] = { ...o.lines[0], unit: 20.92, off: 0, line: 20.92, uvp: 24.9, aktionProzent: 16, aktionBetrag: 3.98, config: { ...o.lines[0].config, pattern: 'rippen' }, parts: { grund: 24.9 } };
+  o.lines[1] = { ...o.lines[1], unit: 8.32, off: 0, line: 33.28, uvp: 9.9, aktionProzent: 16, aktionBetrag: 1.58, saucer: false, parts: { grund: 9.9 } };
+  Object.assign(o, { subtotal: 54.2, shipping: 0, total: 54.2 });
+  return o;
+}
 /** Bestellung mit Reklamation (Standard: Gutschein, Rücksendung erwartet) — over überschreibt Felder der Reklamation */
 function sampleRekla(over = {}, orderOver = {}) {
   return sampleOrder({
@@ -572,6 +580,10 @@ async function smoke() {
     try { T.reklamationMail({ order: sampleRekla(), phase: 'storniert', settings, baseUrl }); } catch { thrown++; }
     check(thrown === 2 && T.REKLA_PHASES.length === 4 && Object.keys(T.REKLA_STATUS).join() === 'offen,ruecksendung,eingegangen,erledigt,abgelehnt' && Object.keys(T.REKLA_ART).join() === 'nachdruck,gutschein,ueberweisung,paypal', 'reklamationMail(): Fehler ohne Reklamation/bei falscher Phase; Labels vollständig');
     check(T.lineParts({ product: 'vase', config: { preset: 'flasche', pattern: 'rippen', height: 150, rim: 'wulst' } }).includes('Wulstrand') && !T.lineParts({ product: 'vase', config: { preset: 'flasche', rim: 'glatt' } }).join().includes('Rand') && T.lineParts({ product: 'vase', config: { rim: 'muster' } }).includes('Musterkante'), 'lineParts(): Rand nur bei Wulst/Musterkante');
+    // Aktion: UVP-Zeile je Position + Ersparnis unter den Summen; Bestellungen ohne die Felder bleiben unverändert
+    const ba = T.orderConfirmation({ order: sampleAktion(), settings, baseUrl });
+    check(/UVP 24,90 € · Aktion −16 %/.test(nb(ba.text)) && /UVP 9,90 € · Aktion −16 %/.test(nb(ba.text)) && /1 × 20,92 €/.test(nb(ba.text)) && /Aktion „Sommer-Sale“ −16 %: Ersparnis −10,32 €/.test(nb(ba.text)) && ba.html.includes('UVP 24,90') && ba.html.includes('Ersparnis') && !/Mengenrabatt/.test(ba.text), 'Bestätigung mit Aktion: UVP-Zeile, reduzierter Einzelpreis, Ersparnis-Zeile, kein Mengenrabatt');
+    check(!/Aktion|UVP|Ersparnis/.test(b.text) && !/Ersparnis/.test(b.html) && T.aktionText({ unit: 9.9 }, settings) === '' && T.aktionSummary({ aktion: null }, settings) === null, 'Ohne Aktion: keine UVP-/Ersparnis-Zeilen (alte Bestellungen unverändert)');
     // Vorlage durch den Encoder: Zeilenlänge bleibt unter 998, Dekodierung identisch
     const built = buildMessage({ from: 'shop@example.com', to: 'mia@example.com', subject: b.subject, text: b.text, html: b.html });
     check(built.raw.split('\r\n').every((l) => l.length <= 998), 'Bestätigungs-HTML kodiert: alle Zeilen ≤ 998');
@@ -595,6 +607,7 @@ function render() {
   const out = {
     'bestaetigung-vorkasse': T.orderConfirmation({ order, settings, baseUrl }),
     'bestaetigung-paypal': T.orderConfirmation({ order: sampleOrder({ payment: 'paypal', paymentStatus: 'bezahlt' }), settings, baseUrl }),
+    'bestaetigung-aktion': T.orderConfirmation({ order: sampleAktion(), settings, baseUrl }),
     willkommen: T.welcome({ user: { name: 'Mia Müller', email: 'mia@example.com' }, settings, baseUrl }),
     'passwort-vergessen': T.passwordReset({ user: { name: 'Mia Müller', email: 'mia@example.com' }, link: `${baseUrl}/?reset=abc123def456`, settings }),
     'admin-neue-bestellung': T.adminNewOrder({ order, settings, baseUrl }),

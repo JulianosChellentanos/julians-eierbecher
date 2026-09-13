@@ -6,25 +6,26 @@ import { PRODUCTS, PATTERNS, FLOWS, FONTS, RIMS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
 import {
   setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
-  volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, linePrice,
+  volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp, linePrice,
+  aktionFor, onAktionEnde,
 } from './pricing.js';
 
-export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice };
+export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp };
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const LS_KEY = 'ovju-cart-v1';
 
-let pricing = null;
 let cart = [];
+const pricing = () => getPricing(); // immer der aktuelle Stand (aktion.js lädt die Preise nach dem Aktionsende neu)
 
 export async function initPricing() {
-  if (!pricing) { pricing = await (await fetch('/api/pricing')).json(); setPricing(pricing); }
+  if (!getPricing()) setPricing(await (await fetch('/api/pricing')).json());
   // Farbliste (mit Aufpreisen) setzt normalerweise der Konfigurator per setColors(); Fallback: selbst laden
   if (!getColors().length) {
     try { const live = await (await fetch('/api/colors')).json(); if (Array.isArray(live)) setColors(live); } catch { /* ohne Farbaufpreise weiter */ }
   }
-  return pricing;
+  return getPricing();
 }
 
 function loadCart() {
@@ -40,10 +41,23 @@ function saveCart() {
   localStorage.setItem(LS_KEY, JSON.stringify(cart));
   renderBadge();
 }
+/** Summen — subtotal aus den (ggf. aktionsreduzierten) Zeilen; aktion = { name, prozent, ersparnis } wenn eine Zeile betroffen ist */
 function totals() {
-  const subtotal = Math.round(cart.reduce((s, it) => s + linePrice(it).line, 0) * 100) / 100;
-  const shipping = cart.length === 0 ? 0 : (subtotal >= pricing.shipping.freeFrom ? 0 : pricing.shipping.flat);
-  return { subtotal, shipping, total: Math.round((subtotal + shipping) * 100) / 100 };
+  const lines = cart.map((it) => linePrice(it));
+  const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
+  const ship = pricing().shipping;
+  const shipping = cart.length === 0 ? 0 : (subtotal >= ship.freeFrom ? 0 : ship.flat);
+  const hit = lines.find((l) => l.aktionProzent > 0);
+  const aktion = hit ? {
+    name: hit.aktionName, prozent: hit.aktionProzent,
+    ersparnis: Math.round(lines.reduce((s, l) => s + l.ersparnis, 0) * 100) / 100,
+  } : null;
+  return { subtotal, shipping, total: Math.round((subtotal + shipping) * 100) / 100, aktion };
+}
+/** Zeile „🔥 Herbstaktion −16 %: du sparst 3,98 €“ für Warenkorb & Kasse (informativ — die Summen sind schon reduziert) */
+function aktionRowHTML(t, cls) {
+  if (!t.aktion || !(t.aktion.ersparnis > 0)) return '';
+  return `<div class="${cls}"><span>🔥 ${esc(t.aktion.name)} −${t.aktion.prozent} %</span><b>du sparst ${fmt(t.aktion.ersparnis)}</b></div>`;
 }
 
 export function itemTitle(it) {
@@ -134,8 +148,11 @@ function renderCart() {
     box.innerHTML = '<p class="cart-empty">Dein Warenkorb ist leer.<br><small>Gestalte etwas Schönes im Konfigurator! 🎨</small></p>';
   } else {
     box.innerHTML = cart.map((it, i) => {
-      const { off, line } = linePrice(it);
-      const nextTier = (pricing.products[it.product].discounts || []).find((t) => t.qty > it.qty);
+      const lp = linePrice(it);
+      const { off, line } = lp;
+      const akt = lp.aktionProzent > 0 ? aktionFor(it.product) : null;
+      // Staffel-Hinweis nur, wenn der Mengenrabatt gerade auch gilt (während einer Aktion ohne „zusätzlich“ entfällt er)
+      const nextTier = akt && !akt.mengenrabatt ? null : (pricing().products[it.product].discounts || []).find((t) => t.qty > it.qty);
       return `<div class="cart-item">
         <img src="${esc(it.thumb)}" alt="">
         <div class="ci-main">
@@ -144,19 +161,21 @@ function renderCart() {
           ${it.code ? `<button class="ci-code" data-code="${esc(it.code)}" title="Design-Code kopieren — damit kannst du dieses Design jederzeit wieder laden">🔖 ${esc(formatCode(it.code))}</button>` : ''}
           <div class="ci-qty">
             <span class="ci-step"><button data-i="${i}" data-d="-1">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1">+</button></span>
+            ${akt ? `<span class="aktion-badge" title="${esc(akt.name)}">−${lp.aktionProzent} %</span>` : ''}
             ${off ? `<span class="ci-off">−${off} %</span>` : ''}
             ${nextTier ? `<small class="ci-hint">ab ${nextTier.qty} St. −${nextTier.off} %</small>` : ''}
           </div>
         </div>
-        <div class="ci-right"><b>${fmt(line)}</b><button class="ci-del" data-del="${i}" title="Entfernen">🗑</button></div>
+        <div class="ci-right"><b${akt ? ' class="aktion-price"' : ''}>${fmt(line)}</b>${akt ? `<s class="uvp" title="Preis ohne Aktion">${fmt(lp.lineUvp)}</s>` : ''}<button class="ci-del" data-del="${i}" title="Entfernen">🗑</button></div>
       </div>`;
     }).join('');
   }
   const t = totals();
   $('#cart-totals').innerHTML = cart.length ? `
     <div><span>Zwischensumme</span><b>${fmt(t.subtotal)}</b></div>
+    ${aktionRowHTML(t, 'ct-aktion')}
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
-    ${t.shipping > 0 ? `<small>Noch ${fmt(pricing.shipping.freeFrom - t.subtotal)} bis zum Gratisversand</small>` : ''}
+    ${t.shipping > 0 ? `<small>Noch ${fmt(pricing().shipping.freeFrom - t.subtotal)} bis zum Gratisversand</small>` : ''}
     <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>` : '';
   $('#cart-checkout').disabled = !cart.length;
 
@@ -186,17 +205,22 @@ function checkoutTotals() {
   const t = totals();
   if (!coupon) return t;
   const after = Math.round((t.subtotal - coupon.off) * 100) / 100;
-  const shipping = after >= pricing.shipping.freeFrom ? 0 : pricing.shipping.flat;
+  const ship = pricing().shipping;
+  const shipping = after >= ship.freeFrom ? 0 : ship.flat;
   return { ...t, shipping, total: Math.round((after + shipping) * 100) / 100 };
 }
 
 function renderCheckoutSummary() {
   const t = checkoutTotals();
   $('#co-summary').innerHTML = cart.map((it) => {
-    const { off, line } = linePrice(it);
+    const lp = linePrice(it);
+    const { off, line } = lp;
+    const akt = lp.aktionProzent > 0;
     const parts = partsText(it);
-    return `<div><span>${it.qty}× ${esc(itemTitle(it))}${off ? ` <em>(−${off} %)</em>` : ''}${parts ? `<br><small class="co-parts">inkl. ${esc(parts)}</small>` : ''}</span><b>${fmt(line)}</b></div>`;
+    return `<div><span>${it.qty}× ${esc(itemTitle(it))}${akt ? ` <span class="aktion-badge">−${lp.aktionProzent} %</span>` : ''}${off ? ` <em>(−${off} %)</em>` : ''}${parts ? `<br><small class="co-parts">inkl. ${esc(parts)}</small>` : ''}</span>` +
+      `<b${akt ? ' class="aktion-price"' : ''}>${fmt(line)}${akt ? ` <s class="uvp">${fmt(lp.lineUvp)}</s>` : ''}</b></div>`;
   }).join('') + `
+    ${aktionRowHTML(t, 'co-aktion')}
     ${coupon ? `<div><span>🎟️ Gutschein „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
     <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>`;
@@ -216,7 +240,8 @@ async function applyCoupon() {
     msg.className = 'tiny ok-msg';
   } else {
     coupon = null;
-    msg.textContent = '❌ Code ungültig oder Mindestbestellwert nicht erreicht.';
+    // Server nennt den Grund (z. B. „Gutschein „X“ ist nicht mit der Aktion „Y“ kombinierbar.“) — sonst die allgemeine Meldung
+    msg.textContent = `❌ ${r.couponError || 'Code ungültig oder Mindestbestellwert nicht erreicht.'}`;
     msg.className = 'tiny warn-msg';
   }
   renderCheckoutSummary();
@@ -236,7 +261,7 @@ function openCheckout() {
       $('#co-city').value = u.address.city || '';
     }
   }
-  const pp = pricing.paypal?.enabled;
+  const pp = pricing().paypal?.enabled;
   $('#pay-paypal-row').hidden = !pp;
   if (!pp) $('#pay-vorkasse').checked = true;
   $('#checkout-modal').showModal();
@@ -246,7 +271,7 @@ function openCheckout() {
 function setupPayPal() {
   paypalReady = true;
   const s = document.createElement('script');
-  s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(pricing.paypal.clientId)}&currency=EUR&intent=capture`;
+  s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(pricing().paypal.clientId)}&currency=EUR&intent=capture`;
   s.onload = () => {
     window.paypal?.Buttons({
       createOrder: async () => {
@@ -330,6 +355,15 @@ export async function initCart() {
   await initPricing();
   loadCart();
   renderBadge();
+  // Aktion abgelaufen (oder neue begonnen): offene Warenkorb-/Kassen-Ansicht ohne Streichpreise neu rendern,
+  // eingegebenen Gutschein neu prüfen (ein abgelehnter kann jetzt gelten, ein gültiger ändert seinen Betrag)
+  onAktionEnde(() => {
+    if ($('#cart-modal').open) renderCart();
+    if ($('#checkout-modal').open) {
+      if ($('#co-coupon').value.trim()) applyCoupon().catch(() => renderCheckoutSummary());
+      else renderCheckoutSummary();
+    }
+  });
   $('#cart-btn').addEventListener('click', openCart);
   $('#cart-close').addEventListener('click', () => $('#cart-modal').close());
   $('#cart-checkout').addEventListener('click', openCheckout);

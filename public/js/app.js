@@ -20,6 +20,8 @@ import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } fro
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
 import { activateTab, initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
+import { aktionFor, aktionText, aktionTextKurz, onAktionEnde } from './pricing.js';
+import { initAktionBar } from './aktion.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -105,21 +107,35 @@ async function loadContent() {
   setTextColor(state.textColor || 'tiefschwarz', true);
 }
 
+/** „ab 24,90 €“ — während einer Aktion Aktionspreis in Akzentfarbe + durchgestrichener UVP (gleiche Rechnung wie pricing.js) */
+function abPriceHTML(product) {
+  const single = getPricing().products[product].single;
+  const a = aktionFor(product);
+  if (!a) return `ab ${fmt(single)}`;
+  return `ab <span class="aktion-price">${fmt(unitPrice({ product, config: {} }))}</span> <s class="uvp">${fmt(single)}</s>`;
+}
 function renderHeroHint() {
   const el = $('#hero-hint'); if (!el) return;
   try {
-    const pr = getPricing().products;
-    el.textContent = `Vasen ab ${fmt(pr.vase.single)} · Eierbecher ab ${fmt(pr.eierbecher.single)} · STL-Download für deinen eigenen Drucker inklusive`;
+    el.innerHTML = `<span>Vasen ${abPriceHTML('vase')} · Eierbecher ${abPriceHTML('eierbecher')} · STL-Download für deinen eigenen Drucker inklusive</span>`;
   } catch { /* Preise noch nicht geladen */ }
+}
+/** „ab …“-Preise im Produkt-Umschalter und auf den Showcase-Karten (mit Streichpreis während einer Aktion) */
+function renderProductPrices() {
+  if (!getPricing()) return;
+  $$('.product-tab[data-product] small').forEach((el) => { el.innerHTML = abPriceHTML(el.closest('.product-tab').dataset.product); });
+  $$('.showcase-price[data-product]').forEach((el) => { el.innerHTML = abPriceHTML(el.dataset.product); });
 }
 function renderPrices() {
   renderHeroHint();
+  renderProductPrices();
   if (!getPricing()) return; // Preise noch nicht geladen
   // Gleiche Aufschlüsselung wie Warenkorb & Server (pricing.js): Grund + Untersetzer + Gravur + Farbschrift + Muster + Farbe + Größe.
   // currentConfig() leert den Text, wenn die Gravur per Regel deaktiviert ist → dann auch kein Gravur-Aufpreis.
   const item = { product: state.product, saucer: state.saucer, config: currentConfig(), color: state.color, colorName: state.colorName };
   const q = unitParts(item);
-  const total = unitPrice(item);
+  const total = q.unit; // = unitPrice(item): während einer Aktion der reduzierte Stückpreis, q.uvp = Preis ohne Aktion
+  const aktion = q.aktionProzent > 0 ? aktionFor(state.product) : null;
   const labels = [
     q.muster > 0 ? `${fmt(q.muster)} ${PATTERNS[state.pattern] || 'Muster'}` : '',
     q.gravur > 0 ? `${fmt(q.gravur)} Gravur` : '',
@@ -130,11 +146,26 @@ function renderPrices() {
   ].filter(Boolean);
   animateMoney($('#price'), total, fmt);
   animateMoney($('#mb-price'), total, fmt);
-  // Mobile-Leiste: auf schmalen Handys reicht der Platz nur für die Summe der Aufpreise („inkl. 9,50 € Aufpreise“)
+  // Aktion: Aktionspreis in Akzentfarbe, UVP durchgestrichen daneben, Badge „−16 %“, Zeile „Aktionspreis · endet in …“
+  $('#price').classList.toggle('aktion', !!aktion);
+  $('#mb-price').classList.toggle('aktion', !!aktion);
+  const uvpEl = $('#price-uvp'), pBadge = $('#price-badge'), aLine = $('#price-aktion'), mbUvp = $('#mb-uvp');
+  if (aktion) {
+    uvpEl.textContent = fmt(q.uvp);
+    mbUvp.textContent = fmt(q.uvp);
+    pBadge.textContent = `−${aktion.prozent} %`;
+    aLine.innerHTML = `🔥 Aktionspreis · <span class="aktion-countdown">${aktionText()}</span>`;
+  }
+  uvpEl.hidden = pBadge.hidden = aLine.hidden = mbUvp.hidden = !aktion;
+  // Mobile-Leiste: auf schmalen Handys reicht der Platz nur für die Summe der Aufpreise („inkl. 9,50 € Aufpreise“);
+  // während einer Aktion steht dort Badge + Countdown in Kurzform „noch 1 Tag 4 Std“ (die Zeile ist auf ~130 px begrenzt,
+  // „endet in …“ würde per Ellipsis abgeschnitten; das Badge blendet die CSS bei ≤ 430 px aus). Die Aufpreise stehen im Panel.
   const surSum = Math.round((q.muster + q.gravur + q.farbschrift + q.farbe + q.untersetzer + q.groesse) * 100) / 100;
   const narrow = window.innerWidth <= 430 && labels.length > 1;
-  setMobilePrice(undefined, labels.length ? (narrow ? `inkl. ${fmt(surSum)} Aufpreise` : `inkl. ${labels.join(' · ')}`) : 'pro Stück');
-  $('#price-hint').textContent = discountTeaser(state.product);
+  if (aktion) $('#mb-sub').innerHTML = `<span class="aktion-badge">−${aktion.prozent} %</span> <span class="aktion-countdown" data-kurz>${aktionTextKurz()}</span>`;
+  else setMobilePrice(undefined, labels.length ? (narrow ? `inkl. ${fmt(surSum)} Aufpreise` : `inkl. ${labels.join(' · ')}`) : 'pro Stück');
+  // Mengenrabatt-Teaser — entfällt während einer Aktion ohne „Mengenrabatt zusätzlich“
+  $('#price-hint').textContent = aktion && !aktion.mengenrabatt ? 'Während der Aktion kein zusätzlicher Mengenrabatt' : discountTeaser(state.product);
   // Aufpreis-Zeile unter dem Preis („inkl. 3,00 € Lamellen · 2,00 € Farbschrift · 1,00 € Farbe Gold“)
   const badge = $('#price-size');
   badge.hidden = !labels.length;
@@ -700,7 +731,7 @@ function renderProductTabs() {
   $('#product-tabs').innerHTML = Object.entries(PRODUCTS).map(([id, pr]) => `
     <button class="product-tab" data-product="${id}">
       <span class="pt-icon">${pr.icon}</span>${pr.label}
-      <small>ab ${fmt(getPricing().products[id].single)}</small>
+      <small>${abPriceHTML(id)}</small>
     </button>`).join('');
   $$('.product-tab').forEach((b) => b.addEventListener('click', () => setProduct(b.dataset.product)));
   markActiveProduct();
@@ -1203,12 +1234,10 @@ async function renderShowcase() {
     {
       id: 'vase', c: sc.vase, hex: '#9caf88', extra: 'grass',
       params: { product: 'vase', preset: 'flasche', pattern: 'rippen', ribs: 72, depth: 0.9, height: 150 },
-      price: getPricing().products.vase.single,
     },
     {
       id: 'eierbecher', c: sc.eierbecher, hex: '#c86f4a', extra: 'egg',
       params: { product: 'eierbecher', preset: 'kelch', pattern: 'rippen', ribs: 48, depth: 0.9, height: 58 },
-      price: getPricing().products.eierbecher.single,
     },
   ];
   // Echte Produktfotos (Admin-Upload) bevorzugen, Engine-Render als Fallback
@@ -1222,7 +1251,7 @@ async function renderShowcase() {
       <div class="showcase-body">
         <h3>${d.c.title}</h3>
         <p>${d.c.text}</p>
-        <div class="showcase-cta"><span class="showcase-price">ab ${fmt(d.price)}</span>
+        <div class="showcase-cta"><span class="showcase-price" data-product="${d.id}">${abPriceHTML(d.id)}</span>
         <button class="btn btn-primary">${d.c.cta}</button></div>
       </div>
     </div>`).join('');
@@ -1239,6 +1268,9 @@ async function renderShowcase() {
   await loadContent();
   await initCart();
   await initAuth();
+  // Aktionsleiste + Countdown; läuft die Aktion ab, verschwinden Streichpreise und alle Preise werden neu gerendert
+  initAktionBar();
+  onAktionEnde(renderPrices);
   renderProductTabs();
   renderPresetButtons();
   renderFontRow();

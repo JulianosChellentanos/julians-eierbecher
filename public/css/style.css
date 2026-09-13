@@ -410,6 +410,56 @@ input[type=range]::-moz-range-thumb {
   animation: ctrlIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .price-size[hidden] { display: none; }
+
+/* ---------- Aktionen: Leiste, Streichpreise, Badge, Countdown ---------- */
+.aktion-bar {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 10px;
+  background: var(--accent); color: #fbf8f2; text-align: center;
+  font-size: 10.5px; letter-spacing: 0.06em; line-height: 1.5; padding: 9px 20px;
+}
+.aktion-bar[hidden] { display: none; }
+.aktion-bar b { font-weight: 650; }
+.aktion-bar .ab-num, .aktion-bar .ab-count { font-family: var(--serif); font-size: 13px; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.aktion-bar .ab-sep { opacity: 0.6; }
+.aktion-bar .ab-hint { opacity: 0.85; }
+.aktion-bar .ab-hint::before { content: '·'; margin-right: 10px; opacity: 0.6; }
+.dark .aktion-bar { background: #b8643f; color: #f6efe3; }
+/* durchgestrichener UVP neben dem Aktionspreis */
+.uvp {
+  font-family: var(--serif); font-weight: 400; font-size: 0.8em; color: var(--ink-soft);
+  text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  margin-left: 6px; white-space: nowrap;
+}
+.aktion-badge {
+  display: inline-block; background: var(--accent); color: #fff; font-family: var(--sans);
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em; line-height: 1.3;
+  padding: 2px 8px; border-radius: 99px; vertical-align: middle; white-space: nowrap;
+}
+.aktion-price, .price.aktion, .mb-price b.aktion { color: var(--accent-dark); }
+.aktion-line { font-size: 0.78rem; font-weight: 600; color: var(--accent-dark); }
+.aktion-line[hidden] { display: none; }
+.aktion-countdown { font-family: var(--serif); font-variant-numeric: tabular-nums; }
+.price-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 4px; }
+.price-main .aktion-badge { align-self: center; margin-left: 4px; }
+.mb-main { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.mb-main .uvp { margin-left: 0; }
+.mb-price small .aktion-badge { font-size: 0.6rem; padding: 1px 6px; }
+.ci-right .uvp { margin-left: 0; font-size: 0.78rem; }
+.co-summary .uvp { margin-left: 4px; }
+.cart-totals .ct-aktion, .co-summary .co-aktion { color: var(--accent-dark); font-weight: 600; }
+.cart-totals .ct-aktion b, .co-summary .co-aktion b { font-family: var(--serif); }
+.product-tab small .uvp { font-size: 0.9em; margin-left: 4px; }
+.hero-hint .uvp, .showcase-price .uvp { font-size: 0.85em; }
+@media (max-width: 980px) {
+  /* einzeilig kompakt: Name · −16 % · Countdown (Hinweistext nur, wenn Platz ist) */
+  .aktion-bar { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px; padding: 8px 12px; }
+  .aktion-bar[hidden] { display: none; }
+  .aktion-bar .ab-text, .aktion-bar .ab-sep, .aktion-bar .ab-count, .aktion-bar .ab-hint { margin-left: 6px; }
+  .aktion-bar .ab-num, .aktion-bar .ab-count { font-size: 12px; }
+}
+@media (max-width: 640px) {
+  .aktion-bar .ab-hint { display: none; }
+}
 .tiny { font-size: 0.76rem; color: var(--ink-soft); text-align: center; }
 
 /* ---------- Produkt-Showcase ---------- */
@@ -1141,6 +1191,9 @@ section[id] { scroll-margin-top: 72px; }
   .mb-price b { font-size: 1.1rem; }
   /* Aufschlüsselung („inkl. 3,00 € Lamellen · …“) bleibt auch auf Phones sichtbar – Breite wird unten begrenzt, Rest per Ellipsis */
   .mb-price small { display: block; font-size: 0.62rem; }
+  /* Aktion: in die ~130 px (390er Phone) passt nur der Countdown „noch 1 Tag 4 Std“ — das Badge entfällt,
+     Streichpreis und Akzentpreis in der Zeile darüber zeigen die Aktion bereits (Prozent steht in Leiste & Konfigurator) */
+  .mb-price small .aktion-badge { display: none; }
   .mb-cart { font-size: 0.9rem; }
   .product-tab { flex-direction: column; gap: 2px; padding: 8px 6px; }
   .product-tab small { font-size: 0.7rem; }

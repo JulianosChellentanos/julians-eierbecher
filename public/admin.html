@@ -253,6 +253,40 @@
   table.muster td:last-child { text-align: right; white-space: nowrap; }
   table.muster input[type=number] { width: 96px; }
 
+  /* ---------- Aktionen (zeitlich begrenzte Prozent-Rabatte) ---------- */
+  .ak-card { border-left: 6px solid var(--line); }
+  .ak-card.laeuft { border-left-color: var(--accent); } .ak-card.geplant { border-left-color: var(--blue); }
+  .ak-card.pausiert { border-left-color: #d9b45a; } .ak-card.beendet { border-left-color: #cfcfcf; }
+  .ak-card.invalid { border-left-color: var(--red); }
+  .ak-head { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .ak-head .ak-title { font-family: var(--serif); font-size: 1.15rem; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .ak-pct { font-family: var(--serif); font-weight: 700; color: var(--accent-dark); white-space: nowrap; }
+  .ak-cd { color: var(--ink-soft); font-size: .84rem; }
+  .badge.ak-laeuft { background: #fbe9e0; border-color: #e9b9a3; color: var(--accent-dark); }
+  .badge.ak-geplant { background: #e3ecf6; border-color: #b8cde6; color: var(--blue); }
+  .badge.ak-beendet { background: #e6e6e6; border-color: #cfcfcf; color: var(--ink-soft); }
+  .badge.ak-pausiert { background: #fff3d6; border-color: #eed9a3; color: #6b5330; }
+  .ak-quick { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 12px; font-size: .8rem; color: var(--ink-soft); }
+  .ak-quick .lbl { font-weight: 600; margin-right: 4px; }
+  /* Vorschau der Bannerzeile: Terrakotta auf Elfenbein wie im Shop, Zahlen in Fraunces, einzeilig */
+  .ak-banner { margin-top: 12px; background: var(--accent); color: #fbf8f2; border-radius: 10px; padding: 9px 14px; font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ak-banner b { font-family: var(--serif); font-weight: 700; font-size: .95rem; }
+  .ak-banner.off { background: var(--bg-soft); color: var(--ink-soft); }
+  .ak-banner-l { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-soft); font-weight: 700; margin-top: 14px; }
+  .ak-err { color: var(--red); font-size: .8rem; font-weight: 600; margin-top: 8px; }
+  .ak-err:empty { display: none; }
+  .ak-foot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  .ak-card input[type=datetime-local] { min-width: 190px; }
+  /* Übersicht: Zeile zur laufenden/geplanten Aktion */
+  .dash-ak { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; background: #fbe9e0; border: 1px solid #e9b9a3; border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: .9rem; cursor: pointer; }
+  .dash-ak:hover { background: #f8ded1; }
+  .dash-ak.geplant { background: #e3ecf6; border-color: #b8cde6; } .dash-ak.geplant:hover { background: #d8e5f2; }
+  .dash-ak b { font-family: var(--serif); }
+  /* Bestell-Drawer: Aktionszeile je Position, Badge je Bestellung, durchgestrichener UVP */
+  .badge.ak { background: #fbe9e0; border-color: #e9b9a3; color: var(--accent-dark); }
+  .lc-ak { color: var(--accent-dark); font-size: .78rem; margin-top: 3px; }
+  s.uvp { color: var(--ink-soft); margin-right: 4px; }
+
   /* ---------- Bilder ---------- */
   .img-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
   .img-list .it { text-align: center; }
@@ -368,6 +402,7 @@
       <!-- 📊 Übersicht -->
       <section id="pane-dash" class="pane" hidden>
         <div class="pane-head"><div><h1>Übersicht</h1><p id="subline"></p></div><div class="muted" id="dash-date"></div></div>
+        <div class="dash-ak" id="dash-aktion" onclick="show('aktionen')" title="Zum Bereich Aktionen" hidden></div>
         <div class="kpis" id="kpis"></div>
         <div class="card"><h2>📋 Heute zu tun</h2><div class="todo" id="todo"></div></div>
         <div class="grid2">
@@ -476,6 +511,13 @@
           <div class="tbl-wrap"><table id="coupons-table" class="cards"></table></div>
           <button class="ghost" style="margin-top:12px" onclick="addCoupon()">+ Gutschein anlegen</button>
         </div>
+      </section>
+
+      <!-- 🔥 Aktionen -->
+      <section id="pane-aktionen" class="pane" data-settings hidden>
+        <div class="pane-head"><div><h1>Aktionen</h1><p>Zeitlich begrenzter Prozent-Rabatt auf den Stückpreis — Banner, Streichpreise und Countdown erscheinen im Shop automatisch, sobald der Zeitraum läuft.</p></div><button class="ghost" onclick="addAktion()">+ Neue Aktion</button></div>
+        <div class="hint info" style="margin-bottom:14px">Laufen mehrere Aktionen gleichzeitig, gilt die mit dem höchsten Prozentsatz. Ohne „Mengenrabatt zusätzlich“ entfällt die Mengenstaffel während der Aktion. Gutscheine gelten während einer Aktion nur, wenn sie unter <a href="#pricing">Preise &amp; Gutscheine</a> als „mit Aktion kombinierbar“ markiert sind. Zeiten sind Ortszeit deines Rechners.</div>
+        <div id="aktionen-list"></div>
       </section>
 
       <!-- 🏢 Firma -->

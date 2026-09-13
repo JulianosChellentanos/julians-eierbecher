@@ -32,6 +32,7 @@
 </head>
 <body>
 <a class="skip-link" href="#konfigurator">Zum Konfigurator</a>
+<div class="aktion-bar" id="aktion-bar" hidden></div>
 <div class="announcement">Kleine Objekte. Große Persönlichkeit. <span>Entworfen von dir · Gedruckt in Deutschland</span></div>
 
 <header class="topbar">
@@ -247,9 +248,10 @@
 
       <div class="panel-cta">
         <div class="price-row">
-          <div><span class="price" id="price">9,90&nbsp;€</span><span class="price-unit">/ Stück</span></div>
+          <div class="price-main"><span class="price" id="price">9,90&nbsp;€</span><s class="uvp" id="price-uvp" hidden></s><span class="aktion-badge" id="price-badge" hidden></span><span class="price-unit">/ Stück</span></div>
           <div class="price-hint" id="price-hint"></div>
         </div>
+        <div class="aktion-line" id="price-aktion" hidden></div>
         <div class="price-size" id="price-size" hidden></div>
         <div class="cta-btns">
           <button class="btn btn-primary btn-lg" id="btn-order">In den Warenkorb ↗</button>
@@ -471,7 +473,7 @@
   </div>
 </dialog>
 <div class="mobile-bar" id="mobile-bar" hidden>
-  <div class="mb-price"><b id="mb-price">9,90 €</b><small id="mb-sub">pro Stück</small></div>
+  <div class="mb-price"><span class="mb-main"><b id="mb-price">9,90 €</b><s class="uvp" id="mb-uvp" hidden></s></span><small id="mb-sub">pro Stück</small></div>
   <button class="mb-dl mb-code" data-open-code="show" title="Design-Code" aria-label="Design-Code anzeigen">🔖</button>
   <button class="mb-dl" id="mb-download" title="Druckdatei (STL) herunterladen" aria-label="Druckdatei herunterladen">⬇</button>
   <button class="mb-cart" id="mb-cart">In den Warenkorb ↗</button>
