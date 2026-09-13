@@ -125,11 +125,11 @@
     return isMobile() && !isStandalone() && !recentlyDismissed();
   }
 
-  /* Banner erst zeigen, wenn der Besucher gescrollt hat (nicht über die 3D-Bühne legen) — spätestens nach 25 s */
+  /* Banner erst zeigen, wenn der Besucher an der Formenwelt-Karte vorbeigescrollt ist (nicht über Cover/3D-Bühne legen) — spätestens nach 25 s */
   function whenEngaged(fn) {
     var done = false;
     var go = function () { if (done) return; done = true; window.removeEventListener('scroll', check); fn(); };
-    var check = function () { if (window.scrollY > 500) go(); };
+    var check = function () { if (window.scrollY > 1400) go(); };
     window.addEventListener('scroll', check, { passive: true });
     setTimeout(go, 25000);
     check();

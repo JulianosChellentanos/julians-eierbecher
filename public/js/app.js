@@ -74,7 +74,8 @@ async function loadContent() {
 
   // Rechtliche Hinweise & Trust-Row
   const h = content.hinweise || {};
-  if (h.trust) $('#trust-row').innerHTML = h.trust.map((t) => `<span>${t}</span>`).join('');
+  // Trust-Zeile: lange Fassung für Desktop/Tablet, kurze Fassung (trustKurz) für das Handy – CSS blendet je Breite eine davon ein
+  if (h.trust) $('#trust-row').innerHTML = h.trust.map((t, i) => { const k = h.trustKurz?.[i]; return `<span>${k ? `<span class="tr-long">${t}</span><span class="tr-short">${k}</span>` : t}</span>`; }).join('');
 
   if (h.vase) $('#vase-note').textContent = h.vase;
   if (h.eigene) $('#eigene-note').textContent = h.eigene;
@@ -117,8 +118,21 @@ function abPriceHTML(product) {
 function renderHeroHint() {
   const el = $('#hero-hint'); if (!el) return;
   try {
-    el.innerHTML = `<span>Vasen ${abPriceHTML('vase')} · Eierbecher ${abPriceHTML('eierbecher')} · STL-Download für deinen eigenen Drucker inklusive</span>`;
+    el.innerHTML = `<span>Vasen ${abPriceHTML('vase')} · Eierbecher ${abPriceHTML('eierbecher')}<span class="hh-stl"> · STL-Download für deinen eigenen Drucker inklusive</span></span>`;
   } catch { /* Preise noch nicht geladen */ }
+}
+// Live-Preis der gezeigten Form („wie gezeigt 29,88 €“) im Knopf der Formenwelt – nur auf dem Handy sichtbar (CSS); gleiche Rechnung wie Warenkorb/Server.
+// Bewusst ohne „ab“: der Grundpreis („Vasen ab 24,90 €“) steht schon in der Preiszeile darüber, hier zählt der Preis dieser Konfiguration.
+// Der Listener muss synchron auf Modul-Ebene stehen: studio.js läuft nach app.js und schickt den Startzustand sofort.
+let heroDesign = STUDIO_DESIGNS[0];
+window.addEventListener('ovju:hero-select', (e) => { heroDesign = e.detail; renderHeroUsePrice(); });
+function renderHeroUsePrice() {
+  const el = $('#hero-use-price'); if (!el || !getPricing()) return;
+  try {
+    const cfg = studioDesignConfig(heroDesign);
+    el.innerHTML = `<i>wie gezeigt</i> ${fmt(unitPrice({ product: cfg.product || 'vase', saucer: false, config: cfg, color: cfg.color }))}`;
+    el.hidden = false;
+  } catch { el.hidden = true; }
 }
 /** „ab …“-Preise im Produkt-Umschalter und auf den Showcase-Karten (mit Streichpreis während einer Aktion) */
 function renderProductPrices() {
@@ -128,6 +142,7 @@ function renderProductPrices() {
 }
 function renderPrices() {
   renderHeroHint();
+  renderHeroUsePrice();
   renderProductPrices();
   if (!getPricing()) return; // Preise noch nicht geladen
   // Gleiche Aufschlüsselung wie Warenkorb & Server (pricing.js): Grund + Untersetzer + Gravur + Farbschrift + Muster + Farbe + Größe.

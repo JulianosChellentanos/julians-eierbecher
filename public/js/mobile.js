@@ -156,6 +156,35 @@ function initBottomBar() {
     document.body.classList.toggle('has-mbar', on);
   }, { threshold: 0.2, rootMargin: '0px 0px -35% 0px' });
   io.observe($('.stage'));
+  // Angedockte Bühne: sobald der Sentinel (oberer Rand des Konfigurator-Rahmens) 48 px über dem Viewport liegt, ist die Bühne
+  // sicher „festgeklebt“ → body.konf-stuck senkt --stage-h (CSS), Bühne + Tab-Leiste gleiten synchron, das Panel gewinnt Platz.
+  // Beim Zurückscrollen wächst sie wieder. Der Sentinel ist absolut positioniert, also kein Grid-Eintrag (kein Layout-Versatz).
+  // Bewusst ein Scroll-Listener statt IntersectionObserver: bei Sprüngen (CTA „Eigene Form gestalten“, Design-Karten,
+  // Tab-Wechsel) überspringt der 1-px-Sentinel den Viewport, und ein Observer meldet dann keinen Wechsel.
+  const grid = $('.config-grid');
+  const sentinel = document.createElement('div');
+  sentinel.className = 'stage-sentinel';
+  sentinel.setAttribute('aria-hidden', 'true');
+  grid.prepend(sentinel);
+  // Hysterese: schrumpfen ab 48 px, wieder wachsen erst oberhalb von 20 px — so flackert die Bühne beim langsamen
+  // Zurückscrollen um die Schwelle nicht. Ein Tab-Wechsel (activateTab holt den Panel-Anfang unter die Tab-Leiste) landet
+  // im kompakten Zustand ≈ 100 px hinter dem Sentinel und bleibt damit kompakt; im vollen Zustand ≈ 14 px → bleibt voll.
+  let stuckTick = false;
+  const syncStuck = () => {
+    stuckTick = false;
+    const bottom = sentinel.getBoundingClientRect().bottom;
+    const was = document.body.classList.contains('konf-stuck');
+    const stuck = bottom < -48 ? true : bottom > -20 ? false : was;
+    if (was === stuck) return;
+    document.body.classList.toggle('konf-stuck', stuck);
+    // Renderer folgt der Höhen-Transition per ResizeObserver (app.js); am Ende einmal explizit nachziehen
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 420);
+  };
+  const askStuck = () => { if (!stuckTick) { stuckTick = true; requestAnimationFrame(syncStuck); } };
+  window.addEventListener('scroll', askStuck, { passive: true });
+  window.addEventListener('resize', askStuck);
+  new ResizeObserver(askStuck).observe(document.body); // Layout-Verschiebungen ohne Scroll-Ereignis (z. B. nachgeladene Abschnitte oberhalb)
+  askStuck();
   $('#mb-cart').addEventListener('click', () => { buzz(14); $('#btn-order').click(); });
   $('#mb-download').addEventListener('click', () => { buzz(); $('#btn-download').click(); });
 }
