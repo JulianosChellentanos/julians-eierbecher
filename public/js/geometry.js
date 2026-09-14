@@ -243,10 +243,37 @@ const HAM_KNEE = 0.06;     // Einlaufband am Napfrand (in Kalottenmaß)
 const HAM_LIP = 0.13;      // Einsenkung des Lands → heller Saum am Napfrand
 const HAM_LIP_IN = 0.45;   // Breite dieses Saums (Anteil des Absatzes)
 const HAM_BLEND = 0.10;    // weiche Verschneidung zweier Näpfe (statt scharfer Schnittgrat)
+// --- Auflösung & Kantenvorfilterung der gehämmerten Wand -------------------
+// Die Grate zwischen den Näpfen sind Schnittkanten zweier Kalotten: im Feld eine
+// Knicklinie ohne Breite. Sie läuft schräg durch das Ring-/Umfangsnetz, deshalb
+// bildet das Mesh sie als Zickzack ab — im Zoom als waagerechte Treppchen sichtbar.
+// Zwei Hebel dagegen: (1) der Grat bekommt eine Verrundung, die genau so breit ist wie
+// ein paar Rasterweiten DES TATSÄCHLICHEN NETZES — damit ist die Kante bandbegrenzt und
+// das Netz kann sie sauber abtasten, ohne dass der Grat mehr aufgeweicht wird als nötig;
+// (2) das Ringraster wird feiner, damit die Restzacke unter die Wahrnehmung fällt.
+// Eine feste Breite in mm (vorher 1,5 mm) war unabhängig vom Raster gewählt und hat die
+// Grate deutlich stärker verschliffen, als das Netz es verlangt.
+const HAM_AA_ROWS = 2.5;     // Verrundungsbreite in Rasterweiten (gröbere aus Ring-/Umfangsabstand):
+                             //   Desktop-Vorschau 0,95 mm · Export 0,82 mm · Eierbecher 0,52…0,81 mm
+                             //   (vorher pauschal 1,50 mm, unabhängig vom Netz)
+const HAM_AA_CELL = 0.10;    // Anteil der Zellgröße λ, den die Verrundung höchstens einnimmt
+// Die weiche Verschneidung ist eine logarithmische Summe (Soft-Max) mit der Temperatur τ auf
+// der Kalottenhöhe. Sie klingt exponentiell ab statt an einem harten Rand zu enden; damit eine
+// Verrundungsbreite W dieselbe Kammkrümmung ergibt wie früher die Formel mit Träger ±W/2, gilt
+// τ = 0,5·W·0,577/λ. Gemessen reicht etwas weniger: bei 0,45 sind die Treppen im Tiefenmodus
+// nicht schlechter als vorher (RMS 0,65 statt 0,70) und der Kamm bleibt spürbar schärfer.
+const HAM_LSE = 0.45;        // Verrundungsbreite → Temperatur der logarithmischen Summe
+const HAM_LSE_CUT = 8;       // Abstände über 8·τ tragen < 3,4e-4·τ bei (< 0,1 µm) → exp() sparen
+const HAM_ROW_VIEW = 0.38;   // mm — Ringabstand Vorschau (Desktop, quality ≥ 0,9); vorher 0,53 mm
+const HAM_ROW_EXPORT = 0.30; // mm — Ringabstand STL-Export; vorher 0,42 mm
+const HAM_ROW_SMALL = 0.78;  // mm — Ringabstand Handy/Vorschaubilder (quality < 0,9); vorher 0,96 mm
+const HAM_ROWS_MAX = 720;    // Deckel für die Ringzahl (hohe Vase + volle Tiefe) — wie vor der Umstellung
 
-// ampRel = 0 … 1: Anteil der Tiefe oberhalb von HAM_SOFT. Bei 0 ist das Ergebnis
-// bitgleich „0.9 − 1.9·best“ wie bisher (Default → plateDent() bleibt unverändert).
-function hammerField(theta, w, n, lambda, ampRel = 0) {
+const HAM_CAND = new Float64Array(9); // Napfhöhen der 3×3-Umgebung (einmal angelegt, kein GC)
+// ampRel = 0 … 1: Anteil der Tiefe oberhalb von HAM_SOFT. Bei 0 und aaMM = 0 ist das
+// Ergebnis bitgleich „0.9 − 1.9·best“ wie bisher (Default → plateDent() bleibt unverändert).
+// aaMM: Breite, über die die Schnittgrate zwischen zwei Näpfen verrundet werden (mm, 0 = aus).
+function hammerField(theta, w, n, lambda, ampRel = 0, aaMM = 0) {
   const u = (theta / (2 * Math.PI)) * n; // Zellkoordinaten: u ∈ [0, n)
   const v = w / lambda;
   const iu = Math.floor(u), iv = Math.floor(v);
@@ -256,8 +283,19 @@ function hammerField(theta, w, n, lambda, ampRel = 0) {
   const gf = deep > 0 ? Math.pow(deep, HAM_RAMP) : 0;
   const kf = smoothstep(0, 1, deep);   // weiche Kurve: Streuung & Saum
   const varAmt = HAM_VAR * kf;         // bei deep = 0 exakt 0 → blow = 1 → bitgleich
-  const kb = HAM_BLEND * gf;           // bei deep = 0 exakt 0 → harte max-Verknüpfung
-  let best = 0;
+  const kbDeep = HAM_LSE * HAM_BLEND * gf; // bei deep = 0 exakt 0 → harte max-Verknüpfung (bitgleich)
+  // ALLE Näpfe der 3×3-Umgebung werden eingesammelt; die Verschneidung entsteht danach
+  // EINMAL und reihenfolgeunabhängig. (Erst lief sie im Schleifendurchlauf mit — dann hing
+  // das Ergebnis davon ab, welcher Napf gerade „best“ war. Danach über die beiden höchsten:
+  // an Dreipunkten, wo zweit- und dritthöchster Napf tauschen, knickt „der zweithöchste“
+  // aber selbst, und die Verrundung sprang zurück — eine feine Kerbe genau im Knotenpunkt.)
+  // Temperatur der Verschneidung: Am Grat wachsen die Höhen der beiden Kalotten mit je
+  // ≈ 0,577/λ je mm auseinander (zwei Näpfe, die sich auf halbem Radius treffen) — eine
+  // Verrundung der Breite aaMM entspricht also der Höhendifferenz 0,577·aaMM/λ, umgerechnet
+  // mit HAM_LSE auf die logarithmische Summe. So ist die Gratlinie bei jeder Schlagzahl und
+  // jeder Form gleich breit in mm — und immer so breit wie ein paar Rasterweiten des Netzes.
+  const kb = Math.max(aaMM > 0 ? (HAM_LSE * 0.577 * aaMM) / lambda : 0, kbDeep);
+  let b1 = 0, nc = 0;
   for (let di = -1; di <= 1; di++) {
     for (let dj = -1; dj <= 1; dj++) {
       const gi = iu + di, gj = iv + dj;
@@ -272,16 +310,27 @@ function hammerField(theta, w, n, lambda, ampRel = 0) {
         // Schläge werden durch den Absatz auch etwas kleiner im Grundriss.
         const blow = 1 - varAmt * fract(jx + jy * 1.618);
         const cand = blow * Math.sqrt(1 - d2); // Kugelkalotte
-        if (kb > 0) {
-          // Zwei sich überlappende Schläge treffen sich im Tiefenmodus in einer weich
-          // verrundeten Rinne statt in einem messerscharfen Schnittgrat: die Kante wird
-          // sonst vom Ringraster als Treppe abgetastet, und ein Schlag, der nur knapp aus
-          // einem Nachbarn herausschaut, bliebe als ovaler „Lunker“ stehen.
-          const h = Math.max(0, kb - Math.abs(cand - best)) / kb;
-          best = Math.max(best, cand) + h * h * kb * 0.25;
-        } else best = Math.max(best, cand);
+        if (cand > b1) b1 = cand;              // harter Höchstwert — bitgleich wie bisher
+        if (kb > 0) HAM_CAND[nc++] = cand;     // ohne Verrundung (plateDent) gar nicht erst sammeln
       }
     }
+  }
+  let best = b1;
+  if (kb > 0 && (nc > 1 || b1 < HAM_LSE_CUT * kb)) {
+    // Weiche Verschneidung als logarithmische Summe über ALLE Näpfe (kommutatives Soft-Max,
+    // Temperatur kb): best = b1 + kb·ln Σ exp((c−b1)/kb). Sie ist symmetrisch in den Näpfen
+    // und beliebig oft differenzierbar — an Dreipunkten gibt es deshalb keine Kerbe mehr.
+    // Gewicht je Napf: smoothstep(0,1,c/kb). Ein Napf, der gerade erst auftaucht (c → 0),
+    // bringt nichts ein — sonst entstünde an seinem Rand eine Stufe von kb·ln2 („Lunker“).
+    // Das Land (Höhe 0) zählt immer mit Gewicht 1: es verschwindet nie, also darf es hart rein.
+    let s = 0;
+    const ik = 1 / kb;
+    for (let i = 0; i < nc; i++) {
+      const c = HAM_CAND[i], t = (b1 - c) * ik;
+      if (t < HAM_LSE_CUT) s += (c < kb ? smoothstep(0, 1, c * ik) : 1) * (t > 0 ? Math.exp(-t) : 1);
+    }
+    if (b1 * ik < HAM_LSE_CUT) s += Math.exp(-b1 * ik);
+    if (s > 0 && s !== 1) best = b1 + kb * Math.log(s); // s === 1 ⇒ nur ein Napf, nichts zu tun
   }
   if (deep <= 0) return 0.9 - 1.9 * best; // Dellen nach innen, schmale Grate dazwischen
   if (best > 1) best = 1;  // die weiche Verschneidung darf den Napf nicht tiefer als die Wandreserve machen
@@ -331,6 +380,8 @@ export function buildModel(params) {
   // Zellhöhe λ = Zellbreite bei rMax (≈ runde Näpfe).
   const nHam = Math.max(6, Math.round(ribs / 3));
   const lamHam = (2 * Math.PI * rMax) / nHam;
+  // (Die Breite der Gratvorfilterung hamAA steht weiter unten — sie hängt am tatsächlichen
+  //  Ring-/Umfangsraster, das erst mit Qualität und Export-Flag feststeht.)
   const hamMax = isVase ? HAM_MAX_V : HAM_MAX_E;
   let depthCap;
   if (p.pattern === 'lamellen') depthCap = isVase ? 6 : 3;
@@ -401,17 +452,43 @@ export function buildModel(params) {
   // Radiale Auflösung: ≥ 12 Segmente pro Rippenperiode (Zickzack 16), sonst
   // zittern die Gratlinien körnig über die Ringe („zackig“ statt samtig).
   const fineExport = !!p.exportRes; // STL-Export: feinstes Raster; Vorschau bleibt flüssig
-  const rsFactor = { zickzack: 16, lamellen: 14, gehaemmert: fineExport ? 18 : 14 }[p.pattern] || 12; // Gehämmert: Facettenkanten brauchen ≤ 0,3 mm Abtastung
+  // Gehämmert: die Gratlinien laufen schräg durchs Netz — Umfangs- und Ringabstand müssen
+  // ähnlich fein sein, sonst treppt die Kante in der feineren Richtung weiter (Desktop 16
+  // statt 14 Segmente/Rippe ≈ 0,37 mm bei 45 mm Radius; Handy bleibt bei 14).
+  const rsFactor = { zickzack: 16, lamellen: 14, gehaemmert: fineExport ? 18 : q >= 0.9 ? 16 : 14 }[p.pattern] || 12;
   // Segmente pro Rippe (ganzzahlig!) → Gratspitzen liegen auf jedem Ring exakt auf einem Vertex
   const perRib = Math.max(6, Math.round(Math.min(Math.max(rsFactor, Math.ceil(240 / ribs)), Math.floor(1080 / ribs)) * q));
   const RS = ribs * perRib;
   const wallBase = isVase ? Math.max(160, H * 1.4) : 130;
   const querExtra = isQuer ? quersV * 14 : 0;
   const isHammer = p.pattern === 'gehaemmert';
-  // Gehämmert: Ringabstand ≈ Umfangsschritt (≈ 0,3 mm), sonst treppige Dellenränder im Druck
-  // Tiefenmodus: die Napfränder brauchen engere Ringe, sonst treppt die Lichtkante
-  const hammerRows = isHammer ? (fineExport ? 1.7 : 1.35) * (1 + 0.25 * hamRel) : 1;
-  const WALL_STEPS = Math.round(Math.min(isHammer ? 720 : 430, wallBase * hammerRows + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
+  // Gehämmert: Die Schnittgrate zwischen den Näpfen laufen SCHRÄG durchs Ringnetz. Ein
+  // Ringraster, das gröber ist als die Gratverrundung, tastet sie als Treppe ab — genau
+  // die waagerechten Stufen an den Dellenrändern. Deshalb wird der Ringabstand hier direkt
+  // in mm vorgegeben (bisher: Faktor auf wallBase, also an der Bauhöhe hängend — eine
+  // 220er Vase bekam dadurch dieselben 0,53 mm wie eine 100er). Tiefenmodus: steilere
+  // Napfränder brauchen engere Ringe (÷ (1 + 0,25·hamRel)). Handy/Vorschaubilder (q < 0,9)
+  // bekommen nur ein moderat feineres Raster — dort trägt vor allem die Gratvorfilterung,
+  // damit die Rebuild-Zeit kaum steigt. Das max(…) gegen die alte Formel garantiert
+  // „nie gröber als vorher“ (kleine Eierbecher behalten ihre feinere Abtastung).
+  const hamRowMM = (fineExport ? HAM_ROW_EXPORT : q >= 0.9 ? HAM_ROW_VIEW : HAM_ROW_SMALL) / (1 + 0.25 * hamRel);
+  const hamRowsOld = wallBase * (fineExport ? 1.7 : 1.35) * (1 + 0.25 * hamRel) * q; // Raster bis e20fce3
+  // Der Deckel hängt wie vor der Umstellung an der QUALITÄT: ohne den Faktor q griff er auf
+  // dem Handy gar nicht mehr, und eine hohe Vase mit Drall und Wellenfluss baute dort bis zu
+  // 760 Ringe — teurer als in jeder Fassung davor. Mit HAM_ROWS_MAX·q ist die Obergrenze
+  // wieder exakt die alte (Handy 396, Desktop/Export 720).
+  const hamRowsCap = HAM_ROWS_MAX * (fineExport ? 1 : q);
+  const WALL_STEPS = isHammer
+    ? Math.round(Math.min(hamRowsCap, Math.max((H - CHAMFER) / hamRowMM, hamRowsOld) + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) * q))
+    : Math.round(Math.min(430, wallBase + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
+  // Breite der Gratvorfilterung in mm (0 = aus): zwei bis drei Rasterweiten des Netzes, das
+  // hier gerade gebaut wird — die GRÖSSERE aus Ringabstand und Umfangsabstand, denn die grobe
+  // Richtung bestimmt, wie weit die Kante verschmiert sein muss. hammerField rechnet sie über
+  // die Zellgröße λ in eine Temperatur auf der Kalottenhöhe um. Dadurch verschleift die
+  // Vorfilterung nur so viel, wie das jeweilige Raster verlangt (Vorschau ≈ 0,95 mm statt
+  // pauschal 1,5 mm, Export ≈ 0,82 mm), und ein feineres Netz bekommt automatisch schärfere Grate.
+  const hamPitch = Math.max((H - CHAMFER) / WALL_STEPS, (2 * Math.PI * rMax) / RS);
+  const hamAA = isHammer ? Math.min(HAM_AA_CELL * lamHam, HAM_AA_ROWS * hamPitch) : 0;
   const CAVITY_STEPS = Math.round(36 * q);
   const INNER_STEPS = Math.round(44 * q);
 
@@ -484,7 +561,7 @@ export function buildModel(params) {
       // breit, die Näpfe würden zu schmalen senkrechten Rillen, in die keine 0,4-mm-Düse
       // mehr sauber hineinkommt. Nur der ZUSATZ über 1,2 mm wird dort zurückgenommen.
       if (hamRel > 0) a = Math.min(a, Math.max(HAM_SOFT, (HAM_CELL * 2 * Math.PI * R(t)) / nHam));
-      return a * hammerField(theta + flowPhase(t), t * H, nHam, lamHam, hamRel);
+      return a * hammerField(theta + flowPhase(t), t * H, nHam, lamHam, hamRel, hamAA);
     }
     return a * waveTheta(p.pattern, ribs * (theta + flowPhase(t)));
   };
@@ -873,6 +950,7 @@ export function creaseNormals(geometry, creaseDeg = 26, keepRanges = null) {
   const triCount = idx ? idx.length / 3 : pos.length / 9;
   const vCount = pos.length / 3;
   const fN = new Float32Array(triCount * 3);
+  const fL = new Float64Array(triCount); // Länge der Flächennormalen — einmal statt je Nachbarpaar
   const cosLimit = Math.cos((creaseDeg * Math.PI) / 180);
   // Flächen-Normalen (flächengewichtet: Länge des Kreuzprodukts)
   const vOf = (t, k) => (idx ? idx[t * 3 + k] : t * 3 + k);
@@ -882,6 +960,7 @@ export function creaseNormals(geometry, creaseDeg = 26, keepRanges = null) {
     const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
     fN[t * 3] = uy * wz - uz * wy; fN[t * 3 + 1] = uz * wx - ux * wz; fN[t * 3 + 2] = ux * wy - uy * wx;
   }
+  for (let t = 0; t < triCount; t++) fL[t] = Math.hypot(fN[t * 3], fN[t * 3 + 1], fN[t * 3 + 2]) || 1;
   // Vertex → Flächen (CSR)
   const deg = new Uint32Array(vCount + 1);
   for (let t = 0; t < triCount; t++) for (let k = 0; k < 3; k++) deg[vOf(t, k) + 1]++;
@@ -892,15 +971,14 @@ export function creaseNormals(geometry, creaseDeg = 26, keepRanges = null) {
   const outPos = new Float32Array(triCount * 9), outNor = new Float32Array(triCount * 9);
   for (let t = 0; t < triCount; t++) {
     const nx = fN[t * 3], ny = fN[t * 3 + 1], nz = fN[t * 3 + 2];
-    const nl = Math.hypot(nx, ny, nz) || 1;
+    const nl = fL[t];
     for (let k = 0; k < 3; k++) {
       const v = vOf(t, k);
       let sx = 0, sy = 0, sz = 0;
       for (let j = deg[v]; j < deg[v + 1]; j++) {
         const g = adj[j];
         const gx = fN[g * 3], gy = fN[g * 3 + 1], gz = fN[g * 3 + 2];
-        const gl = Math.hypot(gx, gy, gz) || 1;
-        if ((nx * gx + ny * gy + nz * gz) / (nl * gl) >= cosLimit) { sx += gx; sy += gy; sz += gz; }
+        if ((nx * gx + ny * gy + nz * gz) / (nl * fL[g]) >= cosLimit) { sx += gx; sy += gy; sz += gz; }
       }
       const sl = Math.hypot(sx, sy, sz) || 1;
       const o = t * 9 + k * 3;
