@@ -580,6 +580,9 @@ function rebuild() {
   ow.hidden = !info.openingWarn;
   ow.textContent = info.openingWarn || '';
   ow.classList.toggle('err', !!info.openingTight);
+  // Gehämmert: bei vielen Schlägen begrenzt die Zellgröße die Tiefe → dezenter Hinweis
+  const dn = $('#depth-note');
+  if (dn) { dn.hidden = !info.depthNote; dn.textContent = info.depthNote || ''; }
   // Randoption: bei offenen Voronoi-Vasen ohne Wirkung → Hinweis, Auswahl gedimmt
   $('#rim-note').hidden = !info.openCells;
   $('#rim-row').classList.toggle('disabled', !!info.openCells);
@@ -801,7 +804,7 @@ function bindSlider(id, key, fmt, cb) {
 // Tiefe-Regler passt seinen Bereich dem Muster an (Lamellen dürfen richtig tief)
 const DEPTH_RANGES = {
   lamellen: { min: 1.5, max: 6, step: 0.25, def: 4 },
-  gehaemmert: { min: 0.3, max: 1.2, step: 0.1, def: 0.8 },
+  gehaemmert: { min: 0.3, max: 2.5, step: 0.1, def: 0.8 }, // ab 1,2 mm kippt die Optik zum eingeschlagenen Napf
   skelett: { min: 0.4, max: 1.8, step: 0.1, def: 1.4 },
   koralle: { min: 0.5, max: 6, step: 0.1, def: 5 },
   default: { min: 0.2, max: 1.6, step: 0.1, def: 0.9 },
@@ -813,7 +816,9 @@ function applyDepthRange(resetToDefault = false) {
     : 'Voronoi als Zellrelief: Die Ei-Mulde bleibt geschlossen. Die Tiefe wird für den Druck begrenzt.';
   const r = ['skelett','koralle'].includes(state.pattern) && state.product === 'eierbecher'
     ? { min: 0.4, max: 1, step: 0.1, def: 1 }
-    : DEPTH_RANGES[state.pattern] || DEPTH_RANGES.default;
+    : state.pattern === 'gehaemmert' && state.product === 'eierbecher'
+      ? { ...DEPTH_RANGES.gehaemmert, max: 2.0 } // kleiner Radius: flacher begrenzen (= Gravurgrenze)
+      : DEPTH_RANGES[state.pattern] || DEPTH_RANGES.default;
   const el = $('#s-depth');
   el.min = r.min; el.max = r.max; el.step = r.step;
   if (resetToDefault || state.depth < r.min || state.depth > r.max) {

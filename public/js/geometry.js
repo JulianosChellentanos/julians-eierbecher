@@ -216,10 +216,47 @@ function waveTheta(pattern, phase) {
 // (max-Verknüpfung). Gitter läuft in θ über n Zellen → Naht bleibt geschlossen.
 const fract = (x) => x - Math.floor(x);
 const hash2 = (i, j, s) => fract(Math.sin(i * 127.1 + j * 311.7 + s * 74.7) * 43758.5453);
-function hammerField(theta, w, n, lambda) {
+// ---------------------------------------------------------------------------
+// Tiefenabhängiges Schlagprofil („planierter Schlagnapf“).
+// Bis HAM_SOFT (1,2 mm) ist das Feld exakt das klassische: Kugelkalotten gehen
+// nach innen, die Schnittgrate dazwischen stehen 0,9·Tiefe NACH AUSSEN.
+// Darüber kippt die Optik stufenlos zum handgetriebenen Blech:
+//   • der Grat wandert auf die Silhouette zurück (Feldwert 0) — es beult nichts
+//     mehr nach außen, alles Material geht nach innen;
+//   • die Kalotte bekommt einen Absatz: die oberen HAM_SHELF werden abgeschnitten
+//     und der Rest auf die volle Tiefe gestreckt → klar berandete Schlagnäpfe
+//     in einem stehenbleibenden Netz aus unberührter Haut;
+//   • am Napfrand läuft das Profil über ein schmales Band (HAM_KNEE) tangential
+//     ins Land aus — kein harter Knick, der im Druck als Stufenring stehenbleibt;
+//   • das Land senkt sich um HAM_LIP ein, nur direkt am Napfrand bleibt es auf
+//     der Silhouette → schmaler heller Saum, der im Streiflicht als Netz leuchtet;
+//   • jeder Schlag sitzt mit 87…100 % Stärke (HAM_VAR) — die Näpfe unterscheiden
+//     sich, aber kein Schlag verkümmert zur Minidelle („Lunker“).
+const HAM_SOFT = 1.2;      // mm — bis hierher gilt bitgleich das klassische Feld
+const HAM_MAX_V = 2.5;     // mm — Höchsttiefe Vase (= Gravurgrenze, blockiert sie nie)
+const HAM_MAX_E = 2.0;     // mm — Höchsttiefe Eierbecher (= Gravurgrenze)
+const HAM_CELL = 0.32;     // Tiefe ≤ HAM_CELL·λ → Napfflanke ≈ 45…50° (gemessen, inkl. Grundform)
+const HAM_RAMP = 0.7;      // Tempo, mit dem Absatz und Gratabsenkung hochlaufen (deep^HAM_RAMP)
+const HAM_SHELF = 0.68;    // Absatz: Anteil der Kalotte, der bei voller Tiefe Land bleibt
+const HAM_VAR = 0.13;      // Streuung der Schlagstärke (87…100 %)
+const HAM_KNEE = 0.06;     // Einlaufband am Napfrand (in Kalottenmaß)
+const HAM_LIP = 0.13;      // Einsenkung des Lands → heller Saum am Napfrand
+const HAM_LIP_IN = 0.45;   // Breite dieses Saums (Anteil des Absatzes)
+const HAM_BLEND = 0.10;    // weiche Verschneidung zweier Näpfe (statt scharfer Schnittgrat)
+
+// ampRel = 0 … 1: Anteil der Tiefe oberhalb von HAM_SOFT. Bei 0 ist das Ergebnis
+// bitgleich „0.9 − 1.9·best“ wie bisher (Default → plateDent() bleibt unverändert).
+function hammerField(theta, w, n, lambda, ampRel = 0) {
   const u = (theta / (2 * Math.PI)) * n; // Zellkoordinaten: u ∈ [0, n)
   const v = w / lambda;
   const iu = Math.floor(u), iv = Math.floor(v);
+  const deep = ampRel > 0 ? (ampRel < 1 ? ampRel : 1) : 0;
+  // Absatz und Gratabsenkung laufen im selben Takt (deep^0,7): schon auf halbem
+  // Reglerweg sind es Näpfe mit definiertem Rand und kein flaches Land mit Punkt.
+  const gf = deep > 0 ? Math.pow(deep, HAM_RAMP) : 0;
+  const kf = smoothstep(0, 1, deep);   // weiche Kurve: Streuung & Saum
+  const varAmt = HAM_VAR * kf;         // bei deep = 0 exakt 0 → blow = 1 → bitgleich
+  const kb = HAM_BLEND * gf;           // bei deep = 0 exakt 0 → harte max-Verknüpfung
   let best = 0;
   for (let di = -1; di <= 1; di++) {
     for (let dj = -1; dj <= 1; dj++) {
@@ -230,10 +267,32 @@ function hammerField(theta, w, n, lambda) {
       const cy = gj + 0.5 + (jy - 0.5) * 0.75;
       const R = 0.82 + jx * 0.38;              // Schlaggröße variiert
       const d2 = ((u - cx) ** 2 + (v - cy) ** 2) / (R * R);
-      if (d2 < 1) best = Math.max(best, Math.sqrt(1 - d2)); // Kugelkalotte
+      if (d2 < 1) {
+        // Schlagstärke je Napf (kein zusätzlicher Sinus): 87…100 %. Schwächere
+        // Schläge werden durch den Absatz auch etwas kleiner im Grundriss.
+        const blow = 1 - varAmt * fract(jx + jy * 1.618);
+        const cand = blow * Math.sqrt(1 - d2); // Kugelkalotte
+        if (kb > 0) {
+          // Zwei sich überlappende Schläge treffen sich im Tiefenmodus in einer weich
+          // verrundeten Rinne statt in einem messerscharfen Schnittgrat: die Kante wird
+          // sonst vom Ringraster als Treppe abgetastet, und ein Schlag, der nur knapp aus
+          // einem Nachbarn herausschaut, bliebe als ovaler „Lunker“ stehen.
+          const h = Math.max(0, kb - Math.abs(cand - best)) / kb;
+          best = Math.max(best, cand) + h * h * kb * 0.25;
+        } else best = Math.max(best, cand);
+      }
     }
   }
-  return 0.9 - 1.9 * best; // Dellen nach innen, schmale Grate zwischen den Schlägen
+  if (deep <= 0) return 0.9 - 1.9 * best; // Dellen nach innen, schmale Grate dazwischen
+  if (best > 1) best = 1;  // die weiche Verschneidung darf den Napf nicht tiefer als die Wandreserve machen
+  const shelf = HAM_SHELF * gf;        // ab hier beginnt der Napf
+  const ridge = 0.9 * (1 - smoothstep(0, 1, gf)); // Grat 0,9 → 0 (= Silhouette)
+  const e = (HAM_KNEE * gf) / (1 - shelf);        // Einlaufband in Napfmaß
+  const x = (best - shelf) / (1 - shelf);         // ≤ 0 = Land
+  const bowl = x <= 0 ? 0 : (x < e ? (x * x) / (2 * e) : x - e / 2) / (1 - e / 2);
+  const rim = smoothstep(HAM_LIP_IN * shelf, shelf, best); // 1 am Napfrand, 0 im Land
+  return ridge - (ridge + 1) * bowl - HAM_LIP * kf * (1 - rim);
+  // Wertebereich: ampRel = 0 → [−1, +0,9] (heute) … ampRel = 1 → [−1, 0].
 }
 
 // ---------------------------------------------------------------------------
@@ -267,14 +326,32 @@ export function buildModel(params) {
   const ribs = p.pattern === 'zickzack' ? Math.max(24, p.ribs) : p.ribs;
   // (b) Tiefe an Muster & Rippenzahl koppeln: zu tief bei groben Rippen = klobig,
   //     zu tief bei feinen Rippen = Moiré. Lamellen dürfen bewusst tief sein
-  //     (senkrechte Schlitze = 0° Überhang), Gehämmert bleibt Mikro-Textur.
+  //     (senkrechte Schlitze = 0° Überhang), Gehämmert bis zur Zellgrößen-Klemme.
+  // Gehämmert: Dellenraster aus dem Anzahl-Regler — nHam Zellen über den Umfang,
+  // Zellhöhe λ = Zellbreite bei rMax (≈ runde Näpfe).
+  const nHam = Math.max(6, Math.round(ribs / 3));
+  const lamHam = (2 * Math.PI * rMax) / nHam;
+  const hamMax = isVase ? HAM_MAX_V : HAM_MAX_E;
   let depthCap;
   if (p.pattern === 'lamellen') depthCap = isVase ? 6 : 3;
-  else if (p.pattern === 'gehaemmert') depthCap = 1.2;
+  // Gehämmert: tiefe Näpfe sind erlaubt, aber die Flanke hängt an der Zellgröße —
+  // viele Schläge = kleine Zellen = flacher (amp ≤ HAM_CELL·λ ⇒ ~48°). Das max(…)
+  // stellt sicher, dass keine Einstellung WENIGER Tiefe bekommt als bisher (1,2 mm).
+  else if (p.pattern === 'gehaemmert') depthCap = Math.min(hamMax, Math.max(HAM_SOFT, HAM_CELL * lamHam));
   else if (p.pattern === 'skelett') depthCap = isVase ? 1.8 : 1.0;
   else if (p.pattern === 'koralle') depthCap = isVase ? 6 : 1.0;
   else depthCap = ribs < 24 ? 1.1 : ribs > 56 ? 1.0 : 1.6;
   const amp = p.pattern === 'glatt' ? 0 : Math.min(p.depth, depthCap);
+  // Anteil der Tiefe oberhalb der klassischen Grenze — normiert auf die EFFEKTIVE
+  // Grenze, damit „Regler ganz rechts“ immer die volle Planier-Optik zeigt.
+  // Ein Wert fürs ganze Gefäß (nicht aus ampAt(t)) — sonst kippt die Ausblendzone
+  // oben/unten in die alte Optik zurück.
+  const hamRel = (p.pattern === 'gehaemmert' && depthCap > HAM_SOFT)
+    ? Math.min(1, Math.max(0, (amp - HAM_SOFT) / (depthCap - HAM_SOFT))) : 0;
+  // Hinweis, wenn die Zellgröße die Wunschtiefe begrenzt (Konfigurator zeigt ihn an)
+  const depthNote = (p.pattern === 'gehaemmert' && p.depth > depthCap + 1e-9 && depthCap < hamMax - 1e-9)
+    ? `Bei ${ribs} Schlägen sind max. ${depthCap.toFixed(1).replace('.', ',')} mm möglich — sonst drucken die Näpfe nicht mehr ohne Stützen.`
+    : '';
   const twistAngle = p.twist * Math.PI;
   // Verlauf des Musters über die Höhe: Phasenverschiebung φ(t).
   // Wichtig: φ hängt nur von t ab (nicht von θ) → Naht bei θ=2π bleibt geschlossen.
@@ -332,7 +409,8 @@ export function buildModel(params) {
   const querExtra = isQuer ? quersV * 14 : 0;
   const isHammer = p.pattern === 'gehaemmert';
   // Gehämmert: Ringabstand ≈ Umfangsschritt (≈ 0,3 mm), sonst treppige Dellenränder im Druck
-  const hammerRows = isHammer ? (fineExport ? 1.7 : 1.35) : 1;
+  // Tiefenmodus: die Napfränder brauchen engere Ringe, sonst treppt die Lichtkante
+  const hammerRows = isHammer ? (fineExport ? 1.7 : 1.35) * (1 + 0.25 * hamRel) : 1;
   const WALL_STEPS = Math.round(Math.min(isHammer ? 720 : 430, wallBase * hammerRows + Math.abs(twistAngle) * 36 * Math.min(3, flowOsc) + querExtra) * q);
   const CAVITY_STEPS = Math.round(36 * q);
   const INNER_STEPS = Math.round(44 * q);
@@ -402,9 +480,11 @@ export function buildModel(params) {
       return a * (2 * Math.exp(-80 * d * d) - 1);
     }
     if (p.pattern === 'gehaemmert') {
-      const n = Math.max(6, Math.round(ribs / 3));       // Dellen-Dichte aus dem Anzahl-Regler
-      const lambda = (2 * Math.PI * rMax) / n;           // ≈ runde Dellen (λ_vertikal ≈ λ_horizontal)
-      return a * hammerField(theta + flowPhase(t), t * H, n, lambda);
+      // Enge Stellen (Flaschenhals, Becherfuß): dort ist eine Zelle nur 2π·R(t)/nHam
+      // breit, die Näpfe würden zu schmalen senkrechten Rillen, in die keine 0,4-mm-Düse
+      // mehr sauber hineinkommt. Nur der ZUSATZ über 1,2 mm wird dort zurückgenommen.
+      if (hamRel > 0) a = Math.min(a, Math.max(HAM_SOFT, (HAM_CELL * 2 * Math.PI * R(t)) / nHam));
+      return a * hammerField(theta + flowPhase(t), t * H, nHam, lamHam, hamRel);
     }
     return a * waveTheta(p.pattern, ribs * (theta + flowPhase(t)));
   };
@@ -728,7 +808,9 @@ export function buildModel(params) {
   // Flächen dazwischen glatt. Weiche Vertex-Normalen würden die Kanten verschmieren — das sieht „unscharf“ aus.
   // (p.rawIndexed: Topologie-Tools brauchen die indizierte Geometrie.)
   if (!p.rawIndexed && (p.pattern === 'gehaemmert' || p.pattern === 'zickzack' || openCells)) {
-    geometry = creaseNormals(geometry, p.pattern === 'gehaemmert' ? 26 : openCells ? 30 : 22, geometry.userData.bandRanges);
+    // Gehämmert: mit der Tiefe werden die Napfflanken flacher — die Schwelle wandert
+    // mit (26 → 34°), damit der Napfrand eine saubere Lichtlinie bleibt statt zu flimmern.
+    geometry = creaseNormals(geometry, p.pattern === 'gehaemmert' ? 26 + 8 * hamRel : openCells ? 30 : 22, geometry.userData.bandRanges);
   }
 
   // Öffnungs-Hinweis (Vase): eng für Blumen — weich, nicht blockierend; unter VASE_OPEN_TIGHT zeigt die UI ihn rot
@@ -748,12 +830,16 @@ export function buildModel(params) {
       product: p.product,
       height: H,
       maxRadius: rMax,
-      topDiameter: (rTopOut + amp) * 2,
+      // Außendurchmesser: gehämmert steht der Grat nur 0,9·(1−…)·amp über der Silhouette
+      // und bei voller Tiefe gar nicht mehr — sonst stünde beim Kunden ein zu großes Maß.
+      topDiameter: (rTopOut + amp * (p.pattern === 'gehaemmert' ? 0.9 * (1 - smoothstep(0, 1, Math.pow(hamRel, HAM_RAMP))) : 1)) * 2,
       baseDiameter: rBase * 2,
       cavityDiameter: cavityDia,
       cavityDepth,
       openingDiameter: openingDia,
       openingWarn,         // Vase: Hinweistext bei enger Öffnung (< 18 mm), sonst ''
+      depthCap,            // wirksame Obergrenze der Mustertiefe (mm)
+      depthNote,           // Gehämmert: Hinweis, wenn die Zellgröße die Tiefe begrenzt
       openingTight: isVase && openingDia < VASE_OPEN_TIGHT, // < 10 mm → Hinweis in Rot
       rim,                 // gewählte Randoption (RIMS)
       rimIgnored: rim !== rimEff, // Voronoi-Vase: Rand bleibt glatt

@@ -551,11 +551,21 @@ function discountFor(product, qty) {
   for (const t of tiers) if (qty >= t.qty && t.off > off) off = t.off;
   return off;
 }
-// Gravur-Regel (Spiegel der Geometrie): bei Lamellen/Fjordwelle über 2,5 mm Tiefe gibt es keine Gravur
-function gravurAllowed(c) {
+/** Gravur-Regel (Spiegel von public/js/pricing.js und geometry.js): Die Geometrie schaltet die Gravur ab,
+ * sobald die WIRKSAME Mustertiefe über 2,5 mm (Vase) bzw. 2,0 mm (Eierbecher) liegt — dann darf
+ * auch kein Gravur-Aufpreis berechnet werden. Wirksam = Wunschtiefe, begrenzt durch die
+ * Musterklemme aus geometry.js (Gehämmert liegt dank seiner eigenen Grenze nie darüber). */
+function gravurAllowed(c, product) {
   const depth = +c?.depth || 0;
-  if ((c?.pattern === 'lamellen' || c?.pattern === 'koralle') && depth > 2.5) return false;
-  return true;
+  const isVase = (product || c?.product) === 'vase';
+  const pattern = c?.pattern;
+  if (!pattern || pattern === 'glatt') return true;
+  const cap = pattern === 'lamellen' ? (isVase ? 6 : 3)
+    : pattern === 'gehaemmert' ? (isVase ? 2.5 : 2.0)
+    : pattern === 'skelett' ? (isVase ? 1.8 : 1.0)
+    : pattern === 'koralle' ? (isVase ? 6 : 1.0)
+    : 1.6;
+  return Math.min(depth, cap) <= (isVase ? 2.5 : 2.0) + 1e-9;
 }
 /**
  * Körperfarbe einer Position: per Farb-ID (item.color), sonst über den Anzeigenamen — alte Warenkorb-Items
@@ -582,7 +592,7 @@ function priceItem(item, aktion = aktiveAktion()) {
   if (!p) throw new Error('Unbekanntes Produkt');
   const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
   const c = item.config || {};
-  const hasText = !!String(c.text || '').trim() && gravurAllowed(c);
+  const hasText = !!String(c.text || '').trim() && gravurAllowed(c, item.product);
   const col = colorOfItem(item);
   const parts = {
     grund: euro(p.single),
