@@ -3,12 +3,12 @@
 'use strict';
 
 const KEY = () => localStorage.getItem('ovju-admin-key') || '';
-let DATA = null;          // { settings, orders, statuses, statusLabels, carriers, normalHeight, info, aktion, serverNow }
+let DATA = null;          // { settings, orders, statuses, statusLabels, carriers, normalHeight, info, aktionen, aktion, serverNow }
 let USERS = [];           // Kundenkonten (ohne Hash/Salt)
 let tiers = { egg: [], vase: [] };
 let colors = [];
 let coupons = [];         // [{ code, type, value, minOrder, active, mitAktion }] — mitAktion: mit laufender Aktion kombinierbar
-let aktionen = [];        // Vertrag „Aktionen“: [{ id, name, prozent, start, ende (ISO-UTC), produkte, mengenrabatt, hinweis, aktiv }]
+let aktionen = [];        // Vertrag „Aktionen“: [{ id, name, prozent, start, ende (ISO-UTC), produkte, muster [Muster-Keys, leer = alle Oberflächen], mengenrabatt, hinweis, aktiv }]
 let dirty = false;        // ungespeicherte Einstellungen
 let CUR = null;           // geöffnete Bestellnummer (Drawer)
 let HIST_ALL = false;     // Verlauf im Drawer komplett ausgeklappt
@@ -192,12 +192,21 @@ function surchargeLine(l) {
     .filter(([, v]) => euro(v) > 0);
   return list.length ? `Aufpreise: ${list.map(([k, v]) => `${k} ${money(v)}`).join(' · ')}` : '';
 }
-/** Aktionszeile einer Bestellposition „UVP 24,90 € · Aktion −16 %“ (wie aktionText() in lib/mail-templates.js) — leer ohne Aktion */
+/** Aktionszeile einer Bestellposition „UVP 24,90 € · Aktion −16 % (Sommer)“ (wie aktionText() in lib/mail-templates.js) — leer ohne Aktion.
+ *  Der Name kommt je Zeile aus l.aktionName: bei mehreren gleichzeitigen Aktionen (z. B. −30 % nur auf Gehämmert) gilt je Position eine andere. */
 function aktionLine(l) {
   const p = Math.round(Number(l?.aktionProzent) || 0);
   if (p <= 0) return '';
-  return `${euro(l.uvp) > 0 ? `UVP ${money(l.uvp)} · ` : ''}Aktion −${p} %`;
+  const name = String(l.aktionName || '').trim();
+  return `${euro(l.uvp) > 0 ? `UVP ${money(l.uvp)} · ` : ''}Aktion −${p} %${name ? ` (${name})` : ''}`;
 }
+/** Alle Aktionen einer Bestellung [{ id, name, prozent, ersparnis, produkte?, muster? }] — order.aktionen, ältere Bestellungen nur order.aktion (wie orderAktionen() im Server) */
+function orderAktionen(o) {
+  if (Array.isArray(o?.aktionen) && o.aktionen.length) return o.aktionen.filter((a) => a && typeof a === 'object');
+  return o?.aktion && typeof o.aktion === 'object' ? [o.aktion] : [];
+}
+/** Geltungsbereich einer Bestell-Aktion als Zusatz „ auf Gehämmert“ — nur wenn die Bestellung ihn kennt (neuere Bestellungen speichern produkte/muster mit) */
+const orderAktionScope = (a) => (a.produkte !== undefined || a.muster !== undefined ? ` ${aktionScopeLabel(a)}` : '');
 function estimate(l) {
   const pr = DATA.settings.printing || { minutesEgg: 75, minutesVase: 210, gramsEgg: 22, gramsVase: 110 };
   const h0 = DATA.normalHeight?.[l.product] || (l.product === 'vase' ? 150 : 58);
@@ -330,7 +339,7 @@ function orderMatches(o) {
   if (F.q) {
     const hay = [o.orderId, o.invoiceNo, custName(o), custEmail(o), o.customer?.city, o.customer?.zip, o.trackingNo, o.paypalOrderId,
       o.reklamation?.gutscheinCode, o.reklamation?.gutschriftNo, o.reklamation?.refundId,   // Gutscheincode / Gutschriftnummer / PayPal-Erstattung
-      o.aktion?.name,   // Bestellungen aus einer Aktion („Sommer“)
+      ...orderAktionen(o).map((a) => a.name),   // Bestellungen aus einer Aktion („Sommer“) — auch mehrere je Bestellung
       ...(o.lines || []).map((l) => `${l.colorName} ${l.config?.text || ''} ${PRESETS[l.config?.preset] || ''} ${PATTERNS[l.config?.pattern] || ''}`)].join(' ').toLowerCase();
     if (!hay.includes(F.q)) return false;
   }
@@ -364,7 +373,7 @@ function renderOrders() {
         <td data-l="Datum"><small class="nowrap">${fmtDate(o.createdAt)}</small><br><small class="muted">${new Date(o.createdAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</small></td>
         <td data-l="Kunde">${esc(custName(o))}<br><small class="muted mail" title="${esc(custEmail(o))}">${esc(custEmail(o))}</small></td>
         <td data-l="Positionen"><span class="lines-short">${lines}</span></td>
-        <td data-l="Summe" class="num">${o.total != null ? money(o.total) : '—'}<br><small class="muted">${o.payment === 'paypal' ? 'PayPal' : 'Vorkasse'} ${o.paymentStatus === 'bezahlt' ? '<span title="bezahlt">✅</span>' : '<span title="offen">⏳</span>'}</small>${o.coupon ? `<br><small class="muted">🎟️ ${esc(o.coupon.code)}</small>` : ''}${o.aktion ? `<br><small class="muted" title="Aktion · Ersparnis ${esc(money(o.aktion.ersparnis))}">🔥 ${esc(o.aktion.name)} −${esc(o.aktion.prozent)} %</small>` : ''}</td>
+        <td data-l="Summe" class="num">${o.total != null ? money(o.total) : '—'}<br><small class="muted">${o.payment === 'paypal' ? 'PayPal' : 'Vorkasse'} ${o.paymentStatus === 'bezahlt' ? '<span title="bezahlt">✅</span>' : '<span title="offen">⏳</span>'}</small>${o.coupon ? `<br><small class="muted">🎟️ ${esc(o.coupon.code)}</small>` : ''}${orderAktionen(o).map((a) => `<br><small class="muted" title="Aktion${esc(orderAktionScope(a))} · Ersparnis ${esc(money(a.ersparnis))}">🔥 ${esc(a.name)} −${esc(a.prozent)} %</small>`).join('')}</td>
         <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${o.reklamation ? `<br><span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkStLabel(o.reklamation.status))} · ${esc(rkArtLabel(o.reklamation.art))}">↩️ Reklamation</span>` : ''}${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
         <td data-l="Druck">${p.total ? `<span class="prog"><i style="--w:${Math.round(p.done / p.total * 100)}%"></i>${p.done}/${p.total}</span>` : '—'}</td>
       </tr>`;
@@ -467,7 +476,7 @@ function renderDrawer() {
       <div><h3>Zahlung</h3>${payBlock}</div>
     </div></div>
     <div class="sect"><h3>Positionen <span class="right">${pieces(o)} Stück · ${o.total != null ? money(o.total) : '—'}${o.shipping != null ? ` (Versand ${o.shipping ? money(o.shipping) : 'frei'})` : ''}</span></h3>
-      ${o.aktion ? `<div class="row" style="margin-bottom:10px"><span class="badge ak">🔥 ${esc(o.aktion.name)} −${esc(o.aktion.prozent)} %</span><small class="muted">Ersparnis ${money(o.aktion.ersparnis)} — Summen bereits aus den reduzierten Preisen</small></div>` : ''}${lines}</div>
+      ${orderAktionen(o).map((a) => `<div class="row" style="margin-bottom:10px"><span class="badge ak">🔥 ${esc(a.name)} −${esc(a.prozent)} %${esc(orderAktionScope(a))}</span><small class="muted">Ersparnis ${money(a.ersparnis)} — Summen bereits aus den reduzierten Preisen</small></div>`).join('')}${lines}</div>
     <div class="sect"><h3>Versand</h3>
       <div class="row">
         <select id="d-carrier">${['', ...Object.keys(CARRIERS)].map((k) => `<option value="${k}" ${(o.carrier || '') === k ? 'selected' : ''}>${k ? CARRIERS[k] : 'Versender wählen'}</option>`).join('')}</select>
@@ -988,11 +997,41 @@ function addCoupon() { coupons.push({ code: 'OSTERN10', type: 'percent', value: 
 
 // ---------------------------------------------------------------------------
 // Aktionen (Vertrag „Aktionen“, Punkt 8): Karten mit Formular, Status-Chip + Countdown, Schnellwahl der Dauer, Banner-Vorschau.
+// Oberflächen (Vertrag „Aktionen auf Oberflächen“, Punkt 10): je Karte 9 Chips + Schalter „Alle Oberflächen“ → aktionen[i].muster
+// (Array der Muster-Keys, [] = alle). Mehrere Aktionen dürfen gleichzeitig laufen; je Konfiguration gilt die erste passende
+// der sortierten Liste (akLaufende: Prozent absteigend, dann engerer Bereich, dann früherer Start — wie aktiveAktionen() im Server).
 // Zeit: akNow() = Rechnerzeit + Versatz zur Serverzeit (DATA.serverNow beim Laden) — der Server entscheidet, was im Shop gilt.
 // datetime-local ↔ ISO-UTC: toLocalInput() zeigt Ortszeit, fromLocalInput() speichert new Date(local).toISOString().
 // ---------------------------------------------------------------------------
 const AK_PRODUKTE = { alle: 'Alle Produkte', eierbecher: 'Nur Eierbecher', vase: 'Nur Vasen' };
-const AK_AUF = { alle: 'auf alles', eierbecher: 'auf Eierbecher', vase: 'auf Vasen' };   // Bannertext „−16 % auf alles“
+const AK_PRODUKT_LABEL = { vase: 'Vasen', eierbecher: 'Eierbecher' };   // Geltungsbereich „auf Vasen“ (wie AKTION_PRODUKT_LABEL in lib/mail-templates.js)
+const AK_MUSTER = PATTERNS;   // Oberflächen-Chips: Muster-Key → Label (gleiche Tabelle wie die Aufpreise)
+/**
+ * Oberflächen einer Aktion wie sanitizeAktionMuster() im Server: nur bekannte Muster-Keys, ohne Duplikate, in der Reihenfolge
+ * von MUSTER_KEYS; leer = alle Oberflächen — sind alle neun gewählt, ebenfalls []. Ein einzelner String zählt als ein Key.
+ */
+function akMusterNorm(v) {
+  const raw = Array.isArray(v) ? v : (typeof v === 'string' && v.trim() ? v.split(',') : []);
+  const set = new Set(raw.map((k) => String(k ?? '').trim()).filter((k) => k in AK_MUSTER));
+  return set.size >= MUSTER_KEYS.length ? [] : MUSTER_KEYS.filter((k) => set.has(k));
+}
+/**
+ * Geltungsbereich als Text — identisch mit aktionScopeLabel() in lib/mail-templates.js (Server: Rechnung, CSV, Mail; Client: pricing.js):
+ * „auf alles“ · „auf Vasen“ · „auf Gehämmert“ · „auf Vasen mit Gehämmert“ · „auf Rippen, Wellen und Lamellen“
+ * (bis 3 Oberflächen ausgeschrieben, ab 4: „auf 4 Oberflächen“; mit Produkt: „auf Eierbecher mit Rippen oder Wellen“).
+ */
+function aktionScopeLabel(a) {
+  const prod = AK_PRODUKT_LABEL[a?.produkte] || '';
+  const names = akMusterNorm(a?.muster).map((k) => AK_MUSTER[k]);
+  let flaechen = '';
+  if (names.length >= 4) flaechen = `${names.length} Oberflächen`;
+  else if (names.length === 1) flaechen = names[0];
+  else if (names.length) flaechen = `${names.slice(0, -1).join(', ')} ${prod ? 'oder' : 'und'} ${names[names.length - 1]}`;
+  if (prod && flaechen) return `auf ${prod} mit ${flaechen}`;
+  if (prod) return `auf ${prod}`;
+  if (flaechen) return `auf ${flaechen}`;
+  return 'auf alles';
+}
 const AK_STATUS_LABEL = { laeuft: 'läuft', geplant: 'geplant', beendet: 'beendet', pausiert: 'pausiert' };
 const AK_QUICK = { '24h': '24 h', '3d': '3 Tage', '1w': '1 Woche', we: 'Wochenende (bis So 23:59)' };
 let AK_OFFSET = 0;        // Serverzeit − Rechnerzeit (ms), aus DATA.serverNow
@@ -1031,11 +1070,22 @@ function akStatus(a, now = akNow()) {
   if (now >= e) return 'beendet';
   return 'laeuft';
 }
-/** Die im Shop geltende Aktion: läuft && höchster Prozentsatz (gleiche Regel wie aktiveAktion() im Server) — null ohne */
-function akWinner(list, now = akNow()) {
-  let best = null;
-  for (const a of list || []) if (akStatus(a, now) === 'laeuft' && (!best || a.prozent > best.prozent)) best = a;
-  return best;
+/** Größe des Geltungsbereichs (Produkte × Oberflächen) — kleiner = enger; Reihenfolge bei gleichem Prozentsatz (wie aktionScopeSize() im Server) */
+const akScopeSize = (a) => (a.produkte === 'alle' || !AK_PRODUKT_LABEL[a.produkte] ? 2 : 1) * (akMusterNorm(a.muster).length || MUSTER_KEYS.length);
+/**
+ * Alle gerade laufenden Aktionen in Shop-Reihenfolge (wie aktiveAktionen() im Server): Prozent absteigend, bei Gleichstand
+ * engerer Geltungsbereich zuerst, dann frühere Startzeit. aktionen[0] ist die primäre (Banner); je Konfiguration gilt die erste passende.
+ */
+function akLaufende(list, now = akNow()) {
+  return (list || []).filter((a) => akStatus(a, now) === 'laeuft')
+    .sort((x, y) => (Number(y.prozent) || 0) - (Number(x.prozent) || 0) || akScopeSize(x) - akScopeSize(y) || Date.parse(x.start) - Date.parse(y.start));
+}
+/** Überschneiden sich die Geltungsbereiche zweier Aktionen (gemeinsames Produkt UND gemeinsame Oberfläche)? Dann gilt dort der höhere Rabatt. */
+function akOverlap(a, b) {
+  const pa = a.produkte || 'alle', pb = b.produkte || 'alle';
+  if (pa !== 'alle' && pb !== 'alle' && pa !== pb) return false;
+  const ma = akMusterNorm(a.muster), mb = akMusterNorm(b.muster);
+  return !ma.length || !mb.length || ma.some((k) => mb.includes(k));
 }
 /** Formularprüfung (wie sanitizeAktion() im Server) — Meldung oder leer */
 function akError(a) {
@@ -1045,25 +1095,47 @@ function akError(a) {
   const s = Date.parse(a.start), e = Date.parse(a.ende);
   if (!Number.isFinite(s) || !Number.isFinite(e)) return 'Bitte Start und Ende angeben.';
   if (e <= s) return 'Das Ende muss nach dem Start liegen.';
+  if (a.musterWahl && !akMusterNorm(a.muster).length) return 'Bitte mindestens eine Oberfläche wählen — oder „Alle Oberflächen“ einschalten.';
   return '';
 }
-/** Zweite Zeile im Kartenkopf: Countdown bzw. Zeitraum je Status; bei laufenden Aktionen ohne Vorrang der Hinweis, wer gilt */
+/** Zweite Zeile im Kartenkopf: Countdown bzw. Zeitraum je Status; bei laufenden Aktionen Platz im Banner und Überschneidungen mit anderen laufenden */
 function akCdText(a, now = akNow()) {
   const stt = akStatus(a, now), s = Date.parse(a.start), e = Date.parse(a.ende);
   if (stt === 'laeuft') {
-    const w = akWinner(aktionen, now);
-    return inText('endet', e - now) + (w && w !== a ? ` · im Shop gilt „${w.name}“ (−${w.prozent} %, höherer Rabatt)` : '');
+    const run = akLaufende(aktionen, now), rank = run.indexOf(a);
+    let t = inText('endet', e - now);
+    if (rank > 0) t += ` · im Banner hinter „${String(run[0].name || '').trim() || 'Aktion'}“`;
+    // Überschneidung: gleiche Konfiguration von beiden erfasst — im Shop gilt dort die vordere der Liste (höherer Rabatt bzw. engerer Bereich)
+    const ov = run.filter((o) => o !== a && akOverlap(a, o));
+    for (const o of ov) t += run.indexOf(o) < rank ? ` · bei Überschneidung gilt „${String(o.name || '').trim() || 'Aktion'}“ (−${Math.round(Number(o.prozent) || 0)} %)` : ` · geht bei Überschneidung vor „${String(o.name || '').trim() || 'Aktion'}“`;
+    return t;
   }
   if (stt === 'geplant') return `ab ${fmtDT(a.start)} · ${inText('beginnt', s - now)}`;
   if (stt === 'beendet') return `endete am ${fmtDT(a.ende)}`;
   return Number.isFinite(s) && Number.isFinite(e) ? `nicht im Shop · ${fmtDT(a.start)} – ${fmtDT(a.ende)}` : 'nicht im Shop';
 }
-/** Bannerzeile wie im Shop (Vertrag 6a): „🔥 Sommer: −16 % auf alles · endet in 1 Tag 3 Std · Hinweis“ — als HTML mit Fraunces-Zahlen */
-function akBannerHTML(a, now = akNow()) {
+/** Kurzform einer weiteren laufenden Aktion für den Desktop-Banner: „Winter −16 % auf alles“ */
+const akKurz = (a) => `${esc(String(a.name || '').trim() || 'Aktion')} <b>−${Math.round(Number(a.prozent) || 0)} %</b> ${esc(aktionScopeLabel(a))}`;
+/**
+ * Bannerzeile wie im Shop (Vertrag 6a / Oberflächen 7): „🔥 Sommer: −30 % auf Gehämmert · endet in 1 Tag 3 Std · Hinweis“ — als HTML
+ * mit Fraunces-Zahlen. Läuft die Aktion als primäre und noch eine zweite, hängt der Desktop-Banner „ · außerdem: Winter −16 % auf alles“ an.
+ */
+function akBannerHTML(a, now = akNow(), list = aktionen) {
   const s = Date.parse(a.start), e = Date.parse(a.ende);
   const ref = Number.isFinite(s) ? Math.max(now, s) : now;   // geplant: Countdown ab dem Start gerechnet
   const cd = Number.isFinite(e) ? inText('endet', e - ref) : 'endet —';
-  return `🔥 <b>${esc(String(a.name || '').trim() || 'Aktion')}</b>: <b>−${Math.round(Number(a.prozent) || 0)} %</b> ${AK_AUF[a.produkte] || AK_AUF.alle} · ${cd}${String(a.hinweis || '').trim() ? ` · ${esc(String(a.hinweis).trim())}` : ''}`;
+  const run = akLaufende(list, now);
+  const zweite = run[0] === a ? run[1] : null;
+  return `🔥 <b>${esc(String(a.name || '').trim() || 'Aktion')}</b>: <b>−${Math.round(Number(a.prozent) || 0)} %</b> ${esc(aktionScopeLabel(a))} · ${cd}${String(a.hinweis || '').trim() ? ` · ${esc(String(a.hinweis).trim())}` : ''}${zweite ? ` · außerdem: ${akKurz(zweite)}` : ''}`;
+}
+/** Oberflächen-Block einer Karte: Schalter „Alle Oberflächen“ (muster []) + 9 Chips (Mehrfachauswahl); Chips gedämpft, solange „Alle“ gilt */
+function akMusterHTML(a, i) {
+  const sel = akMusterNorm(a.muster), alle = !sel.length && !a.musterWahl;
+  return `<div class="ak-muster${alle ? ' alle' : ''}" id="ak-muster-${i}">
+        <div class="ak-muster-head"><span class="lbl">Oberflächen <small>Rabatt nur auf diese Muster, z. B. „nur Gehämmert“</small></span>
+          <label class="inline"><span class="switch"><input type="checkbox" id="ak-alle-${i}" ${alle ? 'checked' : ''} onchange="akMusterAlle(${i},this.checked)"><span></span></span> Alle Oberflächen</label></div>
+        <div class="ak-chips">${MUSTER_KEYS.map((k) => `<label class="ak-mchip${alle || sel.includes(k) ? ' on' : ''}" data-muster="${k}"><input type="checkbox" value="${k}" ${sel.includes(k) ? 'checked' : ''} onchange="akMusterToggle(${i},'${k}',this.checked)">${esc(AK_MUSTER[k])}</label>`).join('')}</div>
+      </div>`;
 }
 function akCardHTML(a, i) {
   const id = esc(a.id);
@@ -1083,6 +1155,7 @@ function akCardHTML(a, i) {
         <label>Produkte<select onchange="akSet(${i},'produkte',this.value)">${Object.entries(AK_PRODUKTE).map(([k, l]) => `<option value="${k}" ${(a.produkte || 'alle') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <label>Hinweis <small>optional, Zusatz im Banner, ≤ 120</small><input type="text" maxlength="120" value="${esc(a.hinweis || '')}" placeholder="z. B. nur solange der Vorrat reicht" oninput="akSet(${i},'hinweis',this.value)"></label>
       </div>
+      ${akMusterHTML(a, i)}
       <div class="ak-quick"><span class="lbl">Dauer ab jetzt:</span>${Object.entries(AK_QUICK).map(([k, l]) => `<button class="ghost mini" onclick="akQuick(${i},'${k}')">${l}</button>`).join('')}</div>
       <label class="inline" style="margin-top:12px"><input type="checkbox" ${a.mengenrabatt ? 'checked' : ''} onchange="akSet(${i},'mengenrabatt',this.checked)"> Mengenrabatt zusätzlich gewähren <small class="muted">— sonst entfällt die Mengenstaffel, solange die Aktion läuft</small></label>
       <div class="ak-banner-l">Vorschau der Bannerzeile im Shop</div>
@@ -1108,9 +1181,52 @@ function akRefresh(i) {
   chip.className = `badge ak-${stt}`; chip.textContent = AK_STATUS_LABEL[stt];
   $(`#ak-cd-${i}`).textContent = akCdText(a, now);
   const banner = $(`#ak-banner-${i}`);
+  const rank = stt === 'laeuft' ? akLaufende(aktionen, now).indexOf(a) : -1;
   banner.innerHTML = akBannerHTML(a, now); banner.className = `ak-banner${stt === 'laeuft' ? '' : ' off'}`;
-  banner.title = stt === 'laeuft' ? 'So erscheint die Leiste gerade im Shop' : `Erscheint im Shop, sobald die Aktion läuft (${AK_STATUS_LABEL[stt]})`;
+  banner.title = stt === 'laeuft'
+    ? (rank > 0 ? 'Läuft gerade — im Shop steht diese Zeile als „außerdem: …“ hinter der primären Aktion (auf dem Handy nur die primäre)' : 'So erscheint die Leiste gerade im Shop')
+    : `Erscheint im Shop, sobald die Aktion läuft (${AK_STATUS_LABEL[stt]})`;
   $(`#ak-err-${i}`).textContent = err;
+}
+/** Oberflächen-Chips und „Alle“-Schalter einer Karte mit dem Zustand abgleichen (nach Klick; nie beim Sekunden-Ticker) */
+function akMusterRefresh(i) {
+  const a = aktionen[i], box = $(`#ak-muster-${i}`);
+  if (!a || !box) return;
+  const sel = akMusterNorm(a.muster), alle = !sel.length && !a.musterWahl;
+  box.classList.toggle('alle', alle);
+  const sw = $(`#ak-alle-${i}`);
+  if (sw) sw.checked = alle;
+  for (const chip of $$('.ak-mchip', box)) {
+    const k = chip.dataset.muster, on = sel.includes(k);
+    chip.classList.toggle('on', alle || on);
+    const cb = $('input', chip);
+    if (cb) cb.checked = on;
+  }
+}
+/**
+ * Chip an/aus. musterWahl (nur im Admin, nicht im Payload) = „Schalter aus, aber noch kein Chip gewählt“ — dann meldet akError,
+ * bis eine Oberfläche gewählt ist. Sind alle neun gewählt (oder der letzte Chip abgewählt), wird muster [] gespeichert:
+ * bei allen neun gilt wieder „Alle Oberflächen“, beim Abwählen des letzten bleibt die Auswahl offen (Fehlermeldung).
+ */
+function akMusterToggle(i, key, on) {
+  const a = aktionen[i];
+  if (!a || !(key in AK_MUSTER)) return;
+  const set = new Set(akMusterNorm(a.muster));
+  if (on) set.add(key); else set.delete(key);
+  const alleNeun = set.size >= MUSTER_KEYS.length;
+  a.muster = alleNeun ? [] : MUSTER_KEYS.filter((k) => set.has(k));
+  a.musterWahl = !a.muster.length && !alleNeun;
+  setDirty(true);
+  akMusterRefresh(i); akRefresh(i);
+}
+/** Schalter „Alle Oberflächen“: an → muster [] (alle); aus → Auswahl beginnt leer, bis mindestens ein Chip gewählt ist (akError) */
+function akMusterAlle(i, on) {
+  const a = aktionen[i];
+  if (!a) return;
+  a.muster = [];
+  a.musterWahl = !on;
+  setDirty(true);
+  akMusterRefresh(i); akRefresh(i);
 }
 /** Feldänderung aus dem Formular (Werte kommen aus this.value/this.checked, nie aus dem Markup) */
 function akSet(i, field, value) {
@@ -1149,7 +1265,7 @@ function akQuick(i, kind) {
 }
 function addAktion() {
   const start = Math.floor(akNow() / 60e3) * 60e3;
-  aktionen.unshift({ id: newAktionId(), name: 'Neue Aktion', prozent: 15, start: new Date(start).toISOString(), ende: new Date(start + 3 * 864e5).toISOString(), produkte: 'alle', mengenrabatt: false, hinweis: '', aktiv: true });
+  aktionen.unshift({ id: newAktionId(), name: 'Neue Aktion', prozent: 15, start: new Date(start).toISOString(), ende: new Date(start + 3 * 864e5).toISOString(), produkte: 'alle', muster: [], mengenrabatt: false, hinweis: '', aktiv: true });
   setDirty(true); renderAktionen();
   show('aktionen');
   $('#ak-name-0')?.focus?.();
@@ -1161,18 +1277,24 @@ function deleteAktion(i) {
   if (!confirm(`Aktion „${String(a.name || '').trim() || 'Aktion'}“ löschen?${stt === 'laeuft' ? '\nSie läuft gerade — nach dem Speichern verschwinden Banner und Streichpreise im Shop.' : ''}`)) return;
   aktionen.splice(i, 1); setDirty(true); renderAktionen();
 }
-/** Übersicht: „🔥 Aktion läuft: <name> −16 % · endet in …“ bzw. „geplant ab …“ — aus den gespeicherten Aktionen (Server-Stand) */
+/**
+ * Übersicht: ALLE laufenden Aktionen „🔥 2 Aktionen laufen: Sommer −30 % auf Gehämmert · endet in … | Winter −16 % auf alles · endet in …“
+ * (Shop-Reihenfolge; Hinweis bei Überschneidung) bzw. „Aktion geplant: … ab …“ — aus den gespeicherten Aktionen (Server-Stand)
+ */
 function renderDashAktion() {
   const el = $('#dash-aktion');
   if (!el || !DATA) return;
   const now = akNow(), list = DATA.settings.aktionen || [];
-  const run = akWinner(list, now);
+  const run = akLaufende(list, now);
   const next = list.filter((a) => akStatus(a, now) === 'geplant').sort((a, b) => Date.parse(a.start) - Date.parse(b.start))[0];
   let html = '';
-  if (run) html = `🔥 <b>Aktion läuft:</b> ${esc(run.name)} <b class="ak-pct">−${run.prozent} %</b> ${AK_AUF[run.produkte] || AK_AUF.alle} · ${esc(inText('endet', Date.parse(run.ende) - now))}${run.mengenrabatt ? '' : ' · ohne Mengenrabatt'}`;
-  else if (next) html = `🔥 <b>Aktion geplant:</b> ${esc(next.name)} <b class="ak-pct">−${next.prozent} %</b> ${AK_AUF[next.produkte] || AK_AUF.alle} · ab ${fmtDT(next.start)} (${esc(inText('beginnt', Date.parse(next.start) - now))})`;
+  if (run.length) {
+    const items = run.map((a) => `<span class="dash-ak-it">${esc(a.name)} <b class="ak-pct">−${Math.round(Number(a.prozent) || 0)} %</b> ${esc(aktionScopeLabel(a))} · ${esc(inText('endet', Date.parse(a.ende) - now))}${a.mengenrabatt ? '' : ' · ohne Mengenrabatt'}</span>`);
+    const overlap = run.some((a, i) => run.slice(i + 1).some((b) => akOverlap(a, b)));
+    html = `🔥 <b>${run.length === 1 ? 'Aktion läuft:' : `${run.length} Aktionen laufen:`}</b> ${items.join('<span class="dash-ak-sep">|</span>')}${overlap ? '<small class="dash-ak-note">Bei Überschneidung gilt je Konfiguration der höhere Rabatt</small>' : ''}`;
+  } else if (next) html = `🔥 <b>Aktion geplant:</b> ${esc(next.name)} <b class="ak-pct">−${Math.round(Number(next.prozent) || 0)} %</b> ${esc(aktionScopeLabel(next))} · ab ${fmtDT(next.start)} (${esc(inText('beginnt', Date.parse(next.start) - now))})`;
   el.hidden = !html;
-  el.classList.toggle('geplant', !run && !!next);
+  el.classList.toggle('geplant', !run.length && !!next);
   if (html !== el.dataset.last) { el.innerHTML = html; el.dataset.last = html; }   // nur schreiben, wenn sich der Text ändert
 }
 /** Sekündlicher Ticker: Countdown in Karten (nur im Bereich Aktionen) und in der Übersicht */
@@ -1302,6 +1424,7 @@ function fillSettings() {
   coupons = structuredClone(s.coupons || []);
   for (const c of coupons) c.mitAktion = !!c.mitAktion;   // Migration: fehlt → nicht mit Aktion kombinierbar
   aktionen = structuredClone(Array.isArray(s.aktionen) ? s.aktionen : []);
+  for (const a of aktionen) a.muster = akMusterNorm(a.muster);   // Migration: fehlt/unbekannt → [] (= alle Oberflächen)
   AK_OFFSET = DATA.serverNow ? (Date.parse(DATA.serverNow) - Date.now()) || 0 : 0;   // Countdown nach Serverzeit
   renderTiers(); renderColors(); renderCoupons(); renderAktionen(); renderDashAktion();
   const c = s.company || {};
@@ -1329,10 +1452,10 @@ function setDirty(v) {
   el.textContent = v ? 'Ungespeicherte Änderungen' : 'Alles gespeichert';
   el.classList.toggle('dirty', v);
 }
-/** Aktion so, wie der Server sie erwartet (Vertrag Punkt 1/8): getrimmte Texte, ganze Prozent, ISO-UTC, echte Booleans */
+/** Aktion so, wie der Server sie erwartet (Vertrag Punkt 1/8 + Oberflächen 1): getrimmte Texte, ganze Prozent, ISO-UTC, echte Booleans, muster als Key-Liste ([] = alle; musterWahl bleibt UI-intern) */
 const akPayload = (a) => ({
   id: String(a.id || newAktionId()), name: String(a.name || '').trim().slice(0, 60), prozent: Math.round(Number(a.prozent)),
-  start: a.start, ende: a.ende, produkte: AK_PRODUKTE[a.produkte] ? a.produkte : 'alle',
+  start: a.start, ende: a.ende, produkte: AK_PRODUKTE[a.produkte] ? a.produkte : 'alle', muster: akMusterNorm(a.muster),
   mengenrabatt: !!a.mengenrabatt, hinweis: String(a.hinweis || '').trim().slice(0, 120), aktiv: !!a.aktiv,
 });
 async function saveSettings() {
@@ -1381,8 +1504,9 @@ async function saveSettings() {
     if (patch.adminKey) { localStorage.setItem('ovju-admin-key', patch.adminKey); $('#s-adminkey').value = ''; }
     DATA.settings = { ...DATA.settings, ...patch, colors: structuredClone(colors), coupons: structuredClone(coupons), aktionen: structuredClone(aktionen) };
     setDirty(false);
-    const run = akWinner(aktionen);
-    toast(run ? `Einstellungen gespeichert — Aktion „${run.name}“ (−${run.prozent} %) läuft jetzt im Shop` : 'Einstellungen gespeichert — wirken sofort im Shop', 'ok');
+    const run = akLaufende(aktionen);
+    toast(run.length > 1 ? `Einstellungen gespeichert — ${run.length} Aktionen laufen jetzt im Shop (${run.map((a) => `„${a.name}“ −${a.prozent} % ${aktionScopeLabel(a)}`).join(', ')})`
+      : run.length ? `Einstellungen gespeichert — Aktion „${run[0].name}“ (−${run[0].prozent} % ${aktionScopeLabel(run[0])}) läuft jetzt im Shop` : 'Einstellungen gespeichert — wirken sofort im Shop', 'ok');
     renderDashAktion();
     if (PANE === 'colors') renderColors();
     if (PANE === 'aktionen') aktionen.forEach((_, i) => akRefresh(i));

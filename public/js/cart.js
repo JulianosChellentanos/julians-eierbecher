@@ -7,7 +7,7 @@ import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
 import {
   setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
   volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp, linePrice,
-  aktionFor, onAktionEnde,
+  aktionFor, aktionScopeLabel, onAktionEnde,
 } from './pricing.js';
 
 export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp };
@@ -41,23 +41,32 @@ function saveCart() {
   localStorage.setItem(LS_KEY, JSON.stringify(cart));
   renderBadge();
 }
-/** Summen — subtotal aus den (ggf. aktionsreduzierten) Zeilen; aktion = { name, prozent, ersparnis } wenn eine Zeile betroffen ist */
+/**
+ * Summen — subtotal aus den (ggf. aktionsreduzierten) Zeilen; aktionen = je Aktion, die mindestens eine Zeile betrifft,
+ * { id, name, prozent, scope, ersparnis } (Ersparnis absteigend — wie order.aktionen auf dem Server); aktion = aktionen[0] | null
+ */
 function totals() {
   const lines = cart.map((it) => linePrice(it));
   const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
   const ship = pricing().shipping;
   const shipping = cart.length === 0 ? 0 : (subtotal >= ship.freeFrom ? 0 : ship.flat);
-  const hit = lines.find((l) => l.aktionProzent > 0);
-  const aktion = hit ? {
-    name: hit.aktionName, prozent: hit.aktionProzent,
-    ersparnis: Math.round(lines.reduce((s, l) => s + l.ersparnis, 0) * 100) / 100,
-  } : null;
-  return { subtotal, shipping, total: Math.round((subtotal + shipping) * 100) / 100, aktion };
+  const byId = new Map();
+  cart.forEach((it, i) => {
+    const l = lines[i];
+    if (!(l.aktionProzent > 0)) return;
+    const key = l.aktionId || l.aktionName;
+    const a = byId.get(key) || { id: l.aktionId, name: l.aktionName, prozent: l.aktionProzent, scope: aktionScopeLabel(aktionFor(it.product, it.config?.pattern)), ersparnis: 0 };
+    a.ersparnis = Math.round((a.ersparnis + l.ersparnis) * 100) / 100;
+    byId.set(key, a);
+  });
+  const aktionen = [...byId.values()].sort((x, y) => y.ersparnis - x.ersparnis);
+  return { subtotal, shipping, total: Math.round((subtotal + shipping) * 100) / 100, aktionen, aktion: aktionen[0] || null };
 }
-/** Zeile „🔥 Herbstaktion −16 %: du sparst 3,98 €“ für Warenkorb & Kasse (informativ — die Summen sind schon reduziert) */
+/** Zeilen „🔥 Herbstaktion −30 % auf Gehämmert · du sparst 3,98 €“ je betroffener Aktion für Warenkorb & Kasse
+ *  (informativ — die Summen sind schon reduziert) */
 function aktionRowHTML(t, cls) {
-  if (!t.aktion || !(t.aktion.ersparnis > 0)) return '';
-  return `<div class="${cls}"><span>🔥 ${esc(t.aktion.name)} −${t.aktion.prozent} %</span><b>du sparst ${fmt(t.aktion.ersparnis)}</b></div>`;
+  return (t.aktionen || []).filter((a) => a.ersparnis > 0).map((a) =>
+    `<div class="${cls}"><span>🔥 ${esc(a.name)} −${a.prozent} % ${esc(a.scope)}</span><b>du sparst ${fmt(a.ersparnis)}</b></div>`).join('');
 }
 
 export function itemTitle(it) {
@@ -150,7 +159,7 @@ function renderCart() {
     box.innerHTML = cart.map((it, i) => {
       const lp = linePrice(it);
       const { off, line } = lp;
-      const akt = lp.aktionProzent > 0 ? aktionFor(it.product) : null;
+      const akt = lp.aktionProzent > 0 ? aktionFor(it.product, it.config?.pattern) : null;
       // Staffel-Hinweis nur, wenn der Mengenrabatt gerade auch gilt (während einer Aktion ohne „zusätzlich“ entfällt er)
       const nextTier = akt && !akt.mengenrabatt ? null : (pricing().products[it.product].discounts || []).find((t) => t.qty > it.qty);
       return `<div class="cart-item">

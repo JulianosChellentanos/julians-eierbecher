@@ -66,6 +66,24 @@ function sampleAktion() {
   Object.assign(o, { subtotal: 54.2, shipping: 0, total: 54.2 });
   return o;
 }
+/**
+ * Bestellung mit zwei gleichzeitig laufenden Aktionen: „Gehämmert-Woche“ −30 % nur auf Gehämmert (Vase) und
+ * „Herbst“ −10 % auf alles (Eierbecher, Mengenrabatt entfällt) — order.aktionen mit Geltungsbereich, aktionName je Zeile
+ */
+function sampleAktionen() {
+  const o = sampleOrder({
+    coupon: null,
+    aktionen: [
+      { id: 'ak-a', name: 'Gehämmert-Woche', prozent: 30, ersparnis: 7.47, produkte: 'alle', muster: ['gehaemmert'] },
+      { id: 'ak-b', name: 'Herbst', prozent: 10, ersparnis: 3.96, produkte: 'alle', muster: [] },
+    ],
+    aktion: { id: 'ak-a', name: 'Gehämmert-Woche', prozent: 30, ersparnis: 7.47 },
+  });
+  o.lines[0] = { ...o.lines[0], unit: 17.43, off: 0, line: 17.43, uvp: 24.9, aktionProzent: 30, aktionBetrag: 7.47, aktionName: 'Gehämmert-Woche', aktionId: 'ak-a', parts: { grund: 24.9 } };
+  o.lines[1] = { ...o.lines[1], unit: 8.91, off: 0, line: 35.64, uvp: 9.9, aktionProzent: 10, aktionBetrag: 0.99, aktionName: 'Herbst', aktionId: 'ak-b', saucer: false, parts: { grund: 9.9 } };
+  Object.assign(o, { subtotal: 53.07, shipping: 0, total: 53.07 });
+  return o;
+}
 /** Bestellung mit Reklamation (Standard: Gutschein, Rücksendung erwartet) — over überschreibt Felder der Reklamation */
 function sampleRekla(over = {}, orderOver = {}) {
   return sampleOrder({
@@ -583,7 +601,17 @@ async function smoke() {
     // Aktion: UVP-Zeile je Position + Ersparnis unter den Summen; Bestellungen ohne die Felder bleiben unverändert
     const ba = T.orderConfirmation({ order: sampleAktion(), settings, baseUrl });
     check(/UVP 24,90 € · Aktion −16 %/.test(nb(ba.text)) && /UVP 9,90 € · Aktion −16 %/.test(nb(ba.text)) && /1 × 20,92 €/.test(nb(ba.text)) && /Aktion „Sommer-Sale“ −16 %: Ersparnis −10,32 €/.test(nb(ba.text)) && ba.html.includes('UVP 24,90') && ba.html.includes('Ersparnis') && !/Mengenrabatt/.test(ba.text), 'Bestätigung mit Aktion: UVP-Zeile, reduzierter Einzelpreis, Ersparnis-Zeile, kein Mengenrabatt');
-    check(!/Aktion|UVP|Ersparnis/.test(b.text) && !/Ersparnis/.test(b.html) && T.aktionText({ unit: 9.9 }, settings) === '' && T.aktionSummary({ aktion: null }, settings) === null, 'Ohne Aktion: keine UVP-/Ersparnis-Zeilen (alte Bestellungen unverändert)');
+    check(!/Aktion|UVP|Ersparnis/.test(b.text) && !/Ersparnis/.test(b.html) && T.aktionText({ unit: 9.9 }, settings) === '' && T.aktionSummary({ aktion: null }, settings).length === 0, 'Ohne Aktion: keine UVP-/Ersparnis-Zeilen (alte Bestellungen unverändert)');
+    // Zwei Aktionen gleichzeitig (Oberflächen-Aktion + Aktion auf alles): Name je Zeile, je Aktion eine Ersparnis-Zeile mit Geltungsbereich
+    const bb = T.orderConfirmation({ order: sampleAktionen(), settings, baseUrl });
+    check(/UVP 24,90 € · Aktion −30 % \(Gehämmert-Woche\)/.test(nb(bb.text)) && /UVP 9,90 € · Aktion −10 % \(Herbst\)/.test(nb(bb.text)) && /1 × 17,43 €/.test(nb(bb.text)) && /4 × 8,91 €/.test(nb(bb.text)) &&
+      /Aktion „Gehämmert-Woche“ −30 % auf Gehämmert: Ersparnis −7,47 €/.test(nb(bb.text)) && /Aktion „Herbst“ −10 % auf alles: Ersparnis −3,96 €/.test(nb(bb.text)) &&
+      (bb.html.match(/: Ersparnis/g) || []).length === 2 && bb.html.includes('(Gehämmert-Woche)') && !/Mengenrabatt/.test(bb.text), 'Bestätigung mit zwei Aktionen: Aktionsname je Zeile, zwei Ersparnis-Zeilen mit Geltungsbereich');
+    check(T.aktionScopeLabel(null) === 'auf alles' && T.aktionScopeLabel({ produkte: 'alle', muster: [] }) === 'auf alles' && T.aktionScopeLabel({ produkte: 'vase' }) === 'auf Vasen' &&
+      T.aktionScopeLabel({ produkte: 'alle', muster: ['gehaemmert'] }) === 'auf Gehämmert' && T.aktionScopeLabel({ produkte: 'vase', muster: ['gehaemmert'] }) === 'auf Vasen mit Gehämmert' &&
+      T.aktionScopeLabel({ produkte: 'alle', muster: ['rippen', 'wellen', 'lamellen'] }) === 'auf Rippen, Wellen und Lamellen' && T.aktionScopeLabel({ produkte: 'eierbecher', muster: ['rippen', 'wellen'] }) === 'auf Eierbecher mit Rippen oder Wellen' &&
+      T.aktionScopeLabel({ produkte: 'alle', muster: ['glatt', 'rippen', 'wellen', 'lamellen'] }) === 'auf 4 Oberflächen' && T.aktionScopeLabel({ produkte: 'alle', muster: ['glatt', 'rippen', 'wellen', 'lamellen', 'zickzack', 'querwellen', 'gehaemmert', 'skelett', 'koralle'] }) === 'auf alles' &&
+      T.orderAktionen({ aktion: { id: 'x', name: 'Alt', prozent: 16, ersparnis: 1 } }).length === 1 && T.orderAktionen({}).length === 0, 'aktionScopeLabel()/orderAktionen(): Geltungsbereich-Texte, Rückfall auf order.aktion');
     // Vorlage durch den Encoder: Zeilenlänge bleibt unter 998, Dekodierung identisch
     const built = buildMessage({ from: 'shop@example.com', to: 'mia@example.com', subject: b.subject, text: b.text, html: b.html });
     check(built.raw.split('\r\n').every((l) => l.length <= 998), 'Bestätigungs-HTML kodiert: alle Zeilen ≤ 998');
@@ -608,6 +636,7 @@ function render() {
     'bestaetigung-vorkasse': T.orderConfirmation({ order, settings, baseUrl }),
     'bestaetigung-paypal': T.orderConfirmation({ order: sampleOrder({ payment: 'paypal', paymentStatus: 'bezahlt' }), settings, baseUrl }),
     'bestaetigung-aktion': T.orderConfirmation({ order: sampleAktion(), settings, baseUrl }),
+    'bestaetigung-aktionen': T.orderConfirmation({ order: sampleAktionen(), settings, baseUrl }),
     willkommen: T.welcome({ user: { name: 'Mia Müller', email: 'mia@example.com' }, settings, baseUrl }),
     'passwort-vergessen': T.passwordReset({ user: { name: 'Mia Müller', email: 'mia@example.com' }, link: `${baseUrl}/?reset=abc123def456`, settings }),
     'admin-neue-bestellung': T.adminNewOrder({ order, settings, baseUrl }),

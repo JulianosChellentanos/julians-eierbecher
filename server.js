@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
-  reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS } from './lib/mail-templates.js';
+  aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS } from './lib/mail-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -73,10 +73,12 @@ function sanitizeMuster(m) {
 // ---------------------------------------------------------------------------
 // Aktionen (settings.aktionen): zeitlich begrenzte Prozent-Rabatte auf den Stückpreis (UVP → Aktionspreis).
 //   { id 'ak-…', name ≤ 60, prozent 1–90 (ganz), start/ende ISO-UTC (ende > start), produkte 'alle'|'eierbecher'|'vase',
+//     muster [Muster-Keys] (leer = alle Oberflächen; „nur Gehämmert“ = ['gehaemmert']),
 //     mengenrabatt (true = Mengenrabatt zusätzlich, false = entfällt während der Aktion), hinweis ≤ 120, aktiv }
-//   Ausgewertet wird ausschließlich zur Laufzeit (kein Cron): aktiveAktion(now) = aktiv && start ≤ now < ende,
-//   bei mehreren gewinnt der höchste Prozentsatz. Der Client rechnet dieselbe Formel (pricing.js), der Server
-//   ist beim Checkout die Wahrheit.
+//   Ausgewertet wird ausschließlich zur Laufzeit (kein Cron): aktiveAktionen(now) = alle mit aktiv && start ≤ now < ende,
+//   sortiert nach Prozent absteigend (Gleichstand: engerer Geltungsbereich zuerst, dann frühere Startzeit). Mehrere Aktionen
+//   dürfen gleichzeitig laufen; je Position gilt die erste passende (aktionFuer: Produkt + Oberfläche, fehlendes Muster = glatt).
+//   Der Client rechnet dieselbe Formel (pricing.js), der Server ist beim Checkout die Wahrheit.
 // ---------------------------------------------------------------------------
 const AKTION_PRODUKTE = ['alle', 'eierbecher', 'vase'];
 const newAktionId = () => `ak-${Date.now().toString(36)}${crypto.randomInt(1296).toString(36).padStart(2, '0')}`;
@@ -85,6 +87,15 @@ function isoDate(v) {
   if (v === undefined || v === null || v === '') return null;
   const t = typeof v === 'number' ? v : Date.parse(String(v));
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+/**
+ * Oberflächen einer Aktion: nur bekannte Muster-Keys, ohne Duplikate, in der Reihenfolge von MUSTER_KEYS.
+ * Leer = alle Oberflächen; sind alle neun gewählt, wird ebenfalls [] gespeichert. Ein einzelner String zählt als ein Key.
+ */
+function sanitizeAktionMuster(v) {
+  const raw = Array.isArray(v) ? v : (typeof v === 'string' && v.trim() ? v.split(',') : []);
+  const set = new Set(raw.map((k) => String(k ?? '').trim()).filter((k) => MUSTER_KEYS.includes(k)));
+  return set.size >= MUSTER_KEYS.length ? [] : MUSTER_KEYS.filter((k) => set.has(k));
 }
 /** Eine Aktion prüfen und normalisieren (unbekannte Felder fallen weg) — wirft httpError(400) mit lesbarer Meldung */
 function sanitizeAktion(a, i = 0) {
@@ -100,7 +111,7 @@ function sanitizeAktion(a, i = 0) {
   const produkte = a.produkte === undefined || a.produkte === null || a.produkte === '' ? 'alle' : a.produkte;
   if (!AKTION_PRODUKTE.includes(produkte)) throw httpError(400, `Aktion „${name}“: Produkte muss „alle“, „eierbecher“ oder „vase“ sein`);
   const id = /^[A-Za-z0-9_-]{1,40}$/.test(String(a.id ?? '')) ? String(a.id) : newAktionId();
-  return { id, name, prozent, start, ende, produkte, mengenrabatt: !!a.mengenrabatt, hinweis: clipText(a.hinweis, 120), aktiv: !!a.aktiv };
+  return { id, name, prozent, start, ende, produkte, muster: sanitizeAktionMuster(a.muster), mengenrabatt: !!a.mengenrabatt, hinweis: clipText(a.hinweis, 120), aktiv: !!a.aktiv };
 }
 /** Liste sanieren: streng (400 beim ersten Fehler — Admin-Patch) oder nachsichtig (kaputte Einträge verwerfen — beim Laden) */
 function sanitizeAktionen(list, { lenient = false } = {}) {
@@ -116,18 +127,29 @@ function sanitizeAktionen(list, { lenient = false } = {}) {
   });
   return out;
 }
-/** Die gerade laufende Aktion (aktiv && start ≤ now < ende); bei mehreren die mit dem höchsten Prozentsatz, sonst null */
-function aktiveAktion(now = Date.now()) {
-  let best = null;
-  for (const a of settings.aktionen || []) {
-    if (!a?.aktiv) continue;
-    if (!(Date.parse(a.start) <= now && now < Date.parse(a.ende))) continue;
-    if (!best || a.prozent > best.prozent) best = a;
-  }
-  return best;
+/** Größe des Geltungsbereichs (Produkte × Oberflächen) — kleiner = enger; entscheidet die Reihenfolge bei gleichem Prozentsatz */
+const aktionScopeSize = (a) => (a.produkte === 'alle' ? 2 : 1) * (a.muster?.length ? a.muster.length : MUSTER_KEYS.length);
+/**
+ * Alle gerade laufenden Aktionen (aktiv && start ≤ now < ende), sortiert nach Prozent absteigend —
+ * bei Gleichstand engerer Geltungsbereich zuerst, dann frühere Startzeit. Für eine Position gilt die erste passende (aktionFuer).
+ */
+function aktiveAktionen(now = Date.now()) {
+  return (settings.aktionen || [])
+    .filter((a) => a?.aktiv && Date.parse(a.start) <= now && now < Date.parse(a.ende))
+    .sort((x, y) => y.prozent - x.prozent || aktionScopeSize(x) - aktionScopeSize(y) || Date.parse(x.start) - Date.parse(y.start));
+}
+/** Die primäre laufende Aktion (erste der Liste), sonst null — für Übersicht und Kompatibilität (aktion-Feld) */
+const aktiveAktion = (now = Date.now()) => aktiveAktionen(now)[0] || null;
+/**
+ * Erste Aktion der Liste, die für eine Position gilt: Produkt passt (produkte 'alle' oder genau item.product) und die
+ * Oberfläche passt (muster leer = alle, sonst muss config.pattern enthalten sein; fehlendes Muster zählt als 'glatt'). Sonst null.
+ */
+function aktionFuer(item, liste = aktiveAktionen()) {
+  const pattern = item?.config?.pattern || 'glatt';
+  return liste.find((a) => (a.produkte === 'alle' || a.produkte === item?.product) && (!a.muster?.length || a.muster.includes(pattern))) || null;
 }
 /** Öffentliche Sicht für Shop & Countdown (/api/pricing) — ohne aktiv-Flag */
-const publicAktion = (a) => (a ? { id: a.id, name: a.name, prozent: a.prozent, start: a.start, ende: a.ende, produkte: a.produkte, mengenrabatt: !!a.mengenrabatt, hinweis: a.hinweis || '' } : null);
+const publicAktion = (a) => (a ? { id: a.id, name: a.name, prozent: a.prozent, start: a.start, ende: a.ende, produkte: a.produkte, muster: Array.isArray(a.muster) ? a.muster : [], mengenrabatt: !!a.mengenrabatt, hinweis: a.hinweis || '' } : null);
 const DEFAULT_SETTINGS = {
   adminKey: 'ovju-admin',
   invoicePrefix: 'RE-2026-',
@@ -164,7 +186,7 @@ const DEFAULT_SETTINGS = {
   paypal: { enabled: false, sandbox: true, clientId: '', secret: '' },
   colors: null,   // wird beim ersten Start aus content.json übernommen
   coupons: [],    // [{ code, type: 'percent'|'fixed', value, minOrder, active, note?, mitAktion }] — mitAktion: mit laufender Aktion kombinierbar
-  // Aktionen (zeitlich begrenzte Prozent-Rabatte): [{ id, name, prozent, start, ende, produkte, mengenrabatt, hinweis, aktiv }] — siehe sanitizeAktion()
+  // Aktionen (zeitlich begrenzte Prozent-Rabatte): [{ id, name, prozent, start, ende, produkte, muster, mengenrabatt, hinweis, aktiv }] — siehe sanitizeAktion()
   aktionen: [],
   // Druck-Schätzwerte je Stück bei Normalhöhe (Admin: Warteschlange, Filamentbedarf);
   // Skalierung ≈ (Höhe/Normalhöhe)^1.5
@@ -582,12 +604,13 @@ function colorOfItem(item) {
 }
 /**
  * Stückpreis: uvp = Grundpreis + Untersetzer + Gravur + Farbschrift + Muster-Aufpreis + Farbaufpreis + Größe;
- * unit = uvp abzüglich Aktionsprozent (wenn die Aktion für das Produkt gilt); dieselbe Formel rechnet der Client
+ * unit = uvp abzüglich Aktionsprozent (wenn eine Aktion für Produkt + Oberfläche gilt); dieselbe Formel rechnet der Client
  * in pricing.js (unitParts/unitPrice). parts = Aufschlüsselung in € (0 = nicht zutreffend).
  * Während einer Aktion ohne „mengenrabatt“ entfällt der Mengenrabatt (off = 0).
- * aktion = Ergebnis von aktiveAktion() (computeTotals wertet sie einmal je Anfrage aus, damit alle Zeilen denselben Stand sehen).
+ * aktionen = Ergebnis von aktiveAktionen() (computeTotals wertet sie einmal je Anfrage aus, damit alle Zeilen denselben Stand sehen);
+ * für die Zeile gilt die erste passende (aktionFuer) — aktionName/aktionId nennen sie, null ohne Aktion.
  */
-function priceItem(item, aktion = aktiveAktion()) {
+function priceItem(item, aktionen = aktiveAktionen()) {
   const p = settings.pricing[item.product];
   if (!p) throw new Error('Unbekanntes Produkt');
   const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
@@ -604,9 +627,9 @@ function priceItem(item, aktion = aktiveAktion()) {
     groesse: volumeSurcharge(item.product, c, p.single),
   };
   const uvp = Math.round(Object.values(parts).reduce((s, v) => s + v, 0) * 100) / 100;
-  // Aktion gilt für die Zeile, wenn sie für alle Produkte oder genau dieses Produkt angelegt ist
-  const gilt = !!aktion && (aktion.produkte === 'alle' || aktion.produkte === item.product);
-  const aktionProzent = gilt ? aktion.prozent : 0;
+  // Erste laufende Aktion, die für Produkt und Oberfläche dieser Zeile gilt (null = voller Preis)
+  const aktion = aktionFuer(item, aktionen);
+  const aktionProzent = aktion ? aktion.prozent : 0;
   const unit = Math.round(uvp * (1 - aktionProzent / 100) * 100) / 100;
   const aktionBetrag = Math.round((uvp - unit) * 100) / 100;
   const off = aktionProzent > 0 && !aktion.mengenrabatt ? 0 : discountFor(item.product, qty);
@@ -614,20 +637,26 @@ function priceItem(item, aktion = aktiveAktion()) {
   const line = Math.round(lineFull * (1 - off / 100) * 100) / 100;
   // color = aufgelöste Farb-ID (Fallback über den Namen), sonst die vom Client gesendete ID
   const color = col?.id || (typeof item.color === 'string' ? item.color.slice(0, 40) : null);
-  return { qty, unit, off, lineFull: Math.round(lineFull * 100) / 100, line, parts, color, uvp, aktionProzent, aktionBetrag, aktionName: gilt ? aktion.name : null };
+  return { qty, unit, off, lineFull: Math.round(lineFull * 100) / 100, line, parts, color, uvp, aktionProzent, aktionBetrag, aktionName: aktion ? aktion.name : null, aktionId: aktion ? aktion.id : null };
 }
 /**
  * Summen einer Bestellung: Zeilen (priceItem), Zwischensumme, Gutschein, Versand, Gesamt.
- * aktion = { id, name, prozent, ersparnis } wenn mindestens eine Zeile reduziert wurde, sonst null (Ersparnis = Σ aktionBetrag·qty, informativ).
- * Gutschein während einer Aktion: nur mit coupon.mitAktion — sonst coupon null und couponError mit lesbarer Meldung;
- * ungültiger Code / Mindestbestellwert nicht erreicht → coupon null ohne couponError (Meldung wie bisher im Client).
+ * aktionen = [{ id, name, prozent, ersparnis, produkte, muster }] für jede Aktion, die mindestens eine Zeile reduziert hat
+ * (Ersparnis = Σ aktionBetrag·qty dieser Aktion, informativ), sortiert nach Ersparnis absteigend; aktion = aktionen[0] || null.
+ * Gutschein während einer Aktion: nur mit coupon.mitAktion — sonst coupon null und couponError mit lesbarer Meldung
+ * (genannt wird die Aktion mit der größten Ersparnis); ungültiger Code / Mindestbestellwert nicht erreicht → coupon null
+ * ohne couponError (Meldung wie bisher im Client).
  */
 function computeTotals(items, couponCode) {
-  const ak = aktiveAktion();
-  const lines = items.map((it) => ({ ...it, ...priceItem(it, ak) }));
+  const aks = aktiveAktionen();
+  const lines = items.map((it) => ({ ...it, ...priceItem(it, aks) }));
   const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
-  const ersparnis = Math.round(lines.reduce((s, l) => s + (l.aktionProzent > 0 ? l.aktionBetrag * l.qty : 0), 0) * 100) / 100;
-  const aktion = ak && lines.some((l) => l.aktionProzent > 0) ? { id: ak.id, name: ak.name, prozent: ak.prozent, ersparnis } : null;
+  const ersparnisJe = new Map();   // Aktions-ID → Σ aktionBetrag·qty
+  for (const l of lines) if (l.aktionProzent > 0 && l.aktionId) ersparnisJe.set(l.aktionId, (ersparnisJe.get(l.aktionId) || 0) + l.aktionBetrag * l.qty);
+  const aktionen = aks.filter((a) => ersparnisJe.has(a.id))
+    .map((a) => ({ id: a.id, name: a.name, prozent: a.prozent, ersparnis: Math.round(ersparnisJe.get(a.id) * 100) / 100, produkte: a.produkte, muster: a.muster || [] }))
+    .sort((x, y) => y.ersparnis - x.ersparnis);
+  const aktion = aktionen[0] || null;
   // Gutschein
   let coupon = null;
   let couponError = null;
@@ -647,7 +676,7 @@ function computeTotals(items, couponCode) {
   const ship = settings.pricing.shipping;
   const shipping = items.length === 0 ? 0 : (afterCoupon >= ship.freeFrom ? 0 : ship.flat);
   const total = Math.round((afterCoupon + shipping) * 100) / 100;
-  return { lines, subtotal, coupon, couponError, shipping, total, aktion };
+  return { lines, subtotal, coupon, couponError, shipping, total, aktion, aktionen };
 }
 function money(v) {
   return v.toLocaleString('de-DE', { style: 'currency', currency: settings.pricing.currency });
@@ -736,6 +765,7 @@ function normalizeOrder(order) {
   if (!order.mailsSent || typeof order.mailsSent !== 'object') order.mailsSent = {};   // { bestaetigung|Status|reklamation:<Phase>: ISO }
   if (!order.reklamation || typeof order.reklamation !== 'object') order.reklamation = null;   // Reklamation/Rückversand/Gutschrift
   if (!order.aktion || typeof order.aktion !== 'object') order.aktion = null;   // { id, name, prozent, ersparnis } — Bestellungen vor den Aktionen: null
+  if (!Array.isArray(order.aktionen)) order.aktionen = [];   // alle betroffenen Aktionen (Format wie aktion + produkte/muster) — ältere Bestellungen: [] (orderAktionen() fällt auf aktion zurück)
   if (!Array.isArray(order.history)) {
     order.history = [{ at: order.createdAt, status: 'neu', note: 'Bestellung eingegangen', by: 'system' }];
     if (order.payment === 'paypal' && order.paymentStatus === 'bezahlt') {
@@ -777,7 +807,7 @@ async function writeOrder(order) {
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-/** Bezeichnung einer Position (Rechnung, CSV); mitAktion: „Aktion −16 % (UVP 24,90 €)“ anhängen — die Rechnung zeigt das als eigene Zeile */
+/** Bezeichnung einer Position (Rechnung, CSV); mitAktion: „Aktion „Name“ −16 % (UVP 24,90 €)“ anhängen — die Rechnung zeigt das als eigene Zeile */
 function itemLabel(it, { mitAktion = false } = {}) {
   const c = it.config || {};
   const sur = surchargeList(it).filter((x) => x.key !== 'gravur').map((x) => x.label);
@@ -790,7 +820,7 @@ function itemLabel(it, { mitAktion = false } = {}) {
     (it.code ? ` · Design-Code ${it.code}` : '') +
     // Aufpreise (Muster/Farbschrift/Farbe) nur wenn > 0 — Gravur/Untersetzer stehen schon im Label
     (sur.length ? ` · Aufpreis ${sur.join('/')}` : '') +
-    (mitAktion && it.aktionProzent > 0 ? ` · Aktion −${it.aktionProzent} % (UVP ${money(it.uvp)})` : '');
+    (mitAktion && it.aktionProzent > 0 ? ` · Aktion${it.aktionName ? ` „${it.aktionName}“` : ''} −${it.aktionProzent} % (UVP ${money(it.uvp)})` : '');
 }
 
 // Anzeigenamen für Druckzettel & Admin (Spiegel der Client-Labels)
@@ -897,7 +927,7 @@ function invoiceHTML(order) {
     : `Bitte überweise den Gesamtbetrag innerhalb von 14 Tagen unter Angabe der Rechnungsnummer:<br>
        <b>${esc(co.iban)}</b>${co.bic ? ` · BIC: ${esc(co.bic)}` : ''}${co.bank ? ` · ${esc(co.bank)}` : ''}`;
   // Aufpreis-Zeile (aus l.parts; ältere Bestellungen ohne parts zeigen keine) — Untersetzer/Größe stecken wie bisher im Einzelpreis;
-  // Aktionszeile „UVP 24,90 € · Aktion −16 %“ (Einzelpreis = reduzierter Preis) nur bei Zeilen mit aktionProzent > 0
+  // Aktionszeile „UVP 24,90 € · Aktion −16 % (Name)“ (Einzelpreis = reduzierter Preis) nur bei Zeilen mit aktionProzent > 0
   const rows = order.lines.map((l) => {
     const sur = surchargeText(l, settings);
     const ak = aktionText(l, settings);
@@ -906,9 +936,10 @@ function invoiceHTML(order) {
     <tr><td>${esc(itemLabel(l))}${notes}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
     <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`;
   }).join('');
-  // Ersparnis durch die Aktion — informativ unter den Summen (die Summen entstehen wie bisher aus den reduzierten Zeilen)
-  const aktionRow = order.aktion && euro(order.aktion.ersparnis) > 0
-    ? `<tr class="tot muted"><td>🔥 Aktion „${esc(order.aktion.name)}“ −${esc(order.aktion.prozent)} %: Ersparnis</td><td class="r">−${money(euro(order.aktion.ersparnis))}</td></tr>` : '';
+  // Ersparnis je betroffener Aktion („Aktion „Name“ −30 % auf Gehämmert: Ersparnis“) — informativ unter den Summen
+  // (die Summen entstehen wie bisher aus den reduzierten Zeilen); ältere Bestellungen mit nur order.aktion: eine Zeile
+  const aktionRow = aktionSummary(order, settings)
+    .map((a) => `<tr class="tot muted"><td>${esc(a.label)}</td><td class="r">${esc(a.value)}</td></tr>`).join('');
   return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Rechnung ${esc(order.invoiceNo)}</title>
   <style>
     body{font-family:system-ui;color:#1d1a16;max-width:800px;margin:40px auto;padding:0 24px;font-size:14px;line-height:1.5}
@@ -1183,13 +1214,15 @@ async function handleCheckout(req, res) {
     lines: totals.lines.map((l, i) => ({
       product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
       color: l.color, colorName: l.colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
-      // Aktion: UVP (Preis vor der Aktion), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war
-      uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag,
+      // Aktion: UVP (Preis vor der Aktion), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
+      // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
+      uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName ?? null, aktionId: l.aktionId ?? null,
       // Farbschrift (zweites Filament) kommt als 3MF mit zwei Teilen, sonst STL
       stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
     subtotal: totals.subtotal, coupon: totals.coupon, shipping: totals.shipping, total: totals.total,
-    aktion: totals.aktion,   // { id, name, prozent, ersparnis } | null
+    aktionen: totals.aktionen,   // [{ id, name, prozent, ersparnis, produkte, muster }] je betroffener Aktion (nach Ersparnis absteigend)
+    aktion: totals.aktion,       // aktionen[0] | null (Kompatibilität)
     invoiceNo: null, filesComplete: false,
     trackingNo: '', adminNote: '',
   };
@@ -1273,7 +1306,9 @@ const server = http.createServer(async (req, res) => {
         volumen: pr.volumen,
         normalHeight: NORMAL_HEIGHT,
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
-        // laufende Aktion (null = keine) + Serverzeit für den Countdown im Shop (Client rechnet den Zeitversatz heraus)
+        // laufende Aktionen (nach Prozent absteigend; leer = keine), aktion = primäre (Kompatibilität)
+        // + Serverzeit für den Countdown im Shop (Client rechnet den Zeitversatz heraus)
+        aktionen: aktiveAktionen().map(publicAktion),
         aktion: publicAktion(aktiveAktion()),
         serverNow: new Date().toISOString(),
       });
@@ -1482,10 +1517,11 @@ const server = http.createServer(async (req, res) => {
       const t = computeTotals(items || [], couponCode);
       return send(res, 200, {
         ok: true,
-        lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line, parts: l.parts, color: l.color, uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName })),
+        lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line, parts: l.parts, color: l.color, uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName, aktionId: l.aktionId })),
         subtotal: t.subtotal, coupon: t.coupon, couponValid: couponCode ? !!t.coupon : null,
-        couponError: t.couponError,   // nur gesetzt, wenn der Gutschein wegen der Aktion abgelehnt wurde
-        aktion: t.aktion,             // { id, name, prozent, ersparnis } | null
+        couponError: t.couponError,   // nur gesetzt, wenn der Gutschein wegen einer Aktion abgelehnt wurde
+        aktionen: t.aktionen,         // [{ id, name, prozent, ersparnis, produkte, muster }] je Aktion mit betroffener Zeile (Ersparnis absteigend)
+        aktion: t.aktion,             // aktionen[0] | null
         shipping: t.shipping, total: t.total,
       });
     }
@@ -1538,7 +1574,7 @@ const server = http.createServer(async (req, res) => {
         statuses: STATUSES, statusLabels: STATUS_LABELS, carriers: CARRIER_LABELS, normalHeight: NORMAL_HEIGHT,
         mailStatuses: Object.keys(STATUS_MAIL),   // Status mit Mail-Vorlage (Admin blendet Status-Mail-Knöpfe danach ein)
         reklaStatus: REKLA_STATUS, reklaArt: REKLA_ART, reklaPhases: REKLA_PHASES,
-        aktion: publicAktion(aktiveAktion()), serverNow: new Date().toISOString(),   // Übersicht: „Aktion läuft …“ + Countdown
+        aktionen: aktiveAktionen().map(publicAktion), aktion: publicAktion(aktiveAktion()), serverNow: new Date().toISOString(),   // Übersicht: alle laufenden Aktionen + Countdown
         // erledigte Erstattungen/Gutschriften (kein Nachdruck) — Umsatz-KPIs ziehen sie ab
         kpi: { erstattet: Math.round(orders.reduce((s, o) => s + refundAmount(o), 0) * 100) / 100, erstattungen: orders.filter((o) => refundAmount(o) > 0).length },
         info: { node: process.version, uptime: Math.round(process.uptime()), startedAt: SERVER_STARTED },
@@ -1837,7 +1873,8 @@ const server = http.createServer(async (req, res) => {
           csvEsc(o.customer?.city || ''),
           csvEsc((o.lines || []).map((l) => `${l.qty}x ${itemLabel(l, { mitAktion: true })}`).join(' | ')),
           csvEsc(o.coupon ? o.coupon.code : ''),
-          csvEsc(o.aktion ? `${o.aktion.name} / −${o.aktion.prozent} % / ${euro(o.aktion.ersparnis).toFixed(2).replace('.', ',')}` : ''),
+          // alle betroffenen Aktionen: „Name / −30 % auf Gehämmert / 7,47 | Name2 / −10 % auf alles / 2,49“ (ältere Bestellungen: ohne Geltungsbereich)
+          csvEsc(orderAktionen(o).map((a) => `${a.name} / −${a.prozent} %${a.produkte !== undefined || a.muster !== undefined ? ` ${aktionScopeLabel(a)}` : ''} / ${euro(a.ersparnis).toFixed(2).replace('.', ',')}`).join(' | ')),
           csvEsc((o.total ?? 0).toFixed(2).replace('.', ',')), csvEsc(o.trackingNo || ''),
           csvEsc(CARRIER_LABELS[o.carrier] || ''),
           csvEsc(o.paidAt ? new Date(o.paidAt).toLocaleString('de-DE') : ''),

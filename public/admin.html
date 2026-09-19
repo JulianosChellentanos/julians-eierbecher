@@ -277,11 +277,27 @@
   .ak-err:empty { display: none; }
   .ak-foot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
   .ak-card input[type=datetime-local] { min-width: 190px; }
-  /* Übersicht: Zeile zur laufenden/geplanten Aktion */
+  /* Oberflächen je Aktion: Schalter „Alle Oberflächen“ + 9 Chips (Checkbox-Kacheln); solange „Alle“ gilt, sind alle Chips gedämpft markiert */
+  .ak-muster { margin-top: 14px; }
+  .ak-muster-head { display: flex; gap: 8px 16px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .ak-muster-head .lbl { display: flex; flex-direction: column; gap: 2px; font-size: .76rem; font-weight: 600; color: var(--ink-soft); letter-spacing: .01em; }
+  .ak-muster-head .lbl small { font-weight: 400; }
+  .ak-muster-head label.inline { margin-left: auto; }
+  .ak-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ak-mchip { display: inline-flex; flex-direction: row; align-items: center; gap: 0; border: 1.5px solid var(--line); border-radius: 99px; background: #fff; color: var(--ink-soft); padding: 5px 12px; font-size: .78rem; font-weight: 600; cursor: pointer; user-select: none; transition: background .15s, border-color .15s, color .15s; }
+  .ak-mchip input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
+  .ak-mchip:hover { background: var(--bg-soft); }
+  .ak-mchip.on { background: var(--accent); border-color: var(--accent); color: #fbf8f2; }
+  .ak-mchip.on::before { content: '✓ '; white-space: pre; }
+  .ak-muster.alle .ak-mchip.on { background: #fbe9e0; border-color: #e9b9a3; color: var(--accent-dark); }
+  .ak-mchip:has(input:focus-visible) { box-shadow: 0 0 0 3px rgba(200, 111, 74, .25); }
+  /* Übersicht: Zeile zu allen laufenden bzw. der nächsten geplanten Aktion */
   .dash-ak { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; background: #fbe9e0; border: 1px solid #e9b9a3; border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: .9rem; cursor: pointer; }
   .dash-ak:hover { background: #f8ded1; }
   .dash-ak.geplant { background: #e3ecf6; border-color: #b8cde6; } .dash-ak.geplant:hover { background: #d8e5f2; }
   .dash-ak b { font-family: var(--serif); }
+  .dash-ak .dash-ak-sep { color: #d09a80; font-weight: 300; }
+  .dash-ak .dash-ak-note { flex-basis: 100%; color: var(--accent-dark); font-size: .78rem; }
   /* Bestell-Drawer: Aktionszeile je Position, Badge je Bestellung, durchgestrichener UVP */
   .badge.ak { background: #fbe9e0; border-color: #e9b9a3; color: var(--accent-dark); }
   .lc-ak { color: var(--accent-dark); font-size: .78rem; margin-top: 3px; }
@@ -515,8 +531,8 @@
 
       <!-- 🔥 Aktionen -->
       <section id="pane-aktionen" class="pane" data-settings hidden>
-        <div class="pane-head"><div><h1>Aktionen</h1><p>Zeitlich begrenzter Prozent-Rabatt auf den Stückpreis — Banner, Streichpreise und Countdown erscheinen im Shop automatisch, sobald der Zeitraum läuft.</p></div><button class="ghost" onclick="addAktion()">+ Neue Aktion</button></div>
-        <div class="hint info" style="margin-bottom:14px">Laufen mehrere Aktionen gleichzeitig, gilt die mit dem höchsten Prozentsatz. Ohne „Mengenrabatt zusätzlich“ entfällt die Mengenstaffel während der Aktion. Gutscheine gelten während einer Aktion nur, wenn sie unter <a href="#pricing">Preise &amp; Gutscheine</a> als „mit Aktion kombinierbar“ markiert sind. Zeiten sind Ortszeit deines Rechners.</div>
+        <div class="pane-head"><div><h1>Aktionen</h1><p>Zeitlich begrenzter Prozent-Rabatt auf den Stückpreis — auf alles, ein Produkt oder nur bestimmte Oberflächen (z. B. „nur jetzt: Gehämmert −30 %“). Banner, Streichpreise, Muster-Badges und Countdown erscheinen im Shop automatisch, sobald der Zeitraum läuft.</p></div><button class="ghost" onclick="addAktion()">+ Neue Aktion</button></div>
+        <div class="hint info" style="margin-bottom:14px">Mehrere Aktionen dürfen gleichzeitig laufen (z. B. −30 % auf Gehämmert neben −10 % auf alles) — bei Überschneidung gilt je Konfiguration der höhere Rabatt; im Banner steht die höchste zuerst. Ohne „Mengenrabatt zusätzlich“ entfällt die Mengenstaffel für die betroffenen Positionen. Gutscheine gelten während einer Aktion nur, wenn sie unter <a href="#pricing">Preise &amp; Gutscheine</a> als „mit Aktion kombinierbar“ markiert sind. Zeiten sind Ortszeit deines Rechners.</div>
         <div id="aktionen-list"></div>
       </section>
 

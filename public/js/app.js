@@ -20,7 +20,7 @@ import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } fro
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
 import { activateTab, initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
-import { aktionFor, aktionText, aktionTextKurz, onAktionEnde } from './pricing.js';
+import { aktionFor, aktionMuster, musterListLabel, aktionText, aktionTextKurz, onAktionEnde } from './pricing.js';
 import { initAktionBar } from './aktion.js';
 
 // ---------------------------------------------------------------------------
@@ -108,12 +108,29 @@ async function loadContent() {
   setTextColor(state.textColor || 'tiefschwarz', true);
 }
 
-/** „ab 24,90 €“ — während einer Aktion Aktionspreis in Akzentfarbe + durchgestrichener UVP (gleiche Rechnung wie pricing.js) */
+/** „ab 24,90 €“ = günstigste Konfiguration (Muster „glatt“, keine Aufpreise) — gilt dafür eine Aktion: Aktionspreis in
+ *  Akzentfarbe + durchgestrichener UVP (gleiche Rechnung wie pricing.js); eine Aktion nur auf Gehämmert ändert das „ab“ nicht */
 function abPriceHTML(product) {
   const single = getPricing().products[product].single;
-  const a = aktionFor(product);
+  const a = aktionFor(product, 'glatt');
   if (!a) return `ab ${fmt(single)}`;
-  return `ab <span class="aktion-price">${fmt(unitPrice({ product, config: {} }))}</span> <s class="uvp">${fmt(single)}</s>`;
+  return `ab <span class="aktion-price">${fmt(unitPrice({ product, config: { pattern: 'glatt' } }))}</span> <s class="uvp">${fmt(single)}</s>`;
+}
+/**
+ * Bessere Aktion mit einem anderen Muster dieses Produkts (Punkt 8c): aktuelle Konfiguration nicht (oder geringer)
+ * rabattiert, aber eine laufende Aktion würde mit einem anderen Muster greifen → { aktion, pattern, keys } | null.
+ * pattern = erstes Muster (in Musterreihenfolge), mit dem genau diese Aktion gilt; keys = alle solchen Muster (für den Text).
+ */
+function aktionAlternative(product, pattern, currentProzent = 0) {
+  let best = null;
+  for (const key of Object.keys(PATTERNS)) {
+    if (key === pattern) continue;
+    const a = aktionFor(product, key);
+    if (!a || a.prozent <= currentProzent) continue;
+    if (!best || a.prozent > best.aktion.prozent) best = { aktion: a, pattern: key, keys: [key] };
+    else if (a.id === best.aktion.id) best.keys.push(key);
+  }
+  return best;
 }
 function renderHeroHint() {
   const el = $('#hero-hint'); if (!el) return;
@@ -150,7 +167,8 @@ function renderPrices() {
   const item = { product: state.product, saucer: state.saucer, config: currentConfig(), color: state.color, colorName: state.colorName };
   const q = unitParts(item);
   const total = q.unit; // = unitPrice(item): während einer Aktion der reduzierte Stückpreis, q.uvp = Preis ohne Aktion
-  const aktion = q.aktionProzent > 0 ? aktionFor(state.product) : null;
+  // Aktion je Konfiguration (Produkt + Muster): Streichpreis/Badge nur, wenn genau diese Konfiguration rabattiert ist
+  const aktion = q.aktionProzent > 0 ? aktionFor(state.product, state.pattern) : null;
   const labels = [
     q.muster > 0 ? `${fmt(q.muster)} ${PATTERNS[state.pattern] || 'Muster'}` : '',
     q.gravur > 0 ? `${fmt(q.gravur)} Gravur` : '',
@@ -169,15 +187,29 @@ function renderPrices() {
     uvpEl.textContent = fmt(q.uvp);
     mbUvp.textContent = fmt(q.uvp);
     pBadge.textContent = `−${aktion.prozent} %`;
-    aLine.innerHTML = `🔥 Aktionspreis · <span class="aktion-countdown">${aktionText()}</span>`;
+    aLine.innerHTML = `🔥 Aktionspreis · <span class="aktion-countdown" data-aktion-id="${aktion.id}">${aktionText(aktion)}</span>`;
   }
   uvpEl.hidden = pBadge.hidden = aLine.hidden = mbUvp.hidden = !aktion;
+  // Hinweis-Knopf „🔥 −30 % auf Gehämmert · endet in 2 Tage“: eine laufende Aktion greift (besser) mit einem anderen
+  // Muster dieses Produkts — Klick schaltet das Muster um (pattern-btn-Klick: Standardtiefe, Rebuild, Preis)
+  const alt = aktionAlternative(state.product, state.pattern, aktion ? aktion.prozent : 0);
+  const hint = $('#price-aktion-hint');
+  if (hint) {
+    if (alt) {
+      hint.dataset.pattern = alt.pattern;
+      hint.innerHTML = `🔥 −${alt.aktion.prozent} % auf ${musterListLabel(alt.keys, 'oder')} · <span class="aktion-countdown" data-aktion-id="${alt.aktion.id}">${aktionText(alt.aktion)}</span>`;
+      hint.title = `${alt.aktion.name}: auf ${PATTERNS[alt.pattern]} umschalten`;
+    }
+    hint.hidden = !alt;
+  }
   // Mobile-Leiste: auf schmalen Handys reicht der Platz nur für die Summe der Aufpreise („inkl. 9,50 € Aufpreise“);
   // während einer Aktion steht dort Badge + Countdown in Kurzform „noch 1 Tag 4 Std“ (die Zeile ist auf ~130 px begrenzt,
   // „endet in …“ würde per Ellipsis abgeschnitten; das Badge blendet die CSS bei ≤ 430 px aus). Die Aufpreise stehen im Panel.
+  // Ohne Aktion, aber mit besserer Aktion für ein anderes Muster: kurzer Hinweis „🔥 −30 % auf Gehämmert“ (Tipp schaltet um).
   const surSum = Math.round((q.muster + q.gravur + q.farbschrift + q.farbe + q.untersetzer + q.groesse) * 100) / 100;
   const narrow = window.innerWidth <= 430 && labels.length > 1;
-  if (aktion) $('#mb-sub').innerHTML = `<span class="aktion-badge">−${aktion.prozent} %</span> <span class="aktion-countdown" data-kurz>${aktionTextKurz()}</span>`;
+  if (aktion) $('#mb-sub').innerHTML = `<span class="aktion-badge">−${aktion.prozent} %</span> <span class="aktion-countdown" data-kurz data-aktion-id="${aktion.id}">${aktionTextKurz(aktion)}</span>`;
+  else if (alt) $('#mb-sub').innerHTML = `<button type="button" class="mb-aktion-hint" data-pattern="${alt.pattern}">🔥 −${alt.aktion.prozent} % auf ${musterListLabel(alt.keys, 'oder')}</button>`;
   else setMobilePrice(undefined, labels.length ? (narrow ? `inkl. ${fmt(surSum)} Aufpreise` : `inkl. ${labels.join(' · ')}`) : 'pro Stück');
   // Mengenrabatt-Teaser — entfällt während einer Aktion ohne „Mengenrabatt zusätzlich“
   $('#price-hint').textContent = aktion && !aktion.mengenrabatt ? 'Während der Aktion kein zusätzlicher Mengenrabatt' : discountTeaser(state.product);
@@ -771,6 +803,7 @@ function setProduct(id) {
   $('#s-height-val').textContent = `${state.height} mm`;
   markActiveProduct();
   renderPresetButtons();
+  renderPatternBadges(); // Aktions-Badges an den Musterknöpfen hängen am Produkt („nur Vasen mit Gehämmert“)
   renderPrices();
   $('#extras-section').style.display = id === 'eierbecher' ? '' : 'none';
   $('#vase-note').hidden = id !== 'vase'; // Trockenblumen-Hinweis nur bei Vasen
@@ -876,13 +909,29 @@ function renderStyleRow() {
   }));
 }
 
-/** Muster-Aufpreise als kleine Badges an den Musterknöpfen (Beträge aus /api/pricing, erst nach dem Laden) */
+/** Muster-Aufpreise als kleine Badges an den Musterknöpfen (Beträge aus /api/pricing, erst nach dem Laden) — dazu links
+ *  oben ein Aktions-Badge „−30 %“ für jede Oberfläche, die eine laufende Aktion NUR für bestimmte Muster erfasst
+ *  (gilt sie für alle Oberflächen, reicht das Banner). Hängt vom Produkt ab → auch nach setProduct() aufrufen. */
 function renderPatternBadges() {
   $$('.pattern-btn[data-pattern]').forEach((b) => {
     b.querySelector('.sur')?.remove();
+    b.querySelector('.aktion-sur')?.remove();
     const sur = patternSurcharge(b.dataset.pattern);
     if (sur > 0) { const s = document.createElement('span'); s.className = 'sur'; s.textContent = fmtPlus(sur); b.appendChild(s); }
+    const a = aktionFor(state.product, b.dataset.pattern);
+    if (a && aktionMuster(a).length) {
+      const s = document.createElement('span'); s.className = 'aktion-sur'; s.textContent = `−${a.prozent} %`;
+      s.title = `${a.name}: −${a.prozent} % auf ${PATTERNS[b.dataset.pattern]}`;
+      b.appendChild(s);
+    }
   });
+}
+/** Hinweis-Knopf unter dem Preis bzw. in der Mobile-Leiste: auf das Muster der Aktion umschalten */
+function switchToAktionPattern(pattern) {
+  const btn = $(`.pattern-btn[data-pattern="${pattern}"]`);
+  if (!btn || state.pattern === pattern) return;
+  btn.click(); // setzt Muster, Standardtiefe, Rebuild und Preis wie ein Klick im Muster-Tab
+  if (IS_MOBILE) showToast(`${PATTERNS[pattern]} gewählt — Aktionspreis aktiv`);
 }
 
 function initControls() {
@@ -899,6 +948,12 @@ function initControls() {
     applyDepthRange(true); // neues Muster → passende Standardtiefe (Fjordwelle/Lamellen wirken erst richtig tief)
     rebuild();
   }));
+  // Aktions-Hinweis („🔥 −30 % auf Gehämmert“) unter dem Preis und in der Mobile-Leiste → Muster umschalten
+  $('#price-aktion-hint')?.addEventListener('click', (e) => switchToAktionPattern(e.currentTarget.dataset.pattern));
+  $('#mb-sub')?.addEventListener('click', (e) => {
+    const b = e.target.closest('.mb-aktion-hint');
+    if (b) switchToAktionPattern(b.dataset.pattern);
+  });
 
   const sizeChanged = () => { renderPrices(); rebuildSoon(); };
   bindSlider('#s-height', 'height', (v) => `${v} mm`, sizeChanged);
@@ -1288,9 +1343,9 @@ async function renderShowcase() {
   await loadContent();
   await initCart();
   await initAuth();
-  // Aktionsleiste + Countdown; läuft die Aktion ab, verschwinden Streichpreise und alle Preise werden neu gerendert
+  // Aktionsleiste + Countdown; läuft eine Aktion ab (oder beginnt eine neue), werden Muster-Badges und alle Preise neu gerendert
   initAktionBar();
-  onAktionEnde(renderPrices);
+  onAktionEnde(() => { renderPatternBadges(); renderPrices(); });
   renderProductTabs();
   renderPresetButtons();
   renderFontRow();

@@ -1,15 +1,18 @@
 // OVJU — Preislogik (reine Rechnung, ohne DOM/Three): muss identisch zu priceItem() in server.js rechnen.
 // Aufpreise kommen ausschließlich aus den öffentlichen APIs (/api/pricing: muster, farbschrift, gravur, volumen,
-// aktion + serverNow; /api/colors: aufpreis je Farbe) — hier gibt es keine festen Beträge.
+// aktionen + serverNow; /api/colors: aufpreis je Farbe) — hier gibt es keine festen Beträge.
 //
-// Aktionen (Rabatt in % auf den Stückpreis, zeitlich begrenzt): der Server liefert unter pricing.aktion die gerade
-// laufende Aktion (oder null) und unter serverNow seine Uhrzeit. Die Restzeit wird mit der korrigierten Zeit
-// (Server-Uhr − Client-Uhr beim Laden) gerechnet; ist die Aktion abgelaufen, rechnet aktionFor() sofort ohne sie.
+// Aktionen (Rabatt in % auf den Stückpreis, zeitlich begrenzt): der Server liefert unter pricing.aktionen ALLE gerade
+// laufenden Aktionen (pricing.aktion = die erste davon, Kompatibilität) und unter serverNow seine Uhrzeit. Jede Aktion
+// hat einen Geltungsbereich: produkte ('alle' | 'vase' | 'eierbecher') und muster (Liste von Muster-Keys, leer = alle
+// Oberflächen). Für eine Konfiguration gilt die ERSTE passende Aktion der nach Prozent sortierten Liste (bei Gleichstand
+// der engere Geltungsbereich, dann der frühere Start). Die Restzeit wird mit der korrigierten Zeit (Server-Uhr − Client-Uhr
+// beim Laden) gerechnet; eine abgelaufene Aktion zählt sofort nicht mehr.
 
 let pricing = null; // Antwort von /api/pricing
 let colors = [];    // Antwort von /api/colors (id, name, hex, finish, aufpreis)
 let timeOffset = 0; // serverNow − Date.now() beim Laden (ms)
-const endeHooks = []; // Re-Render-Callbacks, wenn die Aktion abläuft (oder eine neue beginnt)
+const endeHooks = []; // Re-Render-Callbacks, wenn eine Aktion abläuft (oder eine neue beginnt)
 
 export function setPricing(p) {
   pricing = p || null;
@@ -48,32 +51,92 @@ export function discountFor(product, qty) {
 // ---------------------------------------------------------------------------
 // Aktionen
 // ---------------------------------------------------------------------------
-/** Laufende Aktion (unabhängig vom Produkt) — null, wenn keine läuft oder sie nach Server-Uhr schon vorbei ist */
-export function aktionCurrent() {
-  const a = pricing?.aktion;
-  if (!a || !(Number(a.prozent) > 0)) return null;
-  const now = serverTime();
-  const ende = Date.parse(a.ende || '');
-  const start = Date.parse(a.start || '');
-  if (!Number.isFinite(ende) || ende <= now) return null;
-  if (Number.isFinite(start) && start > now) return null;
-  return a;
+/** Muster-Labels — Spiegel von PATTERNS in geometry.js (geometry.js zieht three mit; die Preislogik bleibt ohne Abhängigkeiten) */
+export const MUSTER_LABEL = {
+  glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', lamellen: 'Lamellen', zickzack: 'Zickzack',
+  querwellen: 'Querwellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle',
+};
+const MUSTER_KEYS = Object.keys(MUSTER_LABEL);
+const PRODUKT_LABEL = { alle: 'auf alles', vase: 'auf Vasen', eierbecher: 'auf Eierbecher' };
+const PRODUKT_MIT = { vase: 'Vasen', eierbecher: 'Eierbecher' };
+
+/** Muster-Liste einer Aktion: nur bekannte Keys, ohne Duplikate, in Musterreihenfolge (wie sanitizeAktionMuster auf dem
+ *  Server); leer = alle Oberflächen (auch wenn alle 9 gewählt sind); ein einzelner String zählt als ein Key */
+export function aktionMuster(a) {
+  const raw = Array.isArray(a?.muster) ? a.muster.map(String) : (typeof a?.muster === 'string' && a.muster ? [a.muster] : []);
+  const out = MUSTER_KEYS.filter((k) => raw.includes(k));
+  return out.length >= MUSTER_KEYS.length ? [] : out;
 }
-/** Aktion für ein Produkt → { id, prozent, name, ende, mengenrabatt, produkte, hinweis } | null */
-export function aktionFor(product) {
-  const a = aktionCurrent();
-  if (!a) return null;
-  const scope = a.produkte || 'alle';
-  if (scope !== 'alle' && scope !== product) return null;
+/** „Gehämmert“ · „Rippen und Wellen“ · „Rippen, Wellen oder Lamellen“ · ab vier Namen „4 Oberflächen“ */
+export function musterListLabel(keys, conj = 'und') {
+  const names = aktionMuster({ muster: keys }).map((k) => MUSTER_LABEL[k]);
+  if (!names.length) return 'alle Oberflächen';
+  if (names.length >= 4) return `${names.length} Oberflächen`;
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} ${conj} ${names[names.length - 1]}`;
+}
+/**
+ * Geltungsbereich einer Aktion in Worten (gleiche Wortwahl wie auf dem Server):
+ * „auf alles“ | „auf Vasen“ | „auf Eierbecher“ | „auf Gehämmert“ | „auf Rippen, Wellen und Lamellen“ |
+ * „auf 4 Oberflächen“ | „auf Vasen mit Gehämmert“ | „auf Eierbecher mit Rippen oder Wellen“
+ */
+export function aktionScopeLabel(a) {
+  const prod = a?.produkte && PRODUKT_MIT[a.produkte] ? a.produkte : 'alle';
+  const m = aktionMuster(a);
+  if (!m.length) return PRODUKT_LABEL[prod];
+  return prod === 'alle' ? `auf ${musterListLabel(m, 'und')}` : `auf ${PRODUKT_MIT[prod]} mit ${musterListLabel(m, 'oder')}`;
+}
+
+/** Läuft die Aktion zum Zeitpunkt now (ms)? — aktiv-Flag prüft der Server, hier zählen nur Prozent und Zeitraum */
+function aktionValid(a, now) {
+  if (!a || !(Number(a.prozent) > 0)) return false;
+  const ende = Date.parse(a.ende || ''), start = Date.parse(a.start || '');
+  if (!Number.isFinite(ende) || ende <= now) return false;
+  if (Number.isFinite(start) && start > now) return false;
+  return true;
+}
+/** Geltungsbreite = Zahl der (Produkt, Muster)-Kombinationen — kleiner = enger (Sortierung bei gleichem Prozentsatz) */
+function scopeSize(a) { return ((a?.produkte || 'alle') === 'alle' ? 2 : 1) * (aktionMuster(a).length || MUSTER_KEYS.length); }
+/** Passt die Aktion zu Produkt + Muster? (fehlendes Muster zählt als „glatt“) */
+export function aktionMatches(a, product, pattern) {
+  const scope = a?.produkte || 'alle';
+  if (scope !== 'alle' && scope !== product) return false;
+  const m = aktionMuster(a);
+  return !m.length || m.includes(pattern || 'glatt');
+}
+/** Öffentliche, normalisierte Sicht einer Aktion (gleiche Felder an allen Stellen) */
+function normAktion(a) {
   return {
-    id: a.id, prozent: Math.round(Number(a.prozent)), name: String(a.name || 'Aktion'), ende: a.ende,
-    mengenrabatt: !!a.mengenrabatt, produkte: scope, hinweis: String(a.hinweis || ''),
+    id: String(a.id ?? ''), name: String(a.name || 'Aktion'), prozent: Math.round(Number(a.prozent)),
+    start: a.start, ende: a.ende, produkte: a.produkte || 'alle', muster: aktionMuster(a),
+    mengenrabatt: !!a.mengenrabatt, hinweis: String(a.hinweis || ''),
   };
 }
-/** Restlaufzeit der Aktion in ms (0 ohne Aktion) */
-export function aktionRemaining() {
-  const a = aktionCurrent();
-  return a ? Math.max(0, Date.parse(a.ende) - serverTime()) : 0;
+/**
+ * Alle gerade laufenden Aktionen (nach Server-Uhr), sortiert: höchster Prozentsatz zuerst, bei Gleichstand engerer
+ * Geltungsbereich, dann frühere Startzeit. Für eine Konfiguration gilt die erste passende (aktionFor).
+ * Ältere Server ohne pricing.aktionen: die eine Aktion aus pricing.aktion.
+ */
+export function aktionenActive() {
+  const list = Array.isArray(pricing?.aktionen) ? pricing.aktionen : (pricing?.aktion ? [pricing.aktion] : []);
+  const now = serverTime();
+  return list.filter((a) => aktionValid(a, now)).map(normAktion).sort((x, y) =>
+    (y.prozent - x.prozent) || (scopeSize(x) - scopeSize(y)) || ((Date.parse(x.start) || 0) - (Date.parse(y.start) || 0)));
+}
+/** Primäre Aktion (höchster Rabatt) — null, wenn keine läuft; Banner & Countdown zeigen diese */
+export function aktionCurrent() { return aktionenActive()[0] || null; }
+/** Aktion für Produkt + Muster → { id, name, prozent, start, ende, produkte, muster, mengenrabatt, hinweis } | null */
+export function aktionFor(product, pattern) {
+  return aktionenActive().find((a) => aktionMatches(a, product, pattern)) || null;
+}
+/** Restlaufzeit einer Aktion in ms (ohne Argument: die primäre; 0 ohne Aktion) */
+export function aktionRemaining(a = aktionCurrent()) {
+  return a ? Math.max(0, (Date.parse(a.ende) || 0) - serverTime()) : 0;
+}
+/** Frühestes Ende aller laufenden Aktionen in ms Restzeit (0 ohne Aktion) — Takt für den Countdown-Timer */
+export function aktionNextEnde() {
+  const list = aktionenActive();
+  return list.length ? Math.min(...list.map((a) => aktionRemaining(a))) : 0;
 }
 /**
  * Countdown-Text: „endet in 1 Tag 3 Std“, unter 24 h „endet in 3 Std 12 Min“,
@@ -96,17 +159,26 @@ export function formatRemaining(ms, kurz = false) {
   const d = Math.floor(t / D), h = Math.floor(t / H) % 24;
   return `${pre} ${d} ${d === 1 ? 'Tag' : 'Tage'}${h ? ` ${h} Std` : ''}`;
 }
-export function aktionText() { return formatRemaining(aktionRemaining()); }
+export function aktionText(a) { return formatRemaining(aktionRemaining(a)); }
 /** Kurzform „noch 1 Tag 3 Std“ (Mobile-Leiste; Stellen mit data-kurz werden von aktion.js damit aufgefrischt) */
-export function aktionTextKurz() { return formatRemaining(aktionRemaining(), true); }
-/** Callback, wenn die Aktion abläuft (oder nach dem Nachladen eine neue beginnt) → Preise neu rendern */
+export function aktionTextKurz(a) { return formatRemaining(aktionRemaining(a), true); }
+/** Callback, wenn eine Aktion abläuft (oder nach dem Nachladen eine neue beginnt) → Preise neu rendern */
 export function onAktionEnde(cb) { if (typeof cb === 'function') endeHooks.push(cb); }
 export function notifyAktionChange() {
   for (const cb of endeHooks) { try { cb(); } catch (e) { console.warn('Aktion-Callback', e); } }
 }
-/** Aktion clientseitig beenden: Streichpreise weg, alle Preise ohne Aktion neu rendern */
-export function expireAktion() {
-  if (pricing) pricing.aktion = null;
+/**
+ * Aktion clientseitig beenden: mit id genau diese Aktion entfernen, ohne id alle abgelaufenen;
+ * die restlichen laufen weiter (pricing.aktion = neue primäre), alle Preise werden neu gerendert.
+ */
+export function expireAktion(id) {
+  if (pricing) {
+    const now = serverTime();
+    const gone = (a) => (id ? String(a?.id ?? '') === String(id) : !aktionValid(a, now));
+    if (Array.isArray(pricing.aktionen)) pricing.aktionen = pricing.aktionen.filter((a) => !gone(a));
+    else if (pricing.aktion && gone(pricing.aktion)) pricing.aktion = null;
+    pricing.aktion = aktionenActive()[0] || null;
+  }
   notifyAktionChange();
 }
 
@@ -158,12 +230,13 @@ export function patternSurcharge(pattern) {
 
 /**
  * Aufschlüsselung des Stückpreises — gleiche Felder wie priceItem().parts auf dem Server, ergänzt um
- * uvp (Stückpreis inkl. aller Aufpreise, ohne Aktion), unit (Aktionspreis), aktionProzent, aktionBetrag, aktionName.
+ * uvp (Stückpreis inkl. aller Aufpreise, ohne Aktion), unit (Aktionspreis), aktionProzent, aktionBetrag, aktionName, aktionId.
  * item = { product, saucer, config: { text, textStyle, pattern, depth, height, width }, color, colorName }
+ * Die Aktion wird je Zeile über Produkt + Muster (config.pattern, fehlend = glatt) bestimmt.
  */
 export function unitParts(item) {
   const p = pricing?.products?.[item?.product];
-  const zero = { grund: 0, untersetzer: 0, gravur: 0, farbschrift: 0, muster: 0, farbe: 0, groesse: 0, uvp: 0, unit: 0, aktionProzent: 0, aktionBetrag: 0, aktionName: null };
+  const zero = { grund: 0, untersetzer: 0, gravur: 0, farbschrift: 0, muster: 0, farbe: 0, groesse: 0, uvp: 0, unit: 0, aktionProzent: 0, aktionBetrag: 0, aktionName: null, aktionId: null };
   if (!p) return zero;
   const c = item.config || {};
   const hasText = !!String(c.text || '').trim() && gravurAllowed(c, item?.product);
@@ -178,31 +251,31 @@ export function unitParts(item) {
   };
   // Aktion: uvp = bisheriger Stückpreis, unit = round2(uvp · (1 − p/100)) — Formel wie priceItem() auf dem Server
   const uvp = r2(parts.grund + parts.untersetzer + parts.gravur + parts.farbschrift + parts.muster + parts.farbe + parts.groesse);
-  const a = aktionFor(item.product);
+  const a = aktionFor(item.product, c.pattern);
   const prozent = a ? a.prozent : 0;
   const unit = r2(uvp * (1 - prozent / 100));
-  return { ...parts, uvp, unit, aktionProzent: prozent, aktionBetrag: r2(uvp - unit), aktionName: a ? a.name : null };
+  return { ...parts, uvp, unit, aktionProzent: prozent, aktionBetrag: r2(uvp - unit), aktionName: a ? a.name : null, aktionId: a ? a.id : null };
 }
 /** Stückpreis ohne Aktion (UVP, inkl. aller Aufpreise) */
 export function unitUvp(item) { return unitParts(item).uvp; }
 /** Stückpreis — während einer Aktion der reduzierte Preis */
 export function unitPrice(item) { return unitParts(item).unit; }
 /**
- * Zeilenpreis: off = Mengenrabatt (entfällt während einer Aktion ohne „Mengenrabatt zusätzlich“),
+ * Zeilenpreis: off = Mengenrabatt (entfällt, wenn die geltende Aktion kein „Mengenrabatt zusätzlich“ hat),
  * line = round2(unit · qty · (1 − off/100)); lineUvp = dieselbe Zeile ohne Aktion (für den Streichpreis),
- * ersparnis = aktionBetrag · qty (wie order.aktion.ersparnis auf dem Server).
+ * ersparnis = aktionBetrag · qty (wie order.aktionen[].ersparnis auf dem Server, dort je Aktion summiert).
  */
 export function linePrice(item) {
   const q = unitParts(item);
   const qty = Math.max(1, Math.min(50, Math.round(Number(item?.qty) || 1)));
-  const a = q.aktionProzent > 0 ? aktionFor(item.product) : null;
+  const a = q.aktionProzent > 0 ? aktionFor(item.product, item.config?.pattern) : null;
   const off = a && !a.mengenrabatt ? 0 : discountFor(item.product, qty);
   const lineFull = r2(q.unit * qty);
   const line = r2((q.unit * qty) * (1 - off / 100));
   const lineUvp = r2((q.uvp * qty) * (1 - off / 100));
   return {
     off, line, lineFull, lineUvp, unit: q.unit, uvp: q.uvp,
-    aktionProzent: q.aktionProzent, aktionBetrag: q.aktionBetrag, aktionName: q.aktionName,
+    aktionProzent: q.aktionProzent, aktionBetrag: q.aktionBetrag, aktionName: q.aktionName, aktionId: q.aktionId,
     ersparnis: r2(q.aktionBetrag * qty),
   };
 }
