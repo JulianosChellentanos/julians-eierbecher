@@ -1,4 +1,5 @@
-// OVJU — Konfigurator: 3D-Szene, UI-Bindings, Bestellung (Eierbecher & Vasen)
+// OVJU — Konfigurator: 3D-Szene, UI-Bindings, Bestellung (Vasen; Eierbecher vorerst deaktiviert — Schalter in produkte.js,
+// die Eierbecher-Logik bleibt für die Reaktivierung erhalten)
 import * as THREE from 'three';
 import { STUDIO_DESIGNS, designConfig as studioDesignConfig } from './studio-designs.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
@@ -14,8 +15,9 @@ import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { makeSTL, makeExport, exportExt, loadFont } from './modelfactory.js';
 import {
   initCart, addToCart, getPricing, fmt, fmtPlus, discountTeaser, setCodeProvider, getCart,
-  setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge,
+  setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge, eierbecherAktiv,
 } from './cart.js';
+import { produktAktiv, EIERBECHER_HINWEIS } from './produkte.js';
 import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } from './designcode.js';
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
@@ -108,10 +110,35 @@ async function loadContent() {
   setTextColor(state.textColor || 'tiefschwarz', true);
 }
 
+/**
+ * Produktschalter anwenden (nach dem Laden der Preise): Die Seite ist statisch „nur Vasen“. Bietet der Server den
+ * Eierbecher an (/api/pricing → produkte.eierbecher = true), kommen die Textvarianten, FAQ-Einträge und
+ * data-produkt-Elemente aus content.json → eierbecher dazu. Solange der Schalter aus ist, sagt kein Text „Eierbecher“.
+ */
+function applyProduktSchalter() {
+  const eb = eierbecherAktiv();
+  document.body.classList.toggle('mit-eierbecher', eb);
+  if (!eb) return;
+  const v = content.eierbecher || {};
+  // Textvarianten: Schlüssel = Element-ID, optional „id|attribut“ (z. B. favicon|href); <meta> bekommt content
+  for (const [key, txt] of Object.entries(v.texte || {})) {
+    const [id, attr] = key.split('|');
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (attr) el.setAttribute(attr, txt);
+    else if (el.tagName === 'META') el.setAttribute('content', txt);
+    else el.textContent = txt;
+  }
+  if (Array.isArray(v.faq) && v.faq.length) {
+    $('#faq-list').insertAdjacentHTML('afterbegin', v.faq.map((f) => `<details class="card"><summary>${f.q}</summary><p>${f.a}</p></details>`).join(''));
+  }
+}
+
 /** „ab 24,90 €“ = günstigste Konfiguration (Muster „glatt“, keine Aufpreise) — gilt dafür eine Aktion: Aktionspreis in
  *  Akzentfarbe + durchgestrichener UVP (gleiche Rechnung wie pricing.js); eine Aktion nur auf Gehämmert ändert das „ab“ nicht */
 function abPriceHTML(product) {
-  const single = getPricing().products[product].single;
+  const single = getPricing()?.products?.[product]?.single;
+  if (single == null) return '';
   const a = aktionFor(product, 'glatt');
   if (!a) return `ab ${fmt(single)}`;
   return `ab <span class="aktion-price">${fmt(unitPrice({ product, config: { pattern: 'glatt' } }))}</span> <s class="uvp">${fmt(single)}</s>`;
@@ -135,7 +162,9 @@ function aktionAlternative(product, pattern, currentProzent = 0) {
 function renderHeroHint() {
   const el = $('#hero-hint'); if (!el) return;
   try {
-    el.innerHTML = `<span>Vasen ${abPriceHTML('vase')} · Eierbecher ${abPriceHTML('eierbecher')}<span class="hh-stl"> · STL-Download für deinen eigenen Drucker inklusive</span></span>`;
+    const parts = [`Vasen ${abPriceHTML('vase')}`];
+    if (eierbecherAktiv()) parts.push(`Eierbecher ${abPriceHTML('eierbecher')}`); // nur, wenn der Server das Produkt anbietet
+    el.innerHTML = `<span>${parts.join(' · ')}<span class="hh-stl"> · STL-Download für deinen eigenen Drucker inklusive</span></span>`;
   } catch { /* Preise noch nicht geladen */ }
 }
 // Live-Preis der gezeigten Form („wie gezeigt 29,88 €“) im Knopf der Formenwelt – nur auf dem Handy sichtbar (CSS); gleiche Rechnung wie Warenkorb/Server.
@@ -778,7 +807,11 @@ function renderShapeEditor() {
 // Produkt-Wechsel
 // ---------------------------------------------------------------------------
 function renderProductTabs() {
-  $('#product-tabs').innerHTML = Object.entries(PRODUCTS).map(([id, pr]) => `
+  // Nur bestellbare Produkte (Eierbecher derzeit deaktiviert → allein „Vase“ braucht keinen Umschalter: Leiste bleibt leer & versteckt)
+  const list = Object.entries(PRODUCTS).filter(([id]) => produktAktiv(id, getPricing()));
+  const box = $('#product-tabs');
+  box.hidden = list.length < 2;
+  box.innerHTML = list.length < 2 ? '' : list.map(([id, pr]) => `
     <button class="product-tab" data-product="${id}">
       <span class="pt-icon">${pr.icon}</span>${pr.label}
       <small>${abPriceHTML(id)}</small>
@@ -792,7 +825,9 @@ function markActiveProduct() {
 }
 
 function setProduct(id) {
-  if (state.product === id) return;
+  if (state.product === id) return true;
+  // Deaktiviertes Produkt (Eierbecher, solange der Schalter aus ist): Vase bleibt, kurzer Hinweis
+  if (!produktAktiv(id, getPricing())) { showToast(EIERBECHER_HINWEIS, 3500); return false; }
   state.product = id;
   const product = PRODUCTS[id];
   state.preset = Object.keys(product.presets)[0];
@@ -811,6 +846,7 @@ function setProduct(id) {
   if (['skelett','koralle'].includes(state.pattern)) applyDepthRange();
   userInteracted = false; // neu einrahmen
   rebuild();
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,7 +1093,7 @@ function initControls() {
   });
 
   // Untersetzer
-  $('#saucer-price').textContent = `+ ${fmt(getPricing().products.eierbecher.untersetzer)}`;
+  $('#saucer-price').textContent = `+ ${fmt(getPricing().products.eierbecher?.untersetzer ?? 0)}`;
   $('#c-saucer').addEventListener('change', (e) => {
     state.saucer = e.target.checked;
     userInteracted = false; // neu einrahmen (Untersetzer ist breiter)
@@ -1130,6 +1166,8 @@ function designConfig() {
 /** Ein gespeichertes Design (aus Code/Link) in den Konfigurator laden */
 async function applyDesign(cfg, code) {
   const product = cfg.product === 'eierbecher' ? 'eierbecher' : 'vase';
+  // Design eines deaktivierten Produkts (Eierbecher-Code/-Liste, Schalter aus): nicht laden, nur Hinweis
+  if (!produktAktiv(product, getPricing())) { showToast(EIERBECHER_HINWEIS, 3500); return false; }
   if (product !== state.product) setProduct(product);
   const prod = PRODUCTS[product];
   if (Array.isArray(cfg.customPoints) && cfg.customPoints.length >= 3) customByProduct[product] = cfg.customPoints.map((p) => [+p[0], +p[1]]);
@@ -1173,6 +1211,7 @@ async function applyDesign(cfg, code) {
   frameCamera();
   showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Konfigurator bereit");
   renderPrices();
+  return true;
 }
 
 // Quadratisches Vorschaubild aus dem aktuellen Canvas (für den Warenkorb)
@@ -1291,8 +1330,8 @@ let galleryPhotos = [];
 async function loadGallery() {
   try { galleryPhotos = await (await fetch('/api/gallery')).json(); } catch { galleryPhotos = []; }
   const galerie = galleryPhotos.filter((g) => g.cat === 'galerie');
-  // Produktfotos ergänzen, bis das Grid gut gefüllt ist
-  const rest = galleryPhotos.filter((g) => g.cat !== 'galerie').sort((a, b) => (a.cat === 'vase' ? -1 : 1) - (b.cat === 'vase' ? -1 : 1));
+  // Produktfotos ergänzen, bis das Grid gut gefüllt ist — nur von bestellbaren Produkten (kein Eierbecher-Motiv bei Schalter aus)
+  const rest = galleryPhotos.filter((g) => g.cat !== 'galerie' && produktAktiv(g.cat, getPricing())).sort((a, b) => (a.cat === 'vase' ? -1 : 1) - (b.cat === 'vase' ? -1 : 1));
   const items = [...galerie, ...(galerie.length < 4 ? rest : [])];
   if (!items.length) return;
   $('#galerie').hidden = false;
@@ -1303,18 +1342,21 @@ async function loadGallery() {
 async function renderShowcase() {
   const sc = content.showcase;
   if (!sc) return;
-  $('#showcase-title').textContent = sc.title;
-  $('#showcase-sub').textContent = sc.sub;
+  // Eierbecher-Karte und die Überschriften-Variante „Auch im Kleinen“ nur, wenn der Server das Produkt anbietet
+  const eb = eierbecherAktiv() ? (content.eierbecher?.showcase || null) : null;
+  $('#showcase-title').textContent = eb?.title || sc.title;
+  $('#showcase-sub').textContent = eb?.sub || sc.sub;
   const defs = [
     {
       id: 'vase', c: sc.vase, hex: '#9caf88', extra: 'grass',
       params: { product: 'vase', preset: 'flasche', pattern: 'rippen', ribs: 72, depth: 0.9, height: 150 },
     },
-    {
-      id: 'eierbecher', c: sc.eierbecher, hex: '#c86f4a', extra: 'egg',
+    ...(eb?.karte ? [{
+      id: 'eierbecher', c: eb.karte, hex: '#c86f4a', extra: 'egg',
       params: { product: 'eierbecher', preset: 'kelch', pattern: 'rippen', ribs: 48, depth: 0.9, height: 58 },
-    },
+    }] : []),
   ];
+  $('#showcase').classList.toggle('solo', defs.length === 1); // eine Karte mittig statt halbleeres Raster
   // Echte Produktfotos (Admin-Upload) bevorzugen, Engine-Render als Fallback
   for (const d of defs) {
     const photo = galleryPhotos.find((g) => g.cat === d.id);
@@ -1342,6 +1384,7 @@ async function renderShowcase() {
 (async () => {
   await loadContent();
   await initCart();
+  applyProduktSchalter(); // braucht /api/pricing → produkte (Standard bis dahin: nur Vasen)
   await initAuth();
   // Aktionsleiste + Countdown; läuft eine Aktion ab (oder beginnt eine neue), werden Muster-Badges und alle Preise neu gerendert
   initAktionBar();
@@ -1365,7 +1408,9 @@ async function renderShowcase() {
   setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders
   initMobileShell({ product: state.product });
   initDesignCodes({
-    getConfig: designConfig, applyConfig: applyDesign,
+    getConfig: designConfig,
+    // Abgelehntes Design (deaktiviertes Produkt) als Fehler melden → der Code-Dialog zeigt den Hinweis statt zu schließen
+    applyConfig: async (cfg, code) => { if (await applyDesign(cfg, code) === false) throw new Error(EIERBECHER_HINWEIS); },
     getThumb: () => { renderer.render(scene, camera); return captureThumb(); },
     onListCode: (code) => openList(code),
   });
@@ -1393,7 +1438,7 @@ async function renderShowcase() {
   // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
   window.__ovju = {
     apply(cfg) {
-      if (cfg.product && cfg.product !== state.product) setProduct(cfg.product);
+      if (cfg.product && cfg.product !== state.product && !setProduct(cfg.product)) return; // deaktiviertes Produkt
       Object.assign(state, cfg);
       syncControls();
       userInteracted = true; // Auto-Rotation stoppen für reproduzierbare Shots

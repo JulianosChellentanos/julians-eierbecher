@@ -1,7 +1,7 @@
 /* OVJU Service Worker – Scope "/" */
 'use strict';
 
-const VERSION = 'ovju-v7-filament-studio';
+const VERSION = 'ovju-v8-nur-vasen';
 const IMMUTABLE_CACHE = VERSION + '-immutable';
 const DYNAMIC_CACHE = VERSION + '-dynamic';
 const KNOWN_CACHES = [IMMUTABLE_CACHE, DYNAMIC_CACHE];
@@ -27,14 +27,14 @@ const OFFLINE_HTML = `<!doctype html>
     font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4efe7;color:#211d18;text-align:center}
   @media (prefers-color-scheme:dark){body{background:#17130f;color:#f0e9dc}}
   .card{max-width:26rem}
-  .egg{font-size:4.5rem;line-height:1;margin-bottom:1rem}
+  .mark{font-size:4.5rem;line-height:1;margin-bottom:1rem}
   h1{font-family:Georgia,"Times New Roman",serif;font-weight:500;font-size:1.6rem;margin:0 0 .6rem}
   p{margin:0 0 1.4rem;opacity:.8;line-height:1.5}
   button{background:#c86f4a;color:#fff;border:0;border-radius:999px;padding:.8rem 1.6rem;font-size:1rem;cursor:pointer}
   small{display:block;margin-top:2rem;opacity:.5;letter-spacing:.15em;text-transform:uppercase;font-size:.7rem}
 </style></head><body>
 <div class="card">
-  <div class="egg">🥚</div>
+  <div class="mark">🏺</div>
   <h1>Du bist offline</h1>
   <p>OVJU braucht Internet zum Bestellen. Sobald du wieder verbunden bist, geht's weiter.</p>
   <button onclick="location.reload()">Erneut versuchen</button>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
 <title>OVJU Studio — Admin</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>">
+<link rel="icon" id="favicon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏺</text></svg>">
 <style>
   @font-face { font-family: 'Fraunces'; src: url('/fonts/fraunces-latin.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
   @font-face { font-family: 'Inter'; src: url('/fonts/inter-latin.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
@@ -17,6 +17,10 @@
   }
   * { box-sizing: border-box; margin: 0; }
   [hidden] { display: none !important; }
+  /* Produktschalter (System → „Eierbecher als Produkt anbieten“): solange settings.produkte.eierbecher aus ist, trägt <body> die Klasse
+     eierbecher-aus und alle Elemente mit data-produkt="eierbecher" (Grundpreis, Untersetzer, Staffeln, Druck-Schätzwerte, Bilder-Kategorie)
+     sind ausgeblendet — die Werte bleiben gespeichert, das Produkt kann später wieder eingeschaltet werden. */
+  body.eierbecher-aus [data-produkt="eierbecher"] { display: none !important; }
   html { -webkit-text-size-adjust: 100%; }
   body { font-family: var(--sans); background: var(--bg); color: var(--ink); line-height: 1.5; -webkit-font-smoothing: antialiased; min-height: 100vh; }
   h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.15; }
@@ -468,10 +472,10 @@
 
       <!-- 🖼️ Bilder -->
       <section id="pane-images" class="pane" hidden>
-        <div class="pane-head"><div><h1>Produktfotos &amp; Galerie</h1><p>Erscheinen sofort auf der Startseite. <b>Galerie</b>-Fotos füllen „Zuhause bei OVJU“; ein Foto der Kategorie <b>Eierbecher</b> bzw. <b>Vase</b> ersetzt zusätzlich das Render-Bild der Produktkarte.</p></div></div>
+        <div class="pane-head"><div><h1>Produktfotos &amp; Galerie</h1><p>Erscheinen sofort auf der Startseite. <b>Galerie</b>-Fotos füllen „Zuhause bei OVJU“; ein Foto der Kategorie <span data-produkt="eierbecher"><b>Eierbecher</b> bzw. </span><b>Vase</b> ersetzt zusätzlich das Render-Bild der Produktkarte.</p></div></div>
         <div class="card">
           <div class="row">
-            <select id="img-cat"><option value="galerie">Galerie</option><option value="eierbecher">Eierbecher (Produktkarte)</option><option value="vase">Vase (Produktkarte)</option></select>
+            <select id="img-cat"><option value="galerie">Galerie</option><option value="eierbecher" data-produkt="eierbecher">Eierbecher (Produktkarte)</option><option value="vase">Vase (Produktkarte)</option></select>
             <input type="file" id="img-file" accept="image/jpeg,image/png,image/webp" multiple>
             <button onclick="uploadImages()">⬆ Hochladen</button>
           </div>
@@ -485,8 +489,8 @@
         <div class="card">
           <h2>💰 Grundpreise</h2>
           <div class="grid">
-            <label>Eierbecher (€/Stück)<input type="number" step="0.1" id="s-egg-single"></label>
-            <label>Untersetzer (€/Stück)<input type="number" step="0.1" id="s-egg-saucer"></label>
+            <label data-produkt="eierbecher">Eierbecher (€/Stück)<input type="number" step="0.1" id="s-egg-single"></label>
+            <label data-produkt="eierbecher">Untersetzer (€/Stück)<input type="number" step="0.1" id="s-egg-saucer"></label>
             <label>Vase (€/Stück)<input type="number" step="0.1" id="s-vase-single"></label>
             <label>Gravur-Aufpreis (€/Stück)<input type="number" step="0.5" id="s-gravur"></label>
             <label>Größenaufschlag % <small>je +100 % Volumen, vom Grundpreis</small><input type="number" step="5" id="s-vol-pct"></label>
@@ -496,7 +500,7 @@
           </div>
           <h3>🏷️ Mengenrabatte <small>— gleicher Artikel mehrfach</small></h3>
           <div class="row" style="align-items:flex-start;gap:40px">
-            <div><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost mini" onclick="addTier('egg')">+ Stufe</button></div>
+            <div data-produkt="eierbecher"><b>Eierbecher</b><div id="tiers-egg"></div><button class="ghost mini" onclick="addTier('egg')">+ Stufe</button></div>
             <div><b>Vasen</b><div id="tiers-vase"></div><button class="ghost mini" onclick="addTier('vase')">+ Stufe</button></div>
           </div>
         </div>
@@ -630,21 +634,26 @@
 
       <!-- ⚙️ System -->
       <section id="pane-system" class="pane" data-settings hidden>
-        <div class="pane-head"><div><h1>System</h1><p>Zugang, Sicherung und Schätzwerte für die Druckplanung.</p></div></div>
+        <div class="pane-head"><div><h1>System</h1><p>Zugang, Produkte, Sicherung und Schätzwerte für die Druckplanung.</p></div></div>
         <div class="grid2">
           <div class="card">
             <h2>🔐 Admin-Passwort</h2>
             <label>Neues Passwort <small>(leer = unverändert)</small><input type="password" id="s-adminkey" placeholder="••••••" autocomplete="new-password" style="max-width:280px"></label>
           </div>
           <div class="card">
+            <h2>🏺 Produkte</h2>
+            <label class="inline"><span class="switch"><input type="checkbox" id="s-prod-eierbecher" onchange="applyProduktSchalter()"><span></span></span> Eierbecher als Produkt anbieten</label>
+            <p class="muted" id="s-prod-eierbecher-hint" style="margin-top:8px">Derzeit deaktiviert. Bestehende Bestellungen und Design-Codes bleiben erhalten; das Produkt kann jederzeit wieder eingeschaltet werden.</p>
+          </div>
+          <div class="card">
             <h2>🖨️ Druck-Schätzwerte <small>je Stück bei Normalhöhe</small></h2>
             <div class="grid">
-              <label>Eierbecher: Minuten<input type="number" id="p-min-egg" min="1"></label>
-              <label>Eierbecher: Gramm<input type="number" id="p-g-egg" min="1"></label>
+              <label data-produkt="eierbecher">Eierbecher: Minuten<input type="number" id="p-min-egg" min="1"></label>
+              <label data-produkt="eierbecher">Eierbecher: Gramm<input type="number" id="p-g-egg" min="1"></label>
               <label>Vase: Minuten<input type="number" id="p-min-vase" min="1"></label>
               <label>Vase: Gramm<input type="number" id="p-g-vase" min="1"></label>
             </div>
-            <p class="muted" style="margin-top:10px">Skalierung mit der Höhe ≈ (Höhe / Normalhöhe)<sup>1,5</sup> × Breite². Normalhöhe: Eierbecher 58 mm, Vase 150 mm. Untersetzer +35 % Zeit / +40 % Material.</p>
+            <p class="muted" style="margin-top:10px">Skalierung mit der Höhe ≈ (Höhe / Normalhöhe)<sup>1,5</sup> × Breite². Normalhöhe: <span data-produkt="eierbecher">Eierbecher 58 mm, </span>Vase 150 mm.<span data-produkt="eierbecher"> Untersetzer +35 % Zeit / +40 % Material.</span></p>
           </div>
           <div class="card">
             <h2>💾 Datensicherung</h2>

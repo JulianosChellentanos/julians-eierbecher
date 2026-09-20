@@ -44,12 +44,8 @@
   ],
   "faq": [
     {
-      "q": "Ist der Eierbecher lebensmittelecht und spülmaschinenfest?",
-      "a": "Der Eierbecher kommt nur mit der Eierschale in Kontakt und ist dafür bestens geeignet. Bitte per Hand mit lauwarmem Wasser spülen – PLA mag keine Spülmaschine und keine Hitze über 50 °C."
-    },
-    {
-      "q": "Wie lange dauert es, bis mein Eierbecher ankommt?",
-      "a": "Jeder Eierbecher wird erst nach deiner Bestellung gedruckt. In der Regel geht dein Paket innerhalb von 2–4 Werktagen raus und ist nach 3–6 Werktagen bei dir."
+      "q": "Wie lange dauert es, bis meine Bestellung ankommt?",
+      "a": "Jedes Stück wird erst nach deiner Bestellung gedruckt. In der Regel geht dein Paket innerhalb von 2–4 Werktagen raus und ist nach 3–6 Werktagen bei dir."
     },
     {
       "q": "Kann ich einen Namen oder Text gravieren lassen?",
@@ -60,8 +56,8 @@
       "a": "Wir drucken mit hochwertigem PLA – einem Biokunststoff auf Pflanzenbasis (z. B. Maisstärke) – wahlweise samtmatt, glänzend oder mit metallischem Seidenschimmer. Die feinen Druckschichten bleiben sichtbar und gehören zum Charakter jedes Stücks."
     },
     {
-      "q": "Was ist, wenn mir mein Eierbecher nicht gefällt oder er beschädigt ankommt?",
-      "a": "Kommt dein Eierbecher beschädigt an, drucken wir kostenlos einen neuen. Da jedes Stück ein Unikat nach deinem Design ist, ist ein klassischer Umtausch ausgeschlossen – melde dich aber einfach, wir finden immer eine Lösung."
+      "q": "Was ist, wenn mir meine Vase nicht gefällt oder sie beschädigt ankommt?",
+      "a": "Kommt deine Vase beschädigt an, drucken wir kostenlos eine neue. Da jedes Stück ein Unikat nach deinem Design ist, ist ein klassischer Umtausch ausgeschlossen – melde dich aber einfach, wir finden immer eine Lösung."
     },
     {
       "q": "Sind die Vasen wasserdicht?",
@@ -132,12 +128,6 @@
     "text": "Kleine Objekte mit großer Persönlichkeit. Entworfen von dir. Schicht für Schicht gedruckt in Deutschland."
   },
   "pricing": {
-    "eierbecher": {
-      "single": 9.9,
-      "duo": 17.9,
-      "family4": 29.9,
-      "untersetzer": 4.9
-    },
     "vase": {
       "single": 24.9,
       "duo": 44.9
@@ -145,13 +135,8 @@
     "currency": "EUR"
   },
   "showcase": {
-    "title": "Dein Design. Auch im Kleinen.",
-    "sub": "Eine große Idee passt auch auf den Frühstückstisch. Gestalte Vasen und Eierbecher mit deiner Handschrift.",
-    "eierbecher": {
-      "title": "Der Eierbecher",
-      "text": "Ein guter Morgen beginnt mit deinem Stil. Als Einzelstück, persönliches Geschenk oder dein ganz eigenes Set.",
-      "cta": "Eierbecher designen"
-    },
+    "title": "Dein Design. Dein Original.",
+    "sub": "Skulptur, Statement oder Bühne für Trockenblumen — gestalte deine Vase mit deiner Handschrift.",
     "vase": {
       "title": "Die Vase",
       "text": "Skulptur, Statement oder Bühne für Trockenblumen. Du bestimmst die Form, wir drucken dein Original.",
@@ -172,5 +157,39 @@
       "🖨️ Gedruckt in Deutschland",
       "📦 5–⁠8 Werktage"
     ]
+  },
+  "eierbecher": {
+    "hinweis": "Eierbecher sind vorerst deaktiviert — dieser Block wird nur gerendert, wenn der Server unter /api/pricing produkte.eierbecher = true meldet (Admin → System). Produktcode, Bestellungen und Design-Codes bleiben erhalten, damit das Produkt später wieder aktiviert werden kann.",
+    "pricing": {
+      "single": 9.9,
+      "duo": 17.9,
+      "family4": 29.9,
+      "untersetzer": 4.9
+    },
+    "showcase": {
+      "title": "Dein Design. Auch im Kleinen.",
+      "sub": "Eine große Idee passt auch auf den Frühstückstisch. Gestalte Vasen und Eierbecher mit deiner Handschrift.",
+      "karte": {
+        "title": "Der Eierbecher",
+        "text": "Ein guter Morgen beginnt mit deinem Stil. Als Einzelstück, persönliches Geschenk oder dein ganz eigenes Set.",
+        "cta": "Eierbecher designen"
+      }
+    },
+    "faq": [
+      {
+        "q": "Ist der Eierbecher lebensmittelecht und spülmaschinenfest?",
+        "a": "Der Eierbecher kommt nur mit der Eierschale in Kontakt und ist dafür bestens geeignet. Bitte per Hand mit lauwarmem Wasser spülen – PLA mag keine Spülmaschine und keine Hitze über 50 °C."
+      }
+    ],
+    "texte": {
+      "meta-desc": "Designe deine eigene Vase im 3D-Konfigurator — Rippen, Spiralen, Lamellen, gehämmert, 16 Farben von matt bis metallic, persönliche Gravur. 3D-gedruckt aus pflanzenbasiertem PLA und geliefert. Passende Eierbecher inklusive.",
+      "favicon|href": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>",
+      "cover-kicker": "Vasen & Eierbecher · von dir entworfen",
+      "hero-sub-m": "Vase oder Eierbecher selbst gestalten – Form, Muster, Farbe und Gravur. Wir drucken dein Original in 3D und liefern es dir.",
+      "skeleton-small": "Für Trockenblumen oder mit passendem Einsatz. Brücken und Stützen im Slicer prüfen. Beim Eierbecher wird das Zellmuster als geschlossenes Relief umgesetzt.",
+      "pattern-skelett|title": "Unregelmäßiges Zellnetz: offene Vase, geschlossenes Relief beim Eierbecher",
+      "gravur-small": "Name, Datum oder kurzer Spruch, plastisch in die Wand geprägt — in 7 Schriftarten. Bei Vasen bis 30 Zeichen (längere Texte laufen um die Seite), beim Eierbecher je nach Form ca. 15–20 — der Zähler unter dem Feld sagt es dir.",
+      "galerie-sub": "Echte Stücke, echte Frühstückstische — jedes davon ein Unikat aus dem Konfigurator."
+    }
   }
 }

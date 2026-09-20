@@ -1,7 +1,8 @@
 // OVJU — Design-Listen: Sammlungen von Designs (z. B. für eine Hochzeit) mit
 // Vorschau, Design-Code und Menge. Eigene Listen liegen mit Bearbeitungs-Token
 // im localStorage, geteilte Listen werden per Code/Link nur gelesen.
-import { addToCart, itemTitle, itemSub } from './cart.js';
+import { addToCart, itemTitle, itemSub, getPricing } from './cart.js';
+import { produktAktiv, zeilenProdukt, EIERBECHER_HINWEIS } from './produkte.js';
 import { showToast, IS_MOBILE } from './mobile.js';
 import { copyText, formatCode, normalizeCode, esc } from './designcode.js';
 
@@ -123,6 +124,9 @@ function renderList(list) {
   const own = !!tokenFor(list.code);
   const occ = OCCASIONS[list.occasion] || OCCASIONS.sonstiges;
   const total = list.items.reduce((s, it) => s + (it.qty || 1), 0);
+  // Einträge eines derzeit nicht bestellbaren Produkts (Eierbecher, Schalter aus) bleiben sichtbar, aber ausgegraut
+  const bestellbar = (it) => produktAktiv(zeilenProdukt(it), getPricing());
+  const totalOk = list.items.filter(bestellbar).reduce((s, it) => s + (it.qty || 1), 0);
   const box = $('#ls-body');
   box.innerHTML = `
     <button class="linkbtn ls-back" id="ls-back">← Meine Listen</button>
@@ -144,18 +148,20 @@ function renderList(list) {
     ${list.items.length ? `<div class="ls-grid">${list.items.map((it, i) => {
       const fi = fakeItem(it);
       const col = hooks.colorInfo?.(it.config?.color);
-      return `<div class="ls-item" data-i="${i}">
+      const off = !bestellbar(it);
+      return `<div class="ls-item${off ? ' ls-off' : ''}" data-i="${i}">
         <div class="ls-thumb" style="--sw:${col?.hex || '#ddd'}"><img src="/api/design/${it.code}/thumb" alt="" loading="lazy" onerror="this.remove()"><span class="ls-thumb-fb">${it.config?.product === 'eierbecher' ? '🥚' : '🏺'}</span></div>
         <div class="ls-item-main">
           <b>${esc(itemTitle(fi))}</b>
           <small>${esc(itemSub(fi))}</small>
+          ${off ? `<small class="ls-off-hint">${EIERBECHER_HINWEIS}</small>` : ''}
           <div class="ls-item-row">
             <button class="ci-code" data-code="${it.code}" title="Design-Code kopieren">🔖 ${formatCode(it.code)}</button>
             ${own ? `<span class="ci-step"><button data-q="${i}" data-d="-1">−</button><span>${it.qty || 1}</span><button data-q="${i}" data-d="1">+</button></span>` : `<span class="ls-qty">${it.qty || 1} ×</span>`}
           </div>
           <div class="ls-item-btns">
-            <button class="btn btn-ghost" data-load="${i}">👁 Ansehen</button>
-            <button class="btn btn-primary" data-cart="${i}">🛒 In den Warenkorb</button>
+            <button class="btn btn-ghost" data-load="${i}"${off ? ' disabled' : ''}>👁 Ansehen</button>
+            <button class="btn btn-primary" data-cart="${i}"${off ? ' disabled' : ''}>🛒 In den Warenkorb</button>
             ${own ? `<button class="btn btn-ghost ls-del" data-del="${i}" title="Aus der Liste entfernen">🗑</button>` : ''}
           </div>
         </div>
@@ -163,7 +169,7 @@ function renderList(list) {
       : `<p class="cart-empty">Noch leer.<br><small>${own ? 'Füge unten dein aktuelles Design hinzu oder gestalte im Konfigurator und wähle dort „Zu Liste hinzufügen“.' : 'Der Besitzer hat noch nichts hinzugefügt.'}</small></p>`}
     <div class="ls-foot">
       ${own ? `<button class="btn btn-ghost" id="ls-addcur">➕ Aktuelles Design hinzufügen</button>` : `<button class="btn btn-ghost" id="ls-copy">📋 Als eigene Liste kopieren</button>`}
-      ${list.items.length ? `<button class="btn btn-primary" id="ls-allcart">🛒 Alle ${total} in den Warenkorb</button>` : ''}
+      ${totalOk ? `<button class="btn btn-primary" id="ls-allcart">🛒 Alle ${totalOk} in den Warenkorb</button>` : ''}
       ${own ? `<button class="linkbtn ls-delete" id="ls-delete">Liste löschen</button>` : ''}
     </div>`;
 
@@ -191,8 +197,9 @@ function renderList(list) {
   }));
   box.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', async () => {
     const it = list.items[+b.dataset.load];
+    if (!bestellbar(it)) { showToast(EIERBECHER_HINWEIS); return; }
     $('#lists-modal').close();
-    await hooks.applyDesign(it.config, it.code);
+    if (await hooks.applyDesign(it.config, it.code) === false) return; // z. B. Produkt nicht bestellbar
     $('#konfigurator').scrollIntoView({ behavior: 'smooth' });
   }));
   const toCart = (it, silent) => {
@@ -204,12 +211,15 @@ function renderList(list) {
     }, { qty: it.qty || 1, silent });
   };
   box.querySelectorAll('[data-cart]').forEach((b) => b.addEventListener('click', () => {
-    $('#lists-modal').close(); toCart(list.items[+b.dataset.cart], false);
+    const it = list.items[+b.dataset.cart];
+    if (!bestellbar(it)) { showToast(EIERBECHER_HINWEIS); return; }
+    $('#lists-modal').close(); toCart(it, false);
   }));
   $('#ls-allcart')?.addEventListener('click', () => {
     $('#lists-modal').close();
-    list.items.forEach((it, i) => toCart(it, i < list.items.length - 1));
-    showToast(`🛒 ${total} Stück im Warenkorb`);
+    const ok = list.items.filter(bestellbar);
+    ok.forEach((it, i) => toCart(it, i < ok.length - 1));
+    showToast(`🛒 ${totalOk} Stück im Warenkorb`);
   });
   $('#ls-addcur')?.addEventListener('click', async (e) => {
     e.currentTarget.disabled = true;

@@ -168,7 +168,14 @@ function colorOf(id, name) {
 const lineColor = (l) => colorOf(l.config?.color, l.colorName) || { id: l.config?.color || l.colorName || '?', name: l.colorName || '?', hex: l.config?.colorHex || '#cccccc' };
 const textColorOf = (l) => (l.config?.textStyle === 'farbe'
   ? (colorOf(l.config.textColor, l.textColorName) || { name: l.textColorName || l.config.textColor || '?', hex: '#222222' }) : null);
-const prodLabel = (l) => (l.product === 'vase' ? 'Vase' : 'Eierbecher');
+const prodLabel = (l) => (l.product === 'vase' ? 'Vase' : 'Eierbecher');   // Bestellhistorie: alte Eierbecher-Bestellungen heißen weiterhin so
+// Produktschalter (settings.produkte, Vertrag „Nur Vasen“): Vasen sind immer an, Eierbecher nur mit dem Schalter unter System.
+// Eierbecher sind vorerst deaktiviert — Produktcode, Bestellungen und Designs bleiben erhalten, damit das Produkt später
+// wieder aktiviert werden kann. Die Eierbecher-Felder (Preise, Staffeln, Druck-Schätzwerte) bleiben im Formular und werden
+// nur per Klasse ausgeblendet (applyProduktSchalter) — ihre Werte gehen beim Speichern unverändert mit.
+const produktAn = (p) => p === 'vase' || DATA?.settings?.produkte?.[p] === true;
+/** Stand des Schalters in der Oberfläche (auch ungespeichert); ohne Formular = gespeicherter Stand */
+const eierbecherAn = () => { const cb = $('#s-prod-eierbecher'); return cb ? !!cb.checked : produktAn('eierbecher'); };
 const lineTitle = (l) => `${prodLabel(l)} „${PRESETS[l.config?.preset] || l.config?.preset || ''}“`;
 function lineMeta(l) {
   const c = l.config || {};
@@ -1152,7 +1159,7 @@ function akCardHTML(a, i) {
         <label>Rabatt (%) <small>1–90, auf den Stückpreis</small><input type="number" min="1" max="90" step="1" value="${Number.isFinite(Number(a.prozent)) ? a.prozent : ''}" oninput="akSet(${i},'prozent',this.value)"></label>
         <label>Start <small>Ortszeit</small><input type="datetime-local" id="ak-start-${i}" value="${toLocalInput(a.start)}" onchange="akSet(${i},'start',this.value)"></label>
         <label>Ende <small>Ortszeit</small><input type="datetime-local" id="ak-ende-${i}" value="${toLocalInput(a.ende)}" onchange="akSet(${i},'ende',this.value)"></label>
-        <label>Produkte<select onchange="akSet(${i},'produkte',this.value)">${Object.entries(AK_PRODUKTE).map(([k, l]) => `<option value="${k}" ${(a.produkte || 'alle') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Produkte<select onchange="akSet(${i},'produkte',this.value)">${Object.entries(AK_PRODUKTE).map(([k, l]) => `<option value="${k}" ${(a.produkte || 'alle') === k ? 'selected' : ''}${k === 'eierbecher' ? ` data-produkt="eierbecher"${!eierbecherAn() && (a.produkte || 'alle') !== k ? ' hidden disabled' : ''}` : ''}>${l}</option>`).join('')}</select></label>
         <label>Hinweis <small>optional, Zusatz im Banner, ≤ 120</small><input type="text" maxlength="120" value="${esc(a.hinweis || '')}" placeholder="z. B. nur solange der Vorrat reicht" oninput="akSet(${i},'hinweis',this.value)"></label>
       </div>
       ${akMusterHTML(a, i)}
@@ -1407,6 +1414,7 @@ async function mailResend(id) {
 // ---------------------------------------------------------------------------
 function fillSettings() {
   const s = DATA.settings;
+  $('#s-prod-eierbecher').checked = s.produkte?.eierbecher === true;   // Produktschalter (fehlt → aus), vor renderAktionen (Option „Nur Eierbecher“)
   $('#s-egg-single').value = s.pricing.eierbecher.single;
   $('#s-egg-saucer').value = s.pricing.eierbecher.untersetzer;
   $('#s-vase-single').value = s.pricing.vase.single;
@@ -1442,9 +1450,31 @@ function fillSettings() {
   $('#p-min-vase').value = p.minutesVase ?? 210; $('#p-g-vase').value = p.gramsVase ?? 110;
   $('#s-adminkey').value = '';
   const info = DATA.info || {};
-  $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(s.invoicePrefix || '')}${String(s.nextInvoice || 1).padStart(4, '0')}</dd><dt>Nächste Gutschrift</dt><dd>${esc(s.creditPrefix || 'GS-2026-')}${String(s.nextCredit || 1).padStart(4, '0')}</dd>`;
+  $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(s.invoicePrefix || '')}${String(s.nextInvoice || 1).padStart(4, '0')}</dd><dt>Nächste Gutschrift</dt><dd>${esc(s.creditPrefix || 'GS-2026-')}${String(s.nextCredit || 1).padStart(4, '0')}</dd><dt>Produkte im Shop</dt><dd>${produktAn('eierbecher') ? 'Vasen, Eierbecher' : 'Vasen'}</dd>`;
   $('#side-foot').textContent = `Node ${info.node || ''} · seit ${info.startedAt ? fmtDT(info.startedAt) : '—'}`;
+  applyProduktSchalter();
   setDirty(false);
+}
+/**
+ * Produktschalter anwenden (Vertrag „Nur Vasen“, Punkt 4): <body class="eierbecher-aus"> blendet alle Elemente mit
+ * data-produkt="eierbecher" aus — Grundpreis, Untersetzer, Eierbecher-Staffeln, Druck-Schätzwerte, Bilder-Kategorie,
+ * Aktions-Option. Die Felder bleiben im Formular, ihre Werte werden beim Speichern unverändert mitgeschickt.
+ * Ohne Argument gilt der Schalter im System-Bereich: Umschalten wirkt sofort in der Oberfläche, im Shop erst nach dem Speichern.
+ */
+function applyProduktSchalter(on = eierbecherAn()) {
+  on = !!on;
+  document.body.classList.toggle('eierbecher-aus', !on);
+  const hint = $('#s-prod-eierbecher-hint');
+  if (hint) hint.textContent = on
+    ? 'Aktiv: Eierbecher und Untersetzer sind im Shop bestellbar; Preise, Staffeln und Druck-Schätzwerte sind wieder sichtbar. Wirkt nach dem Speichern.'
+    : 'Derzeit deaktiviert. Bestehende Bestellungen und Design-Codes bleiben erhalten; das Produkt kann jederzeit wieder eingeschaltet werden.';
+  // Bilder-Kategorie: steht der Upload noch auf „Eierbecher“, auf Galerie zurück, bevor die Option verschwindet
+  const cat = $('#img-cat');
+  if (cat && !on && cat.value === 'eierbecher') cat.value = 'galerie';
+  // <option>-Elemente: display:none greift nicht in jedem Browser (Safari) → zusätzlich hidden + disabled; eine gewählte Option bleibt (Historie)
+  for (const o of $$('option[data-produkt="eierbecher"]')) { const keep = on || o.selected; o.hidden = !keep; o.disabled = !keep; }
+  const icon = $('#favicon');
+  if (icon) icon.href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${on ? '🥚' : '🏺'}</text></svg>`;
 }
 function setDirty(v) {
   dirty = v;
@@ -1494,8 +1524,11 @@ async function saveSettings() {
     printing: { minutesEgg: +$('#p-min-egg').value || 75, gramsEgg: +$('#p-g-egg').value || 22, minutesVase: +$('#p-min-vase').value || 210, gramsVase: +$('#p-g-vase').value || 110 },
     invoicePrefix: $('#c-prefix').value,
     creditPrefix: $('#c-credit-prefix').value,
+    // Produktschalter (Vasen sind immer an, der Server kennt nur eierbecher): Eierbecher-Preise oben gehen auch bei „aus“ unverändert mit
+    produkte: { eierbecher: $('#s-prod-eierbecher').checked },
     colors, coupons, aktionen,
   };
+  const produktWechsel = patch.produkte.eierbecher !== produktAn('eierbecher');
   if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
   $('#save-btn').disabled = true;
   try {
@@ -1507,6 +1540,8 @@ async function saveSettings() {
     const run = akLaufende(aktionen);
     toast(run.length > 1 ? `Einstellungen gespeichert — ${run.length} Aktionen laufen jetzt im Shop (${run.map((a) => `„${a.name}“ −${a.prozent} % ${aktionScopeLabel(a)}`).join(', ')})`
       : run.length ? `Einstellungen gespeichert — Aktion „${run[0].name}“ (−${run[0].prozent} % ${aktionScopeLabel(run[0])}) läuft jetzt im Shop` : 'Einstellungen gespeichert — wirken sofort im Shop', 'ok');
+    if (produktWechsel) toast(patch.produkte.eierbecher ? 'Eierbecher sind jetzt im Shop bestellbar.' : 'Eierbecher sind im Shop ausgeblendet — Bestellungen und Designs bleiben erhalten.', 'info', 5000);
+    applyProduktSchalter();
     renderDashAktion();
     if (PANE === 'colors') renderColors();
     if (PANE === 'aktionen') aktionen.forEach((_, i) => akRefresh(i));

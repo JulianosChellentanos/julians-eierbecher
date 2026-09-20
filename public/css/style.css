@@ -158,7 +158,7 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.12; }
   transition: opacity 0.4s;
 }
 .loading.hidden { opacity: 0; pointer-events: none; }
-.egg-spin { font-size: 3rem; animation: wobble 1.1s ease-in-out infinite; }
+.loading-icon { font-size: 3rem; animation: wobble 1.1s ease-in-out infinite; }
 @keyframes wobble { 0%, 100% { transform: rotate(-12deg); } 50% { transform: rotate(12deg); } }
 .stage-badge, .stage-color {
   position: absolute; z-index: 4; font-size: 0.82rem; font-weight: 500;
@@ -234,7 +234,18 @@ h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.12; }
 }
 #gravur-options:not([hidden]) { animation: ctrlIn 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
 
-/* Produkt-Tabs (Eierbecher / Vase) */
+/* Produktschalter: Elemente mit data-produkt="eierbecher" sind nur sichtbar, wenn der Server das Produkt anbietet
+   (body.mit-eierbecher, gesetzt in app.js aus /api/pricing → produkte). Eierbecher sind vorerst deaktiviert — Code bleibt
+   für die Reaktivierung erhalten, siehe js/produkte.js */
+body:not(.mit-eierbecher) [data-produkt="eierbecher"] { display: none !important; }
+/* Nur ein Produkt: die einzelne Showcase-Karte mittig statt halbleeres Zweierraster */
+.showcase-grid.solo { grid-template-columns: minmax(0, 560px); justify-content: center; }
+/* Design-Listen: Einträge eines derzeit nicht bestellbaren Produkts ausgegraut + Hinweis */
+.ls-item.ls-off { opacity: 0.55; }
+.ls-item.ls-off .ls-item-btns .btn[disabled] { pointer-events: none; opacity: 0.6; }
+.ls-off-hint { color: var(--accent); font-weight: 600; }
+
+/* Produkt-Tabs (Umschalter — nur sichtbar, wenn mehr als ein Produkt bestellbar ist) */
 .product-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .product-tab {
   display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -1176,6 +1187,7 @@ section[id] { scroll-margin-top: 72px; }
   }
   .showcase-grid::-webkit-scrollbar { display: none; }
   .showcase-card { flex: 0 0 84%; scroll-snap-align: center; }
+  .showcase-grid.solo .showcase-card { flex: 0 0 100%; }
   .showcase-card img { aspect-ratio: 4/3; }
   .showcase-body p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .showcase-cta .btn { white-space: nowrap; }

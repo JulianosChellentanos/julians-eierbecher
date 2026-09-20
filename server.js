@@ -150,6 +150,37 @@ function aktionFuer(item, liste = aktiveAktionen()) {
 }
 /** Öffentliche Sicht für Shop & Countdown (/api/pricing) — ohne aktiv-Flag */
 const publicAktion = (a) => (a ? { id: a.id, name: a.name, prozent: a.prozent, start: a.start, ende: a.ende, produkte: a.produkte, muster: Array.isArray(a.muster) ? a.muster : [], mengenrabatt: !!a.mengenrabatt, hinweis: a.hinweis || '' } : null);
+// ---------------------------------------------------------------------------
+// Produktschalter (settings.produkte): Vasen sind immer bestellbar; Eierbecher nur, wenn der Schalter an ist.
+// Der Schalter blendet das Produkt im Shop und im Admin aus und sperrt neue Bestellungen — alte Bestellungen,
+// Designs, Listen, Preise und Geometrie bleiben unverändert, damit nichts gelöscht werden muss.
+// ---------------------------------------------------------------------------
+const PRODUKT_SCHALTER = ['eierbecher'];
+const EIERBECHER_GESPERRT = 'Eierbecher sind derzeit nicht bestellbar.';
+/** { eierbecher: bool } aus beliebiger Eingabe (Datei/Patch) — fehlt oder ungültig → Standard (aus) */
+function sanitizeProdukte(v) {
+  const src = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  return { eierbecher: src.eierbecher === true };
+}
+/** Ist das Produkt aktuell bestellbar? 'vase' immer, 'eierbecher' nur mit Schalter, Unbekanntes nie. */
+function produktAktiv(product) {
+  if (product === 'vase') return true;
+  if (product === 'eierbecher') return settings?.produkte?.eierbecher === true;
+  return false;
+}
+/**
+ * Prüft die Zeilen einer Anfrage (Quote, PayPal, Checkout) gegen den Produktschalter:
+ * Meldung (→ 400) bei gesperrtem Eierbecher oder unbekanntem Produkt, sonst null.
+ */
+function produktSperre(items) {
+  for (const it of Array.isArray(items) ? items : []) {
+    const product = it?.product;
+    if (product === 'eierbecher' && !produktAktiv('eierbecher')) return EIERBECHER_GESPERRT;
+    if (!['vase', 'eierbecher'].includes(product)) return 'Unbekanntes Produkt';
+  }
+  return null;
+}
+
 const DEFAULT_SETTINGS = {
   adminKey: 'ovju-admin',
   invoicePrefix: 'RE-2026-',
@@ -157,6 +188,9 @@ const DEFAULT_SETTINGS = {
   // Gutschriften (Reklamation): eigener Nummernkreis, vierstellig
   creditPrefix: 'GS-2026-',
   nextCredit: 1,
+  // Eierbecher sind vorerst deaktiviert — Produktcode, Bestellungen und Designs bleiben erhalten,
+  // damit das Produkt später wieder aktiviert werden kann. (Admin → System → „Eierbecher als Produkt anbieten“)
+  produkte: { eierbecher: false },
   pricing: {
     currency: 'EUR',
     eierbecher: {
@@ -236,6 +270,8 @@ function loadSettings() {
   // Gutschrift-Nummernkreis (Reklamationen)
   if (typeof settings.creditPrefix !== 'string') settings.creditPrefix = DEFAULT_SETTINGS.creditPrefix;
   settings.nextCredit = Math.max(1, Math.round(Number(settings.nextCredit)) || 1);
+  // Migration Produktschalter: fehlt in älteren settings.json → Eierbecher aus (siehe DEFAULT_SETTINGS.produkte)
+  settings.produkte = sanitizeProdukte(settings.produkte);
   // Migration: Finishes (matt/glanz/metall) + bekannte Silk-/Glossy-PLA-Farben
   if (!settings.colorsV2) {
     for (const c of settings.colors) if (!c.finish) c.finish = 'matt';
@@ -1178,6 +1214,9 @@ async function handleCheckout(req, res) {
   if (!Array.isArray(items) || !items.length || items.length > 20) {
     return send(res, 400, { ok: false, error: 'Warenkorb ist leer' });
   }
+  // Produktschalter: gesperrte Produkte (derzeit Eierbecher) und Unbekanntes werden vor der Preisberechnung abgewiesen
+  const sperre = produktSperre(items);
+  if (sperre) return send(res, 400, { ok: false, error: sperre });
   const totals = computeTotals(items, couponCode);
   // Gutschein, der wegen einer (inzwischen) laufenden Aktion nicht mehr gilt: lieber abbrechen als still ohne Gutschein
   // abrechnen — der Kunde sieht die Meldung im Checkout und kann den Code entfernen
@@ -1305,6 +1344,8 @@ const server = http.createServer(async (req, res) => {
         farbschrift: pr.farbschrift || 0,
         volumen: pr.volumen,
         normalHeight: NORMAL_HEIGHT,
+        // Produktschalter: der Shop blendet Eierbecher-Elemente aus und nimmt keine Eierbecher-Designs/-Warenkorbzeilen an, solange false
+        produkte: { vase: true, eierbecher: produktAktiv('eierbecher') },
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
         // laufende Aktionen (nach Prozent absteigend; leer = keine), aktion = primäre (Kompatibilität)
         // + Serverzeit für den Countdown im Shop (Client rechnet den Zeitversatz heraus)
@@ -1514,6 +1555,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/quote') {
       const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
+      const sperre = produktSperre(items);
+      if (sperre) return send(res, 400, { ok: false, error: sperre });
       const t = computeTotals(items || [], couponCode);
       return send(res, 200, {
         ok: true,
@@ -1535,6 +1578,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/paypal/create') {
       if (!settings.paypal.enabled) return send(res, 400, { ok: false, error: 'PayPal nicht aktiviert' });
       const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
+      const sperre = produktSperre(items);
+      if (sperre) return send(res, 400, { ok: false, error: sperre });
       const t = computeTotals(items, couponCode);
       const token = await paypalToken();
       const r = await fetch(`${paypalBase()}/v2/checkout/orders`, {
@@ -1597,12 +1642,22 @@ const server = http.createServer(async (req, res) => {
         try { aktionen = sanitizeAktionen(patch.aktionen); } catch (err) { return send(res, err.httpCode || 400, { ok: false, error: err.message }); }
       }
       if (patch.coupons !== undefined && !Array.isArray(patch.coupons)) return send(res, 400, { ok: false, error: 'Gutscheine: Liste erwartet' });
+      // Produktschalter: Objekt { eierbecher: true|false } (ein mitgeschicktes vase wird ignoriert — Vasen sind immer an)
+      if (patch.produkte !== undefined) {
+        if (!patch.produkte || typeof patch.produkte !== 'object' || Array.isArray(patch.produkte)) return send(res, 400, { ok: false, error: 'Produkte: ungültiges Format' });
+        for (const [k, v] of Object.entries(patch.produkte)) {
+          if (k !== 'vase' && !PRODUKT_SCHALTER.includes(k)) return send(res, 400, { ok: false, error: `Produkte: unbekanntes Produkt „${k}“` });
+          if (typeof v !== 'boolean') return send(res, 400, { ok: false, error: `Produkte: ${k} muss true oder false sein` });
+        }
+      }
       const prevPricing = settings.pricing;
       // Nur bekannte Wurzel-Schlüssel übernehmen
       for (const k of ['pricing', 'company', 'invoicePrefix', 'colors', 'coupons', 'printing']) {
         if (patch[k] !== undefined) settings[k] = patch[k];
       }
       if (aktionen) settings.aktionen = aktionen;
+      // Produktschalter übernehmen (fehlende Schlüssel behalten den alten Stand)
+      if (patch.produkte !== undefined) settings.produkte = sanitizeProdukte({ ...settings.produkte, ...patch.produkte });
       // Gutscheine: nur Objekte; mitAktion als echter Boolean (fehlt → false = nicht mit Aktion kombinierbar)
       settings.coupons = settings.coupons.filter((c) => c && typeof c === 'object');
       for (const c of settings.coupons) c.mitAktion = !!c.mitAktion;

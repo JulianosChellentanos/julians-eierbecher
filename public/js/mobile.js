@@ -92,9 +92,10 @@ export function activateTab(key, dir, byUser = false) {
     if (on) sec.classList.add(direction === 'right' ? 'from-right' : 'from-left');
   });
   $$('.mtab[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === key));
-  // Produkt-Umschalter (Eierbecher/Vase) gehört zur Form — mobil nur dort zeigen;
+  // Produkt-Umschalter gehört zur Form — mobil nur dort zeigen, und nur, wenn er überhaupt Produkte enthält (bei nur
+  // einem bestellbaren Produkt bleibt er leer und versteckt, siehe renderProductTabs in app.js / produkte.js);
   // der Vasen-Hinweis gehört überall nur zum Form-Tab
-  if (IS_MOBILE) { const pt = $('#product-tabs'); if (pt) pt.hidden = key !== 'form'; }
+  if (IS_MOBILE) { const pt = $('#product-tabs'); if (pt) pt.hidden = key !== 'form' || !pt.childElementCount; }
   const vn = $('#vase-note'); if (vn) vn.hidden = key !== 'form' || currentProduct !== 'vase';
   // Mobile: Inhalt des neuen Tabs direkt unter die Tab-Leiste holen (falls tief gescrollt)
   const tabs = $('#mtabs');
@@ -111,7 +112,8 @@ export function activateTab(key, dir, byUser = false) {
   if (byUser && IS_MOBILE) $(`.mtab[data-tab="${key}"]`)?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
 }
 
-/** Extras-Tab nur beim Eierbecher — Tabs gibt es auf Desktop UND Mobile */
+/** Extras-Tab (Untersetzer) nur beim Eierbecher — das Produkt ist vorerst deaktiviert (produkte.js), der Tab bleibt für die
+ *  Reaktivierung erhalten; Tabs gibt es auf Desktop UND Mobile */
 export function updateMobileTabs(product) {
   tabOrder = TABS.map((t) => t[0]).filter((k) => k !== 'extras' || product === 'eierbecher');
   currentProduct = product;

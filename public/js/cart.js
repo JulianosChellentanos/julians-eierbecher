@@ -4,6 +4,8 @@ import { makeExport } from './modelfactory.js';
 import { copyText, formatCode, esc } from './designcode.js';
 import { PRODUCTS, PATTERNS, FLOWS, FONTS, RIMS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
+import { showToast } from './mobile.js';
+import { produktAktiv, filterBestellbar, EIERBECHER_HINWEIS } from './produkte.js';
 import {
   setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
   volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp, linePrice,
@@ -11,6 +13,8 @@ import {
 } from './pricing.js';
 
 export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp };
+/** Eierbecher bestellbar? Schalter aus /api/pricing → produkte (derzeit aus, Standard ohne Feld = aus; siehe produkte.js) */
+export const eierbecherAktiv = () => produktAktiv('eierbecher', getPricing());
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -30,8 +34,12 @@ export async function initPricing() {
 
 function loadCart() {
   try { cart = JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch { cart = []; }
-  // Ältere Zeilen ohne Farb-ID: über den Farbnamen nachziehen (Farbaufpreis & Bestellung brauchen die ID)
   let changed = false;
+  // Zeilen eines derzeit nicht bestellbaren Produkts (z. B. Eierbecher aus einem früheren Besuch) entfernen —
+  // der Server lehnt sie beim Checkout ab; der Kunde bekommt einen Hinweis (Migration älterer localStorage-Stände)
+  const f = filterBestellbar(cart, pricing());
+  if (f.entfernt > 0) { cart = f.items; changed = true; showToast(EIERBECHER_HINWEIS, 4000); }
+  // Ältere Zeilen ohne Farb-ID: über den Farbnamen nachziehen (Farbaufpreis & Bestellung brauchen die ID)
   for (const it of cart) {
     if (!it.color) { const c = colorByRef(it.config?.color, it.colorName); if (c) { it.color = c.id; changed = true; } }
   }
@@ -105,6 +113,8 @@ export function partsText(it) {
 // In den Warenkorb
 // ---------------------------------------------------------------------------
 export function addToCart({ config, color, colorName, colorHex, thumb, code }, opts = {}) {
+  // Nicht bestellbare Produkte (Eierbecher, solange der Schalter aus ist) kommen nicht in den Warenkorb
+  if (!produktAktiv(config?.product || 'vase', pricing())) { showToast(EIERBECHER_HINWEIS, 3500); return; }
   const qty = Math.max(1, Math.min(50, Math.round(opts.qty || 1)));
   // Farb-ID (Körperfarbe) — der Server rechnet damit den Farbaufpreis; Design-Codes tragen sie in config.color
   const colorId = color || config?.color || colorByRef(null, colorName)?.id || null;

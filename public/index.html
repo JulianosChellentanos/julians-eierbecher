@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>OVJU — Dein Design. Deine Vase.</title>
-  <meta name="description" content="Designe deine eigene Vase im 3D-Konfigurator — Rippen, Spiralen, Lamellen, gehämmert, 16 Farben von matt bis metallic, persönliche Gravur. 3D-gedruckt aus pflanzenbasiertem PLA und geliefert. Passende Eierbecher inklusive.">
+  <meta name="description" id="meta-desc" content="Designe deine eigene Vase im 3D-Konfigurator — Rippen, Spiralen, Lamellen, gehämmert, 16 Farben von matt bis metallic, persönliche Gravur. 3D-gedruckt aus pflanzenbasiertem PLA und zu dir geliefert.">
   <script>
     // Darkmode früh setzen (kein Aufblitzen)
     (function () {
@@ -25,7 +25,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="OVJU">
   <link rel="apple-touch-icon" href="/img/icons/apple-touch-icon.png">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>">
+  <link rel="icon" id="favicon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏺</text></svg>">
   <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js" } }
   </script>
@@ -57,8 +57,8 @@
 <main>
 <section class="hero form-hero">
   <div class="hero-intro wrap">
-    <div><span class="cover-kicker">Vasen &amp; Eierbecher · von dir entworfen</span><p class="eyebrow" id="brand-tagline">Deine Ideen nehmen Form an</p><h1 id="hero-headline">Deine Idee.<br>Deine Form.</h1><figure class="hero-cover"><picture><source media="(max-width: 700px)" srcset="/img/studio/fdm-hammer-copper.webp"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E" width="1122" height="1402" alt="Gehämmerte Vase aus Kupfer-Silk-PLA, 3D-gedruckt mit sichtbaren Schichten" fetchpriority="high" decoding="async"></picture><span class="cover-badge">Hammerschlag · Kupfer-Silk · 3D-Druck</span></figure></div>
-    <div class="hero-side"><p class="sub" id="hero-sub">Starte mit einer Grundform. Verändere Silhouette, Struktur und Farbe. Was du hier siehst, kannst du wirklich gestalten.</p><p class="sub hero-sub-m">Vase oder Eierbecher selbst gestalten – Form, Muster, Farbe und Gravur. Wir drucken dein Original in 3D und liefern es dir.</p><button class="btn btn-primary btn-lg" id="hero-cta">Eigene Form gestalten ↗</button><div class="hero-hint" id="hero-hint"></div><div class="trust-row" id="trust-row"></div></div>
+    <div><span class="cover-kicker" id="cover-kicker">Vasen · von dir entworfen</span><p class="eyebrow" id="brand-tagline">Deine Ideen nehmen Form an</p><h1 id="hero-headline">Deine Idee.<br>Deine Form.</h1><figure class="hero-cover"><picture><source media="(max-width: 700px)" srcset="/img/studio/fdm-hammer-copper.webp"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E" width="1122" height="1402" alt="Gehämmerte Vase aus Kupfer-Silk-PLA, 3D-gedruckt mit sichtbaren Schichten" fetchpriority="high" decoding="async"></picture><span class="cover-badge">Hammerschlag · Kupfer-Silk · 3D-Druck</span></figure></div>
+    <div class="hero-side"><p class="sub" id="hero-sub">Starte mit einer Grundform. Verändere Silhouette, Struktur und Farbe. Was du hier siehst, kannst du wirklich gestalten.</p><p class="sub hero-sub-m" id="hero-sub-m">Deine Vase selbst gestalten – Form, Muster, Farbe und Gravur. Wir drucken dein Original in 3D und liefern es dir.</p><button class="btn btn-primary btn-lg" id="hero-cta">Eigene Form gestalten ↗</button><div class="hero-hint" id="hero-hint"></div><div class="trust-row" id="trust-row"></div></div>
   </div>
   <div class="form-world" id="hero-art">
     <span class="world-type" aria-hidden="true">FORM FOLLOWS YOU.</span>
@@ -99,7 +99,7 @@
   <div class="pattern-feature-heading"><div><p class="eyebrow"><span class="new-pill">NEU</span> Zwei neue Formensprachen</p><h2>Licht findet Lücken.<br><em>Linien finden ihren Weg.</em></h2></div><p>Offene Zellen oder fließende Rippen.<br>Wähle ein Muster und mach es zu deinem.</p></div>
   <span class="rail-hint">02 Muster · wischen →</span>
   <div class="skeleton-grid pattern-pair">
-    <article><button class="image-expand skeleton-image" data-view-image="/img/studio/fdm-voronoi.webp" aria-label="Voronoi-Vase vergrößern"><img src="/img/studio/fdm-voronoi.webp" loading="lazy" width="1024" height="1280" alt="Elfenbeinfarbene 3D-gedruckte Voronoi-Vase mit echten Zellöffnungen und feinen Druckschichten"><span>01 / VORONOI <b>↗</b></span></button><div class="skeleton-copy"><h3>Raum für Licht.</h3><p>Unregelmäßige Zellen, verbundene Stege und ein Schattenspiel, das mitwandert. Voronoi öffnet deine Vase nach außen.</p><div class="skeleton-facts"><span>Echte Durchbrüche</span><span>Individuelle Zellgröße</span><span>Für Trockenblumen</span></div><button class="btn btn-primary" id="skeleton-use">Voronoi gestalten ↗</button><small>Für Trockenblumen oder mit passendem Einsatz. Brücken und Stützen im Slicer prüfen. Beim Eierbecher wird das Zellmuster als geschlossenes Relief umgesetzt.</small></div></article>
+    <article><button class="image-expand skeleton-image" data-view-image="/img/studio/fdm-voronoi.webp" aria-label="Voronoi-Vase vergrößern"><img src="/img/studio/fdm-voronoi.webp" loading="lazy" width="1024" height="1280" alt="Elfenbeinfarbene 3D-gedruckte Voronoi-Vase mit echten Zellöffnungen und feinen Druckschichten"><span>01 / VORONOI <b>↗</b></span></button><div class="skeleton-copy"><h3>Raum für Licht.</h3><p>Unregelmäßige Zellen, verbundene Stege und ein Schattenspiel, das mitwandert. Voronoi öffnet deine Vase nach außen.</p><div class="skeleton-facts"><span>Echte Durchbrüche</span><span>Individuelle Zellgröße</span><span>Für Trockenblumen</span></div><button class="btn btn-primary" id="skeleton-use">Voronoi gestalten ↗</button><small id="skeleton-small">Für Trockenblumen oder mit passendem Einsatz. Brücken und Stützen im Slicer prüfen.</small></div></article>
     <article><button class="image-expand skeleton-image" data-view-image="/img/studio/fdm-fjord.webp" aria-label="Fjordwelle-Vase vergrößern"><img src="/img/studio/fdm-fjord.webp" loading="lazy" width="1024" height="1280" alt="Salbeifarbene 3D-gedruckte Fjordwelle-Vase mit fließenden Rippen und sichtbarer Filamentstruktur"><span>02 / FJORDWELLE <b>↗</b></span></button><div class="skeleton-copy"><h3>Bewegung, die bleibt.</h3><p>Feine Rippen folgen weiten Wellen. Ruhig von vorn, überraschend beim Drehen. Fjordwelle bringt Bewegung in deine Silhouette.</p><div class="skeleton-facts"><span>Fließende Rippen</span><span>Geschlossene Wand</span><span>Variable Tiefe</span></div><button class="btn btn-primary" id="coral-use">Fjordwelle gestalten ↗</button><small>Form, Anzahl, Tiefe und Verlauf bleiben frei gestaltbar. Die Druck-Ampel bewertet deine Kombination. Die Bilder sind KI-Inszenierungen; die Live-Vorschau zeigt deine konkrete Form.</small></div></article>
   </div>
 </div></section>
@@ -110,7 +110,7 @@
     <div class="stage">
       <div class="viewer-heading"><span><i></i> OVJU / LIVE STUDIO</span><span>DEIN DESIGN IN 360°</span></div>
       <div class="viewer-watermark" aria-hidden="true">made<br><em>by you.</em></div>
-      <div id="loading" class="loading"><div class="egg-spin">🥚</div>Lade 3D-Studio …</div>
+      <div id="loading" class="loading"><div class="loading-icon">🏺</div>Lade 3D-Studio …</div>
       <canvas id="viewer"></canvas>
       <div class="stage-badge" id="dim-info"></div>
       <div class="stage-openwarn" id="open-warn" hidden></div>
@@ -131,7 +131,8 @@
         </div>
       </div>
 
-      <div class="product-tabs" id="product-tabs"></div>
+      <!-- Produkt-Umschalter: erscheint nur, wenn mehr als ein Produkt bestellbar ist (Produktschalter: js/produkte.js) -->
+      <div class="product-tabs" id="product-tabs" hidden></div>
       <div class="note-box" id="vase-note" hidden></div>
       <div class="mtabs" id="mtabs"></div>
 
@@ -172,7 +173,7 @@
           <button class="pattern-btn" data-pattern="zickzack" title="Scharfe Facetten">Zickzack</button>
           <button class="pattern-btn" data-pattern="querwellen" title="Horizontale Wellenringe">Querwellen</button>
           <button class="pattern-btn" data-pattern="gehaemmert" title="Organische Dellen wie gehämmertes Metall">Gehämmert</button>
-          <button class="pattern-btn" data-pattern="skelett" title="Unregelmäßiges Zellnetz: offene Vase, geschlossenes Relief beim Eierbecher">Voronoi</button>
+          <button class="pattern-btn" data-pattern="skelett" id="pattern-skelett" title="Unregelmäßiges Zellnetz mit echten Durchbrüchen">Voronoi</button>
           <button class="pattern-btn" data-pattern="koralle" title="Feine geschwungene Rippen auf weiten Wellen">Fjordwelle · Neu</button>
         </div>
         <p class="surface-note" id="skeleton-note" hidden>Voronoi: offene Zellen mit verbundenen Stegen. Brücken und Stützen im Slicer prüfen.</p>
@@ -211,7 +212,7 @@
         <label class="check-row">
           <input type="checkbox" id="c-gravur">
           <span>✒️ <b>Persönliche Gravur</b> <span class="opt" id="gravur-price"></span><br>
-          <small>Name, Datum oder kurzer Spruch, plastisch in die Wand geprägt — in 7 Schriftarten. Bei Vasen bis 30 Zeichen (längere Texte laufen um die Seite), beim Eierbecher je nach Form ca. 15–20 — der Zähler unter dem Feld sagt es dir.</small></span>
+          <small id="gravur-small">Name, Datum oder kurzer Spruch, plastisch in die Wand geprägt — in 7 Schriftarten. Bis 30 Zeichen (längere Texte laufen um die Seite) — der Zähler unter dem Feld sagt es dir.</small></span>
         </label>
         <div id="gravur-options" hidden>
           <input type="text" id="i-text" maxlength="30" placeholder="z. B. Anna & Tom 12.06.2027" autocomplete="off">
@@ -241,7 +242,8 @@
         <div class="swatch-grid" id="swatches"></div>
       </section>
 
-      <section class="ctrl" id="extras-section" data-tab="extras">
+      <!-- Extras (Untersetzer) gehören zum derzeit deaktivierten Zweitprodukt (js/produkte.js) — bleiben für die Reaktivierung erhalten -->
+      <section class="ctrl" id="extras-section" data-tab="extras" data-produkt="eierbecher" hidden>
         <h3>Extras</h3>
         <label class="check-row">
           <input type="checkbox" id="c-saucer">
@@ -252,7 +254,7 @@
 
       <div class="panel-cta">
         <div class="price-row">
-          <div class="price-main"><span class="price" id="price">9,90&nbsp;€</span><s class="uvp" id="price-uvp" hidden></s><span class="aktion-badge" id="price-badge" hidden></span><span class="price-unit">/ Stück</span></div>
+          <div class="price-main"><span class="price" id="price">24,90&nbsp;€</span><s class="uvp" id="price-uvp" hidden></s><span class="aktion-badge" id="price-badge" hidden></span><span class="price-unit">/ Stück</span></div>
           <div class="price-hint" id="price-hint"></div>
         </div>
         <div class="aktion-line" id="price-aktion" hidden></div>
@@ -277,7 +279,7 @@
 <section id="galerie" class="galerie-band" hidden>
   <div class="wrap">
     <h2 class="section-title">Zuhause bei OVJU</h2>
-    <p class="section-sub">Echte Stücke, echte Frühstückstische — jedes davon ein Unikat aus dem Konfigurator.</p>
+    <p class="section-sub" id="galerie-sub">Echte Stücke in echten Wohnungen — jedes davon ein Unikat aus dem Konfigurator.</p>
     <div class="galerie-grid" id="galerie-grid"></div>
   </div>
 </section>
@@ -478,7 +480,7 @@
   </div>
 </dialog>
 <div class="mobile-bar" id="mobile-bar" hidden>
-  <div class="mb-price"><span class="mb-main"><b id="mb-price">9,90 €</b><s class="uvp" id="mb-uvp" hidden></s></span><small id="mb-sub">pro Stück</small></div>
+  <div class="mb-price"><span class="mb-main"><b id="mb-price">24,90 €</b><s class="uvp" id="mb-uvp" hidden></s></span><small id="mb-sub">pro Stück</small></div>
   <button class="mb-dl mb-code" data-open-code="show" title="Design-Code" aria-label="Design-Code anzeigen">🔖</button>
   <button class="mb-dl" id="mb-download" title="Druckdatei (STL) herunterladen" aria-label="Druckdatei herunterladen">⬇</button>
   <button class="mb-cart" id="mb-cart">In den Warenkorb ↗</button>
