@@ -1,7 +1,7 @@
 /* OVJU Service Worker – Scope "/" */
 'use strict';
 
-const VERSION = 'ovju-v12-mobile-home-6';
+const VERSION = 'ovju-v13-mobile-home-7';
 const IMMUTABLE_CACHE = VERSION + '-immutable';
 const DYNAMIC_CACHE = VERSION + '-dynamic';
 const KNOWN_CACHES = [IMMUTABLE_CACHE, DYNAMIC_CACHE];

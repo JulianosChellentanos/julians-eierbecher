@@ -109,7 +109,7 @@ export function openSheet(o) {
   const val = (x) => (typeof x === 'function' ? x(state) : x) || '';
   const paint = () => { meta.textContent = val(o.meta); price.innerHTML = val(o.price); facts.textContent = val(o.facts); deal.textContent = val(o.deal); };
   paint(); onChip = () => { paint(); o.onChip?.(state); };
-  $('.m-sheet-cta', sheet).textContent = o.cta || 'Gestalten ↗';
+  $('.m-sheet-cta', sheet).textContent = o.cta || 'Gestalten ↓'; // Sprung zum Konfigurator auf derselben Seite: Richtungspfeil
   $('.m-sheet-trust', sheet).innerHTML = val(o.trust);
   $('.m-sheet-note', sheet).textContent = o.note || '';
   $('.m-sheet-foot', sheet).textContent = o.foot || (useSvg ? 'Kein Foto — im Konfigurator siehst du dein Muster live in 3D.' : o.preview ? '3D-Vorschau aus unserem Konfigurator-Modell · Live-Vorschau im Konfigurator' : 'KI-Produktfoto auf Basis unseres 3D-Modells · Live-Vorschau im Konfigurator');

@@ -324,6 +324,14 @@ const ground = new THREE.Mesh(
 );
 ground.receiveShadow = true;
 scene.add(ground);
+// Handy (IS_PHONE): weicher, heller Schatten statt hartem grauem „Teller“ unter der Vase — PCF mit Radius (PCFSoft ignoriert radius),
+// kleine Schattenkarte (breite, weiche Kante; 1/16 des Grafikspeichers), Deckkraft 0,10. Desktop/Tablet unverändert.
+if (IS_PHONE) {
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  keyLight.shadow.mapSize.set(512, 512);
+  keyLight.shadow.radius = 10;
+  ground.material.opacity = 0.10;
+}
 
 // Finishes wie bei echten PLA-Sorten: matt, glossy, Silk/Metallic
 const FINISH_PROPS = {
@@ -357,13 +365,20 @@ propsGroup.visible = false;
 scene.add(propsGroup);
 
 // Echte Standflächen: Holztisch (CC0-Textur, Poly Haven) & helle Fensterbank
-const woodMap = new THREE.TextureLoader().load('env/wood_table_001_diff_1k.jpg');
-woodMap.colorSpace = THREE.SRGBColorSpace;
-woodMap.wrapS = woodMap.wrapT = THREE.RepeatWrapping;
-woodMap.repeat.set(1.6, 1);
+// Handy (IS_PHONE): die Holz-Textur (≈ 210 KB) erst mit der ersten Holz-Szene laden (applyScene) — die Startszene „Studio“ braucht sie nicht;
+// bis sie da ist, trägt die Tischplatte einen Holzton (kein schwarzes Aufblitzen einer leeren Textur)
+function loadWoodMap(onLoad) {
+  const tex = new THREE.TextureLoader().load('env/wood_table_001_diff_1k.jpg', onLoad);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1.6, 1);
+  return tex;
+}
+const woodMap = IS_PHONE ? null : loadWoodMap();
+let woodRequested = !IS_PHONE;
 const tableTop = new THREE.Mesh(
   new THREE.BoxGeometry(1200, 26, 680),
-  new THREE.MeshStandardMaterial({ map: woodMap, roughness: 0.72 })
+  new THREE.MeshStandardMaterial(IS_PHONE ? { color: 0x9c7652, roughness: 0.72 } : { map: woodMap, roughness: 0.72 })
 );
 tableTop.position.y = -13; // Oberkante = y 0
 tableTop.receiveShadow = true;
@@ -392,6 +407,10 @@ function loadEnv(name) {
 async function applyScene(key) {
   currentScene = key;
   const cfg = SCENES[key];
+  if (!woodRequested && cfg.surface === 'wood') { // nur Handy (woodRequested ist sonst von Anfang an true)
+    woodRequested = true;
+    loadWoodMap((tex) => { tableTop.material.map = tex; tableTop.material.color.set(0xffffff); tableTop.material.needsUpdate = true; });
+  }
   propsGroup.visible = cfg.props;
   keyLight.intensity = cfg.keyI;
   keyLight.color.set(cfg.keyColor || 0xfff2e0);
@@ -433,8 +452,8 @@ function updateProps() {
 }
 
 // Kamera so setzen, dass das Objekt in Höhe UND Breite passt (auch mobil).
-// live = Live-Bühne (nicht Foto-Shooting/Produktfoto): auf dem Handy (≤ 700 px) ~16 % weiter weg — Hals mit Luft unter „OVJU / LIVE STUDIO“,
-// Fuß über Dreh-Hinweis und Szenen-Chips (mobile.css); Tablet/Desktop unverändert.
+// live = Live-Bühne (nicht Foto-Shooting/Produktfoto): auf dem Handy (≤ 700 px) ~24 % weiter weg und leicht nach oben gerückt — Hals mit Luft unter „OVJU / LIVE STUDIO“,
+// Fuß über Dreh-Hinweis und den (seit Runde 7 höheren, 44-px-tippbaren) Szenen-Chips (mobile.css); Tablet/Desktop unverändert.
 function frameCamera(live = true) {
   const H = currentInfo ? currentInfo.height : 58;
   let rM = currentInfo ? currentInfo.maxRadius : 24;
@@ -442,10 +461,10 @@ function frameCamera(live = true) {
   // Ei ragt über den Becher hinaus, wenn Deko-Props sichtbar sind
   const eggExtra = (propsGroup.visible && currentInfo?.product === 'eierbecher') ? 40 : 0;
   // Mobile: mehr Luft oben/unten, damit Badges & Chips das Modell nicht verdecken
-  const halfH = (H * 0.62 + 8 + eggExtra) * (IS_SMALL ? 1.22 : 1) * (live && IS_PHONE ? 1.16 : 1), halfW = rM * 1.65;
+  const halfH = (H * 0.62 + 8 + eggExtra) * (IS_SMALL ? 1.22 : 1) * (live && IS_PHONE ? 1.24 : 1), halfW = rM * 1.65;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const dist = Math.max(halfH / t, halfW / (t * camera.aspect));
-  controls.target.set(0, H * 0.5, 0);
+  controls.target.set(0, H * (live && IS_PHONE ? 0.46 : 0.5), 0); // Handy: Blickziel etwas unter die Mitte → Vase rückt ein Stück hoch, Fuß frei über Hinweis und Chips
   const dir = camera.position.clone().sub(controls.target);
   if (dir.lengthSq() < 1) dir.set(0.55, 0.35, 1);
   dir.normalize();
@@ -1365,9 +1384,10 @@ async function renderShowcase() {
     const photo = galleryPhotos.find((g) => g.cat === d.id);
     d.img = photo ? photo.file : await productShot(d.params, d.hex, d.extra);
   }
+  // Handy (IS_PHONE): #produkte ist dort ausgeblendet (mobile.css) → loading=lazy, so wird das Foto gar nicht erst angefordert
   $('#showcase').innerHTML = defs.map((d) => `
     <div class="showcase-card" data-product="${d.id}">
-      <img src="${d.img}" alt="${d.c.title}">
+      <img src="${d.img}" alt="${d.c.title}"${IS_PHONE ? ' loading="lazy"' : ''}>
       <div class="showcase-body">
         <h3>${d.c.title}</h3>
         <p>${d.c.text}</p>

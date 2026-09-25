@@ -58,10 +58,13 @@ const ICON = {
   bookmark: SVG('<path d="M6.8 3.8h10.4v16.4L12 16.4l-5.2 3.8z"/>'),
   download: SVG('<path d="M12 4v10.5"/><path d="m7.6 10.2 4.4 4.4 4.4-4.4"/><path d="M5 19.5h14"/>'),
   shield: SVG('<path d="M12 3.6 19 6.2v5.3c0 4.3-2.9 7.5-7 9-4.1-1.5-7-4.7-7-9V6.2z"/><path d="m8.9 12.1 2.2 2.2 4.1-4.3"/>'),
+  trash: SVG('<path d="M4.5 7h15M9.5 7V4.8h5V7"/><path d="M6.5 7l.9 12.2a1 1 0 0 0 1 .9h7.2a1 1 0 0 0 1-.9L17.5 7"/><path d="M10.2 10.5v6M13.8 10.5v6"/>'),
+  pen: SVG('<path d="M15.2 4.8 19.2 8.8 8.6 19.4l-4.8.8.8-4.8z"/><path d="m13.4 6.6 4 4"/>'),
 };
 /** Emoji (inkl. Variationszeichen) am Textanfang — wird durch ein Linien-Icon ersetzt */
 const EMOJI_START = /^\s*(?:\p{Extended_Pictographic}|[✓✔])\uFE0F?\s*/u;
-const EMOJI_ICON = { '✅': 'check', '✓': 'check', '✔': 'check', '⚠': 'alert', '🔶': 'alert', 'ℹ': 'info', '☝': 'rotate', '🌙': 'moon', '☀': 'sun', '👤': 'user', '📋': 'list', '🛒': 'cart', '🔥': 'tag', '🌱': 'leaf', '🌾': 'drop', '⚖': 'info', '🔖': 'bookmark', '⬇': 'download' };
+const EMOJI_ICON = { '✅': 'check', '✓': 'check', '✔': 'check', '⚠': 'alert', '🔶': 'alert', 'ℹ': 'info', '☝': 'rotate', '🌙': 'moon', '☀': 'sun', '👤': 'user', '📋': 'list', '🛒': 'cart', '🔥': 'tag', '🌱': 'leaf', '🌾': 'drop', '⚖': 'info', '🔖': 'bookmark', '⬇': 'download',
+  '🗑': 'trash', '🎨': 'pen', '🔨': 'pen', '🪙': 'pen', '✒': 'pen', '🎟': 'tag', '🍽': 'box' };
 const iconFor = (emoji) => ICON[EMOJI_ICON[emoji.replace(/\uFE0F/g, '').trim()]] || null;
 /**
  * Führendes Emoji im ersten Textknoten von el durch <span class="m-ico">SVG</span> ersetzen — auch nachdem app.js/auth.js/aktion.js den
@@ -115,6 +118,37 @@ function whenFilled(el, cb) {
   const mo = new MutationObserver(() => { if (el.children.length) { mo.disconnect(); cb(); } });
   mo.observe(el, { childList: true });
 }
+// ---------------------------------------------------------------------------
+// Bilder unter der Falz (nur Handy): data-src statt src — Signatur-Kachel, NEU-Kacheln, Formen ab Reihe 2 (studio.js), „Zuhause“-Reihe.
+// Geladen werden sie per IntersectionObserver 600 px bevor sie ins Bild kommen, beobachtet erst ab der ersten Scroll-/Wischbewegung:
+// wer nur den Hero ansieht, lädt sie nie (Erst-Payload), wer scrollt, hat 600 px Vorlauf. Desktop/Tablet: unverändert (src wie bisher).
+// ---------------------------------------------------------------------------
+let lazyIO = null, lazyArmed = false;
+const lazyQueue = [], lazyTargets = new Map(); // beobachtetes Element → Bilder, die es freigibt
+function lazyLoad(img) {
+  const s = img.dataset.src; if (!s) return;
+  delete img.dataset.src;
+  if (!img.getAttribute('src')) img.src = s; // eine inzwischen gesetzte Quelle (z. B. Finish-Wahl) gewinnt
+}
+/** img erst laden, wenn target (Standard: das Bild selbst) auf 600 px herankommt — Wischreihen geben alle Bilder gemeinsam frei (der Observer
+ *  sieht Karten außerhalb des seitlichen Scroll-Bereichs nicht; sonst stünde beim Wischen eine leere Karte im Bild) */
+function lazyImg(img, target = img) {
+  if (!img || !img.dataset.src) return;
+  if (!('IntersectionObserver' in window)) { lazyLoad(img); return; }
+  if (!lazyIO) lazyIO = new IntersectionObserver((es) => es.forEach((e) => { if (!e.isIntersecting) return; lazyIO.unobserve(e.target); (lazyTargets.get(e.target) || []).forEach(lazyLoad); lazyTargets.delete(e.target); }), { rootMargin: '600px 0px' });
+  const list = lazyTargets.get(target); if (list) { list.push(img); return; }
+  lazyTargets.set(target, [img]);
+  if (lazyArmed) lazyIO.observe(target); else lazyQueue.push(target);
+}
+function armLazy() {
+  if (lazyArmed) return; lazyArmed = true;
+  for (const t of lazyQueue.splice(0)) if (lazyTargets.has(t)) lazyIO?.observe(t);
+}
+function initLazy() {
+  if (scrollY > 40 || location.hash) { armLazy(); return; } // Sprung per Anker / wiederhergestellte Scroll-Position: sofort beobachten
+  for (const ev of ['scroll', 'touchmove', 'keydown', 'wheel']) window.addEventListener(ev, armLazy, { once: true, passive: true });
+}
+
 /** Bild-Crossfade 250 ms über ein zweites <img> (Leitkachel) */
 function crossfade(imgA, imgB, src, alt) {
   if (imgA.src.endsWith(src)) return;
@@ -192,8 +226,9 @@ function renderPatternPrices() {
 // ---------------------------------------------------------------------------
 // Sheet-Inhalte
 // ---------------------------------------------------------------------------
-// Ein Verb für jeden Bestellweg: „Vase gestalten“ (Hero, Pille, FAQ-Ende) bzw. „Diese Vase gestalten“ im Sheet (übernimmt genau das Gezeigte)
-const SHEET_CTA = 'Diese Vase gestalten ↗';
+// Ein Verb für jeden Bestellweg: „Diese Vase gestalten ↓“ (Hero-Knopf und Sheet, übernimmt genau das Gezeigte), „Vase gestalten ↓/↑“ (Pille,
+// FAQ-Ende). Alle springen innerhalb der Seite zum Konfigurator → Richtungspfeil ↓/↑; ↗ bleibt externen Links vorbehalten
+const SHEET_CTA = 'Diese Vase gestalten ↓';
 function formSheet(i, source) {
   const d = STUDIO_DESIGNS[i]; const cfg = designConfig(d);
   return {
@@ -259,7 +294,7 @@ function flipFrom(img) {
 let dots = null, swipeHint = null, useLabel = null, shownIndex = 0, heroPriceEl = null;
 /** Position der gezeigten Form in der Bühnen-Reihenfolge (ORDER) — Punkte und Wischen zählen danach */
 const heroPos = () => Math.max(0, ORDER.indexOf(heroIndex));
-/** Hero-Knopf: fest „Diese Vase gestalten ↗“ (wie in den Sheets) — der Name der gezeigten Vase steht in der Kapsel und klein in der Preiszeile */
+/** Hero-Knopf: fest „Diese Vase gestalten ↓“ (wie in den Sheets) — der Name der gezeigten Vase steht in der Kapsel und klein in der Preiszeile */
 const HERO_CTA = 'Diese Vase gestalten';
 /**
  * Preiszeile unter dem Knopf, im selben Takt wie Kapsel und Punkte: „Hammerschlag 23,99 € 28,22 € zzgl. Versand“ — genau der Preis, den
@@ -289,10 +324,15 @@ function initHeroDom() {
   art.dataset.world = canRun3D() ? 'deferred' : 'photo'; // studio.js liest das synchron beim Start
   const side = $('.hero-side'), use = $('#hero-use'), hint = $('#hero-hint'), intro = $('.hero-intro');
   side.insertBefore(use, hint);
-  // Knopftext fest „Diese Vase gestalten ↗“; der Klick öffnet genau die gezeigte Vase (Capture-Listener in initHeroLogic)
+  // Knopftext fest „Diese Vase gestalten ↓“ (der Konfigurator liegt weiter unten auf derselben Seite: Richtungspfeil statt ↗);
+  // der Klick öffnet genau die gezeigte Vase (Capture-Listener in initHeroLogic)
+  const arrow = use.querySelector(':scope > span'); if (arrow) { arrow.textContent = '↓'; arrow.classList.add('m-use-arrow'); arrow.setAttribute('aria-hidden', 'true'); }
   for (const n of use.childNodes) { if (n.nodeType === 3 && n.textContent.trim()) { useLabel = document.createElement('span'); useLabel.className = 'm-use-label'; n.replaceWith(useLabel); break; } }
   // Preiszeile der gezeigten Vase (ersetzt mobil die „ab …“-Zeile #hero-hint; die bleibt versteckt als Preisquelle der Pille)
   heroPriceEl = document.createElement('p'); heroPriceEl.className = 'm-hero-price'; hint.after(heroPriceEl);
+  // Kleine Handys (≤ 700 px Höhe): Kicker und Unterzeile weichen der Bühne — diese eine Zeile sagt dann, worum es geht (nur dort sichtbar, mobile.css)
+  const one = document.createElement('p'); one.className = 'm-oneliner'; one.textContent = 'Vase selbst gestalten · wir drucken sie für dich';
+  ($('#hero-sub-m') || use).after(one);
   // 3D-Bühne startet mit ORDER[0] (Hammerschlag) — Punkte, Kapsel und Knopf-Ziel schon jetzt darauf (studio.js wählt die Form beim Start)
   if (art.dataset.world !== 'photo') heroIndex = ORDER[0];
   paintHero();
@@ -444,6 +484,7 @@ function initForms() {
   const eb = $('#formen .eyebrow'); if (eb) eb.textContent = 'Formen';
   const rh = $('#formen .rail-hint'); if (rh) rh.textContent = '06 Ausgangspunkte · antippen für Details';
   whenFilled(grid, () => {
+    $$('img[data-src]', grid).forEach((i) => lazyImg(i)); // Kacheln ab Reihe 2 (studio.js, nur Handy): erst beim Heranscrollen laden
     const own = $('.design-card:nth-child(6) .design-title>span', grid); if (own) own.textContent = 'Eigene Linie';
     $$('.design-card', grid).slice(2, 6).forEach((c, i) => reveal(c, (i % 2) * 60)); // erste Reihe (Verkaufsinhalt) nie versteckt
   });
@@ -466,20 +507,23 @@ function initPatterns() {
   for (const p of sw) { try { const o = JSON.parse(sessionStorage.getItem(PREV_KEY + p.key) || 'null'); if (o && /^data:image\//.test(o.full || '')) { p.preview = o.full; p.macro = o.macro || null; } } catch { /* egal */ } }
   const sec = document.createElement('section'); sec.id = 'm-oberflaechen'; sec.className = 'm-catalog';
   sec.innerHTML = `<div class="wrap"><p class="eyebrow">Oberflächen</p><h2>Nicht glatt.<br><em>Charakterstark.</em></h2><span class="rail-hint">09 Muster · antippen</span>` +
-    // Signatur-Kachel: Bild + Titel (als Overlay mit Verlauf auf dem Foto — nie unter der klebenden Pille) im Knopf; die Finish-Wahl steht als eigene
-    // Knopfgruppe (≥ 40 px Ziele) daneben – kein Bedienelement im Bedienelement. Foto lazy/niedrige Priorität: es steht ~2 Bildschirme tief
-    `<div class="m-lead-wrap"><button class="m-lead" type="button" data-key="${lead.key}" aria-label="${esc(lead.name)} – Details"><div class="m-img"><img src="${lead.image}" width="1122" height="1402" loading="lazy" fetchpriority="low" decoding="async" alt="${esc(lead.alt)}"><img class="m-img2" aria-hidden="true" alt="" decoding="async"><span class="m-pill">Signatur</span><span class="m-badge m-lead-badge" hidden></span><div class="m-lead-title"><h3>${esc(lead.name)}</h3><span class="m-lead-sub">Gehämmert · Kupfer, Matt oder Silber</span></div></div></button>` +
+    // Signatur-Kachel: Bild + Titel (oben links unter der Kapsel „Signatur“, mit Verlauf auf dem Foto — die klebende Pille unten verdeckt ihn nie)
+    // im Knopf; die Finish-Wahl steht als eigene Knopfgruppe (≥ 40 px Ziele) unten links – kein Bedienelement im Bedienelement.
+    // Fotos (Signatur, Voronoi, Fjordwelle) per data-src: sie stehen ~2 Bildschirme tief und laden erst beim Heranscrollen (lazyImg)
+    `<div class="m-lead-wrap"><button class="m-lead" type="button" data-key="${lead.key}" aria-label="${esc(lead.name)} – Details"><div class="m-img"><img data-src="${lead.image}" width="1122" height="1402" loading="lazy" fetchpriority="low" decoding="async" alt="${esc(lead.alt)}"><img class="m-img2" aria-hidden="true" alt="" decoding="async"><span class="m-pill">Signatur</span><span class="m-badge m-lead-badge" hidden></span><div class="m-lead-title"><h3>${esc(lead.name)}</h3><span class="m-lead-sub">Gehämmert · Kupfer, Matt oder Silber</span></div></div></button>` +
     `<div class="m-finish" role="group" aria-label="Finish wählen">${lead.chips.map((c, i) => `<button type="button" data-finish="${i}" class="${i === 0 ? 'on' : ''}" style="--hex:${c.hex}" aria-label="${esc(c.label)}" aria-pressed="${i === 0}"></button>`).join('')}</div></div>` +
-    `<div class="m-pair">${news.map((p) => `<button class="m-tile" type="button" data-key="${p.key}" aria-label="${esc(p.name)} – Details"><div class="m-img"><img src="${p.image}" width="1024" height="1280" loading="lazy" decoding="async" alt="${esc(p.alt)}"><span class="m-pill m-pill-new">Neu</span></div><h3>${esc(p.name)}</h3><span>${esc(p.sub)}</span></button>`).join('')}</div>` +
+    `<div class="m-pair">${news.map((p) => `<button class="m-tile" type="button" data-key="${p.key}" aria-label="${esc(p.name)} – Details"><div class="m-img"><img data-src="${p.image}" width="1024" height="1280" loading="lazy" decoding="async" alt="${esc(p.alt)}"><span class="m-pill m-pill-new">Neu</span></div><h3>${esc(p.name)}</h3><span>${esc(p.sub)}</span></button>`).join('')}</div>` +
     // Swatches: Katalog-Beschriftung wie die Paar-Kacheln (Serifen-Name links, zweite Zeile Aufpreis bzw. „inklusive“)
     `<div class="m-swatches">${sw.map((p) => `<button class="m-swatch" type="button" data-key="${p.key}" aria-label="${esc(p.name)} – Details" style="--m-hex:${p.hex}"><div class="m-img${p.svg && !p.preview ? ' is-svg' : ''}">${swatchMedia(p)}</div><h3>${esc(p.name)}</h3><small class="m-sw-sub">${esc(swatchSub(p))}</small></button>`).join('')}</div></div>`;
   $('#formen').after(sec);
+  $$('img[data-src]', sec).forEach((i) => lazyImg(i));
   // Finish-Knöpfe: Crossfade + Chip-Index fürs Sheet (Farbe wandert in den CTA)
   const imgA = $('.m-lead img:not(.m-img2)', sec), imgB = $('.m-img2', sec), fdots = $$('.m-finish button', sec);
   $('.m-finish', sec).addEventListener('click', (e) => {
     const d = e.target.closest('[data-finish]'); if (!d) return;
     leadChip = +d.dataset.finish; const c = lead.chips[leadChip];
     fdots.forEach((x, k) => { x.classList.toggle('on', k === leadChip); x.setAttribute('aria-pressed', String(k === leadChip)); });
+    delete imgA.dataset.src; // Finish gewählt, bevor das aufgeschobene Foto kam: das gewählte gilt, der Lazy-Loader überschreibt es nicht
     crossfade(imgA, imgB, c.image, `Gehämmerte Vase in ${c.label}, 3D-gedruckt mit sichtbaren Schichten`);
     buzz();
   });
@@ -537,8 +581,7 @@ function kickPreviews() {
   prevBusy = true;
   idle(async () => {
     const todo = missingPreviews();
-    const outs = await renderPreviewsOffscreen(todo.map(snapshotJob));
-    outs.forEach((o, i) => applyPreview(todo[i], o));
+    await renderPreviewsOffscreen(todo.map(snapshotJob), (i, o) => applyPreview(todo[i], o)); // jede Vorschau sofort in ihre Kachel
     prevBusy = false;
   }, 3000);
 }
@@ -567,9 +610,9 @@ function syncCta() {
   const kr = konfEl.getBoundingClientRect(); const konfNear = kr.top < H - 40 && kr.bottom > H * .4;
   const quiet = quietBand(H); // Lieferversprechen (Schritt 3) und FAQ-Fragen liegen im Pillen-Streifen → weichen
   const footer = $('footer'); const onFooter = !!footer && footer.getBoundingClientRect().top < H - 70; // Footer überlappt den CTA-Streifen → helle Variante
-  // Signatur-Kachel: ihr Titel („Hammerschlag“) liegt unten auf dem Foto — solange er durch den Pillen-Streifen läuft, weicht die Pille
-  const lt = $('.m-lead-title')?.getBoundingClientRect(); const overLead = !!lt && lt.height > 0 && lt.bottom > H - 86 && lt.top < H - 6;
-  const show = heroOut && !atEnd && !inlineIn && !barShown && !konfNear && !quiet && !overLead && !b.contains('m-sheet-open') && !b.contains('no-scroll');
+  // Keine Ausnahme mehr für die Signatur-Kachel: ihr Titel steht oben links unter der Kapsel (mobile.css), die Pille muss ihm nicht weichen —
+  // vorher blinkte sie beim Durchscrollen des Katalogs aus und wieder ein
+  const show = heroOut && !atEnd && !inlineIn && !barShown && !konfNear && !quiet && !b.contains('m-sheet-open') && !b.contains('no-scroll');
   ctaWrap.classList.toggle('compact', below); ctaWrap.classList.toggle('on-footer', onFooter);
   paintFade(H); // setzt auch on-dark (dunkle Sektion unter der Pille → helle Pille)
   if (show === ctaShown) return;
@@ -707,9 +750,16 @@ function initRest() {
     while (pool.length) { const last = out.length ? tone(out[out.length - 1]) : null; let k = pool.findIndex((el) => !last || !tone(el) || tone(el) !== last); if (k < 0) k = 0; out.push(pool.splice(k, 1)[0]); }
     if (out.some((el, i) => el !== items[i])) out.forEach((el) => grid.appendChild(el));
     out.forEach((u, i) => reveal(u, i * 60));
+    // Fotos erst beim Heranscrollen laden (die Reihe steht am Seitenende): src → data-src im selben Takt, in dem app.js sie einsetzt —
+    // bevor der Browser die (lazy) Bilder anfordert
+    for (const img of $$('img', grid)) { const s = img.getAttribute('src'); if (s && !s.startsWith('data:')) { img.dataset.src = s; img.removeAttribute('src'); img.decoding = 'async'; lazyImg(img, grid); } }
   });
   whenFilled($('#faq-list'), () => {
     const list = $('#faq-list');
+    // „Sind die Vasen wasserdicht?“ ist die Kauffrage Nr. 1 bei Vasen: vor dem Kürzen an Position 2 (nach der Lieferzeit), damit sie unter den
+    // vier sichtbaren Fragen steht (nur die Reihenfolge im DOM, Texte aus content.json unverändert)
+    const all = $$('details', list), wet = all.find((d) => /wasserdicht|wasserfest/i.test($('summary', d)?.textContent || ''));
+    if (wet && all.indexOf(wet) > 1) all[1].before(wet);
     // Der STL-Download (vorher als Fachbegriff in jedem Sheet) lebt jetzt hier und im Konfigurator — als Antwort auf die eigentliche Frage
     const stl = document.createElement('details'); stl.className = 'card m-faq-stl';
     stl.innerHTML = '<summary>Bekomme ich eine Vase oder eine Datei?</summary><p>Eine echte Vase: Wir drucken sie nach deinem Design und schicken sie dir. Wer selbst einen 3D-Drucker hat, kann sein Design im Konfigurator zusätzlich als STL-Datei herunterladen – ohne Aufpreis.</p>';
@@ -722,7 +772,7 @@ function initRest() {
       btn.addEventListener('click', () => { list.classList.add('m-all'); btn.remove(); buzz(); });
     }
     // Einziger Inline-Bestellknopf der Seite: nach der FAQ, vollbreit mit Preis (Rückweg am Ende des Funnels); die Pille weicht, solange er im Bild ist
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'm-inline-cta m-inline-cta-primary'; b.innerHTML = `Vase gestalten <b>${heroFromHTML()}</b>`;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'm-inline-cta m-inline-cta-primary'; b.innerHTML = `Vase gestalten ↑ <b>${heroFromHTML()}</b>`; // Konfigurator liegt darüber
     b.addEventListener('click', scrollToStudio); anchor.after(b);
   });
   // Aktionsleiste: Kurz-Countdown („noch 1 Tag 11 Std“) statt abgeschnittenem Langtext — aktion.js frischt Stellen mit data-kurz selbst so auf;
@@ -836,6 +886,8 @@ function initToast() {
 // ---------------------------------------------------------------------------
 function initStageHint() {
   const hint = $('#stage-hint'), stage = $('.stage'), viewer = $('#viewer'); if (!hint || !stage) return;
+  // Schutzstreifen unter den Szenen-Chips (mobile.css .m-chip-guard): trennt die Chip-Leiste von der Drehfläche
+  const chips = $('#scene-chips'); if (chips) { const g = document.createElement('div'); g.className = 'm-chip-guard'; g.setAttribute('aria-hidden', 'true'); stage.insertBefore(g, chips); }
   let touched = false, dwelt = false, timer = null, dwell = null;
   const hide = () => { clearTimeout(timer); hint.classList.remove('m-show'); };
   const show = () => { if (touched) return; hint.classList.add('m-show'); clearTimeout(timer); timer = setTimeout(hide, 4000); };
@@ -849,8 +901,102 @@ function initStageHint() {
   viewer?.addEventListener('pointerdown', () => { touched = true; io.disconnect(); clearTimeout(dwell); hide(); }, { passive: true });
 }
 
+// ---------------------------------------------------------------------------
+// Konfigurator-Führung: am Ende jedes Tabs ein vollbreiter Sekundärknopf „Weiter: Muster →“ … im letzten Tab „Fertig · In den Warenkorb“
+// (derselbe Weg wie #mb-cart). Reihenfolge und Beschriftung folgen der Tab-Leiste (#mtabs, mobile.js) — der Wechsel läuft über deren
+// Knopf (activateTab), danach steht der Tab-Anfang direkt unter Bühne und Tab-Leiste.
+// ---------------------------------------------------------------------------
+function initTabNext() {
+  const panel = $('#konfigurator .panel'), tabs = $('#mtabs'); if (!panel || !tabs) return;
+  const order = () => $$('.mtab[data-tab]', tabs).map((b) => [b.dataset.tab, (b.textContent || '').replace(/^\s*\d+\s*/, '').trim()]);
+  const paint = () => {
+    const o = order(); if (!o.length) return;
+    for (const sec of $$('.ctrl[data-tab]', panel)) {
+      let b = $(':scope > .m-next', sec);
+      if (!b) { b = document.createElement('button'); b.type = 'button'; b.className = 'm-next'; sec.appendChild(b); }
+      const i = o.findIndex(([k]) => k === sec.dataset.tab), next = i < 0 ? null : o[i + 1];
+      b.hidden = i < 0; b.dataset.next = next ? next[0] : ''; if (i < 0) continue; // Tab gerade nicht angeboten (Extras nur beim Eierbecher)
+      const t = next ? `Weiter: ${next[1]} →` : 'Fertig · In den Warenkorb';
+      if (b.textContent !== t) b.textContent = t;
+      b.classList.toggle('m-next-done', !next);
+    }
+  };
+  paint(); new MutationObserver(paint).observe(tabs, { childList: true });
+  panel.addEventListener('click', (e) => {
+    const b = e.target.closest('.m-next'); if (!b) return;
+    if (!b.dataset.next) { $('#mb-cart')?.click(); return; } // Warenkorb wie über die Preisleiste (mobile.js: buzz + #btn-order)
+    buzz();
+    $(`.mtab[data-tab="${b.dataset.next}"]`, tabs)?.click(); // vorhandene Tab-Logik (activateTab, Tab-Leiste zentriert)
+    // Tab-Anfang unter Bühne + Tab-Leiste (activateTab holt das Panel nur hoch, wenn es darüber liegt; hier immer, auch nach der Bühnen-Transition)
+    const align = (smooth) => {
+      const sec = $(`.ctrl[data-tab="${b.dataset.next}"]`, panel); if (!sec) return;
+      const d = sec.getBoundingClientRect().top - tabs.getBoundingClientRect().bottom - 12;
+      if (Math.abs(d) > 6) window.scrollBy({ top: d, behavior: smooth && !reduced.matches ? 'smooth' : 'instant' });
+    };
+    requestAnimationFrame(() => align(true)); setTimeout(() => align(false), 520);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Darstellung: der Hell/Dunkel-Knopf verlässt die volle Kopfzeile (mobile.css) und lebt als Zeile „Darstellung: Hell · Dunkel · System“ im
+// Footer. Hell/Dunkel schalten über den vorhandenen Knopf (#theme-btn, app.js: Klasse auf <html>, localStorage, theme-color), „System“
+// löscht die Wahl und folgt prefers-color-scheme (wie das Früh-Skript im <head>), auch bei späteren Wechseln des Systems.
+// ---------------------------------------------------------------------------
+function initThemeRow() {
+  const btn = $('#theme-btn'), foot = $('footer'); if (!btn || !foot) return;
+  // eigene Zeile NACH dem Footer-Raster (nicht darin: dessen :last-child-Regeln gehören der Spalte „Direkt hin“)
+  const wrap = document.createElement('div'); wrap.className = 'wrap m-theme-wrap';
+  const row = document.createElement('p'); row.className = 'm-theme'; row.setAttribute('role', 'group'); row.setAttribute('aria-label', 'Darstellung');
+  row.innerHTML = '<span>Darstellung:</span> <button type="button" data-mode="light">Hell</button> · <button type="button" data-mode="dark">Dunkel</button> · <button type="button" data-mode="system">System</button>';
+  wrap.appendChild(row); foot.appendChild(wrap);
+  const mq = matchMedia('(prefers-color-scheme: dark)');
+  const stored = () => { try { return localStorage.getItem('ovju-theme'); } catch { return null; } };
+  const store = (v) => { try { if (v) localStorage.setItem('ovju-theme', v); else localStorage.removeItem('ovju-theme'); } catch { /* egal */ } };
+  const setDark = (want) => { if (document.documentElement.classList.contains('dark') !== want) btn.click(); };
+  const paint = () => { const s = stored(), mode = s === 'dark' || s === 'light' ? s : 'system'; $$('button', row).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === mode))); };
+  row.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]'); if (!b) return;
+    buzz(); const m = b.dataset.mode;
+    if (m === 'system') { setDark(mq.matches); store(null); } else { setDark(m === 'dark'); store(m); }
+    paint();
+  });
+  mq.addEventListener?.('change', () => { if (stored()) return; setDark(mq.matches); store(null); paint(); });
+  paint();
+}
+
+// ---------------------------------------------------------------------------
+// Warenkorb-Blatt und Kasse: cart.js schreibt Emoji (🛒 🔥 🔖 📋 🗑 🎨 …) — hier durch die Linien-Icons ersetzt, Text bleibt. Beobachtet den
+// ganzen Dialog (cart.js rendert Zeilen, Summen und Code-Knöpfe neu); die eigene Ersetzung hinterlässt kein Emoji, also keine Schleife.
+// ---------------------------------------------------------------------------
+// Pfeile (↗ …) und ©/®/™ zählen in Unicode auch als Piktogramme — die bleiben Text
+const EMOJI_HAS = /(?:(?![\u00a9\u00ae\u2122\u2190-\u21ff])\p{Extended_Pictographic}|[✓✔])/u;
+const EMOJI_ALL = /((?:(?![\u00a9\u00ae\u2122\u2190-\u21ff])\p{Extended_Pictographic}|[✓✔])\uFE0F?)[ \u00a0]?/gu;
+function iconizeTree(root) {
+  if (!root) return;
+  const run = () => {
+    const nodes = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) if (EMOJI_HAS.test(n.textContent)) nodes.push(n);
+    for (const n of nodes) {
+      const t = n.textContent, frag = document.createDocumentFragment(); let last = 0;
+      for (const m of t.matchAll(EMOJI_ALL)) {
+        if (m.index > last) frag.append(t.slice(last, m.index));
+        const svg = iconFor(m[1]);
+        if (svg) { const s = document.createElement('span'); s.className = 'm-ico'; s.setAttribute('aria-hidden', 'true'); s.innerHTML = svg; frag.append(s); }
+        last = m.index + m[0].length;
+      }
+      if (last < t.length) frag.append(t.slice(last));
+      n.replaceWith(frag);
+    }
+    // Design-Code-Knopf: nach „✓ kopiert“ setzt cart.js nur den Text zurück — Lesezeichen wieder davor
+    for (const b of $$('.ci-code', root)) if (!b.querySelector('.m-ico')) { const s = document.createElement('span'); s.className = 'm-ico'; s.setAttribute('aria-hidden', 'true'); s.innerHTML = ICON.bookmark; b.prepend(s); }
+    for (const i of $$('input[placeholder]', root)) if (EMOJI_HAS.test(i.placeholder)) i.placeholder = i.placeholder.replace(EMOJI_ALL, '').trim();
+  };
+  run(); new MutationObserver(run).observe(root, { childList: true, characterData: true, subtree: true });
+}
+
 function init() {
   document.body.classList.add('m-home');
+  initLazy();
   if (!reduced.matches) revealIO = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('visible'); revealIO.unobserve(e.target); } }), { threshold: 0, rootMargin: '0px 0px 160px 0px' });
   initHeroDom();
   initForms();
@@ -862,6 +1008,9 @@ function init() {
   initIcons();
   initToast();
   initStageHint();
+  initTabNext();
+  initThemeRow();
+  for (const id of ['cart-modal', 'checkout-modal']) iconizeTree(document.getElementById(id));
   // Sicherheitsnetz: was jetzt schon im Bild ist, nie verdeckt lassen (belasteter Main-Thread, schnelles Wischen)
   revealVisible(); setTimeout(revealVisible, 1200); window.addEventListener('load', () => setTimeout(revealVisible, 300));
 }

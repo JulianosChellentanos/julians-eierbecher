@@ -157,16 +157,20 @@ export function renderJob(renderer, scene, job) {
 /**
  * items: [{ config, hex, finish, … SWATCH_VIEW-Überschreibungen }] → Promise<({full, macro}|null)[]>
  * Kurzlebiger Kontext (transparent wie der Hero-Canvas), je Modell ein Leerlauf-Fenster; wirft nie.
+ * onEach(i, out): sofort nach JEDEM Modell — die Kachel bekommt ihr Bild, ohne auf die übrigen zu warten (keine „Geister-Kacheln“).
  */
-export async function renderPreviewsOffscreen(items) {
+export async function renderPreviewsOffscreen(items, onEach = null) {
   if (!SMALL || !items.length) return items.map(() => null);
   let studio = null; const out = [];
   try {
     const canvas = document.createElement('canvas'); canvas.width = SWATCH_VIEW.full.w; canvas.height = SWATCH_VIEW.full.h;
     studio = makeStudio(canvas, { width: SWATCH_VIEW.full.w, height: SWATCH_VIEW.full.h, transparent: true, capture: true, shadowSize: 512 });
     for (const it of items) {
-      try { out.push(renderJob(studio.renderer, studio.scene, it)); } catch (err) { console.warn('Muster-Vorschau (offscreen) nicht möglich', err); out.push(null); }
-      await new Promise((r) => setTimeout(r, 40)); // Hauptthread zwischen zwei Modellen freigeben
+      let o = null;
+      try { o = renderJob(studio.renderer, studio.scene, it); } catch (err) { console.warn('Muster-Vorschau (offscreen) nicht möglich', err); }
+      out.push(o);
+      if (onEach) { try { onEach(out.length - 1, o); } catch (err) { console.warn(err); } }
+      await new Promise((r) => setTimeout(r, 40)); // Hauptthread zwischen zwei Modellen freigeben (Kachel-Einblendung kann malen)
     }
   } catch (err) { console.warn('Offscreen-Vorschau nicht verfügbar', err); while (out.length < items.length) out.push(null); }
   finally {

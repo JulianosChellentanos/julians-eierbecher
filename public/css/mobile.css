@@ -188,14 +188,20 @@
  .m-pill{position:absolute;left:10px;top:10px;font:500 10px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase;padding:7px 9px;border-radius:30px;background:color-mix(in srgb,var(--card) 84%,transparent);color:var(--ink)}
  .m-lead-badge{position:absolute;right:10px;top:10px;font:600 12px/1 var(--sans);padding:7px 9px;border-radius:30px}
  /* Finish-Wahl: eigene Knopfgruppe unter der Signatur-Pille (40-px-Ziele, 22-px-Punkte), Bild-Crossfade, Farbe wandert ins Sheet/CTA */
- .m-finish{position:absolute;left:8px;top:40px;z-index:2;display:flex}.m-finish button{width:40px;height:40px;padding:0;border:0;background:none;display:grid;place-items:center;cursor:pointer}
+ .m-finish{position:absolute;left:8px;bottom:8px;top:auto;z-index:2;display:flex} /* unten links auf dem Foto (oben steht der Titel) */.m-finish button{width:40px;height:40px;padding:0;border:0;background:none;display:grid;place-items:center;cursor:pointer}
  .m-finish button::before{content:'';width:22px;height:22px;border-radius:50%;background:var(--hex);border:2px solid #fffb;box-shadow:0 1px 4px #0006;transition:transform .12s}.m-finish button.on::before{border-color:#fff;outline:2px solid #211d18;outline-offset:1px}.m-finish button:active::before{transform:scale(.9)}
- .m-lead-title{position:absolute;left:0;right:0;bottom:0;z-index:1;padding:56px 16px 16px;background:linear-gradient(to top,#15100cc4 0%,#15100c66 55%,#15100c00 100%);color:#fff;pointer-events:none}.m-lead-title h3{font:450 28px/1.05 var(--serif);letter-spacing:-.7px;margin:0;color:#fff}.m-lead-sub{display:block;font-size:12px;color:#ffffffd9;margin-top:4px} /* Titel liegt auf dem Foto: nie unter der klebenden Pille */
+ .m-lead-title{position:absolute;left:0;right:0;top:0;bottom:auto;z-index:1;padding:44px 16px 44px;background:linear-gradient(to bottom,#15100cb8 0%,#15100c5c 58%,#15100c00 100%);color:#fff;pointer-events:none}.m-lead-title h3{font:450 28px/1.05 var(--serif);letter-spacing:-.7px;margin:0;color:#fff}.m-lead-sub{display:block;font-size:12px;color:#ffffffd9;margin-top:4px} /* Titel oben links direkt unter der Kapsel „Signatur“ — die klebende Pille unten verdeckt ihn nie, sie muss ihm also auch nicht weichen (kein Flackern) */
+ .m-lead .m-pill,.m-lead .m-lead-badge{z-index:2}
  .m-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.m-tile .m-img{aspect-ratio:170/212}.m-tile img{width:100%;height:100%;object-fit:cover;display:block}.m-pill-new{background:var(--accent);color:#fff}.dark .m-pill-new{color:#17130f}.m-tile h3{font:450 20px/1.1 var(--serif);margin:8px 0 0}.m-tile>span{font-size:11px;color:var(--ink-soft);display:block;margin-top:2px}
  /* Swatches = sechs Muster auf derselben Vasenform (Flasche 15 cm, ganze Silhouette, je eine Markenfarbe, Streiflicht, mobile-preview.js) im
     Hochformat wie die Paar-Kacheln; bis die 3D-Vorschau da ist: Muster-Symbol in der Musterfarbe auf demselben Elfenbein-Grund */
  .m-swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:18px 10px;margin-top:18px}.m-swatch .m-img{aspect-ratio:4/5;border-radius:8px;display:grid;place-items:center;background:#efe8da}.m-swatch img{width:100%;height:100%;object-fit:cover;display:block;transition:opacity .45s ease}.m-swatch img.m-prev-in{opacity:0}
  .m-swatch .m-img.is-svg svg{width:52%;height:52%;color:var(--m-hex,#a8987a);display:block}
+ /* Bis die 3D-Vorschau kommt: Skeleton in der Kachelfarbe (Grund leicht getönt, Symbol kräftiger) mit sanftem Schimmer — keine leere Kachel */
+ .m-swatch .m-img.is-svg{background:color-mix(in srgb,var(--m-hex,#a8987a) 16%,#efe8da)}.m-swatch .m-img.is-svg svg{color:color-mix(in srgb,var(--m-hex,#a8987a) 72%,#5a4a38);position:relative;z-index:1}
+ .m-swatch .m-img.is-svg::after{content:'';position:absolute;inset:0;background:linear-gradient(105deg,transparent 25%,color-mix(in srgb,#fff 42%,transparent) 50%,transparent 75%);transform:translateX(-100%);animation:m-shimmer 1.7s ease-in-out infinite}
+ @keyframes m-shimmer{to{transform:translateX(100%)}}
+ @media(prefers-reduced-motion:reduce){.m-swatch .m-img.is-svg::after{animation:none;opacity:0}}
  /* Eine Beschriftung für den ganzen Katalog: Serifen-Name links (wie Voronoi/Fjordwelle), zweite Zeile 11 px Aufpreis bzw. „inklusive“, 8 px unter der Kachel */
  .m-swatch h3{font:450 16px/1.15 var(--serif);letter-spacing:-.2px;margin:8px 0 0;color:var(--ink)}.m-swatch .m-sw-sub{display:block;font:400 11px/1.3 var(--sans);color:var(--ink-soft);margin-top:2px}
  /* --- Bottom-Sheet (ein DOM-Knoten, mobile-sheet.js) --- */
@@ -305,4 +311,35 @@
  .dark .stage .stage-hint{background:#15191280;background:color-mix(in srgb,#141811 82%,transparent);color:#f3f6e9}
  /* Hinweis-Kapsel im Panel */
  .m-note summary .m-ico{color:var(--ink-soft)}.m-note summary .m-ico svg{width:15px;height:15px}
+ /* ===== D · Runde 7: Führung im Konfigurator, Szenen-Chips, Darstellung im Footer, kleine Handys, Warenkorb-Icons ===== */
+ /* Szenen-Chips auf der Bühne: 36 px hoch, Tippfläche 44 px (unsichtbares ::after), 2-px-Lücken treffen die Leiste statt der Drehfläche;
+    ein unsichtbarer Schutzstreifen (.m-chip-guard, mobile-home.js) trennt die Leiste von der Drehfläche — ein knapp verfehlter Tipp dreht die
+    Vase nicht, senkrechtes Wischen dort scrollt die Seite. Dreh-Hinweis und Toast rücken entsprechend höher. */
+ body.is-mobile #konfigurator .stage .scene-chips{bottom:10px;padding:4px;gap:2px;align-items:center}
+ body.is-mobile #konfigurator .stage .scene-chip{position:relative;min-height:36px;padding:0 11px;font-size:10px;line-height:1;display:inline-flex;align-items:center}
+ body.is-mobile #konfigurator .stage .scene-chip::after{content:'';position:absolute;left:-1px;right:-1px;top:-4px;bottom:-4px;border-radius:999px}
+ body.is-mobile #konfigurator .stage .stage-foto{width:38px;height:38px;bottom:14px}
+ body.is-mobile #konfigurator .stage .stage-foto::after{content:'';position:absolute;inset:-3px;border-radius:50%}
+ .m-chip-guard{position:absolute;left:0;right:0;bottom:0;height:68px;z-index:3;touch-action:pan-y}.stage.stage-full .m-chip-guard{display:none}
+ .stage .stage-hint{bottom:62px} /* bewusst niedrige Spezifität: der Öffnungs-Hinweis (style.css :has(.stage-openwarn)) schiebt ihn weiter nach oben */
+ body.m-home #toast{top:calc(var(--stage-h) - 96px + env(safe-area-inset-top,0px))}
+ /* Weiter-Knöpfe am Ende jedes Tabs (mobile-home.js initTabNext): vollbreit, sekundär; der letzte führt in den Warenkorb */
+ .m-next{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:50px;margin:22px 0 2px;padding:0 16px;border:1.5px solid var(--ink);border-radius:14px;background:transparent;color:var(--ink);font:600 14px var(--sans);cursor:pointer;transition:transform .12s ease-out}
+ .m-next:active{transform:scale(.97)}.m-next[hidden]{display:none}
+ .m-next.m-next-done{border-color:var(--accent-dark);color:var(--accent-dark)}.dark .m-next.m-next-done{border-color:var(--accent);color:var(--accent)}
+ /* Kopfzeile entlastet: Hell/Dunkel wandert in den Footer („Darstellung: Hell · Dunkel · System“, mobile-home.js initThemeRow) */
+ .topbar-actions #theme-btn{display:none}
+ footer .m-theme-wrap{margin-top:16px;padding-top:12px;border-top:1px solid #ffffff1f}
+ footer p.m-theme{margin:0;font:500 12px/1.4 var(--sans)!important;color:#d0d7c7!important}
+ footer .m-theme button{appearance:none;background:none;border:0;padding:14px 6px;margin:-14px -3px;font:inherit;color:inherit;cursor:pointer;border-radius:6px}
+ footer .m-theme button[aria-pressed=true]{color:#fff;font-weight:700;text-decoration:underline;text-underline-offset:3px}
+ /* Kleine Handys (≤ 700 px Höhe): Kicker und Unterzeile weichen der Bühne — eine Zeile ordnet trotzdem ein */
+ .m-oneliner{display:none;margin:0 0 12px;font:400 13px/1.35 var(--sans);color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ @media(max-height:700px){.hero-side .m-oneliner{display:block}}
+ /* Aufgeschobene Bilder (data-src, mobile-home.js lazyImg): bis zum Laden kein Alt-Text über dem Platzhaltergrund */
+ main img[data-src]{color:transparent}
+ /* Warenkorb-Blatt und Kasse: Linien-Icons statt Emoji (mobile-home.js iconizeTree), Größe folgt der Schrift */
+ #cart-modal .m-ico,#checkout-modal .m-ico{display:inline-grid;vertical-align:-.16em;margin-right:.35em}
+ #cart-modal .m-ico svg,#checkout-modal .m-ico svg{width:1.1em;height:1.1em}
+ #cart-modal .ci-del .m-ico{margin:0}
 }
