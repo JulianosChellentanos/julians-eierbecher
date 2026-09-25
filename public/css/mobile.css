@@ -1,0 +1,308 @@
+/* OVJU Mobil ≤ 700 px — komplette Handy-Startseite (lebendige 3D-Bühne, Kataloge „Formen“ und „Oberflächen“, Bottom-Sheet, klebender CTA).
+   Eingebunden mit media="(max-width: 700px)" UND intern nochmals @media-gewickelt: Desktop ≥ 981 px und Tablet 701–980 px bleiben unberührt.
+   Farben nur über Tokens (Darkmode automatisch); Animationen nur transform/opacity; prefers-reduced-motion stoppt alles (studio.css, global). */
+@media(max-width:700px){
+ /* ===== A · übernommen aus studio.css (Konfigurator-Kopf, App-Shell-Feinheiten und Regeln der auf dem Handy ausgeblendeten Sektionen) ===== */
+ :root{--wrap-x:30px;--hero-h:clamp(260px,36vh,320px)}
+ .wrap{padding-inline:var(--wrap-x)}
+ /* --- Screen 1: Cover --- */
+ main .eyebrow{font-size:11px}
+ .hero-foot>span:first-child{display:none}
+ /* --- #formlabor --- */
+ .shape-lab{padding:32px 0}
+ .lab-grid{gap:16px}
+ .lab-copy h2{font-size:34px;letter-spacing:-1.4px}
+ .lab-copy>p:not(.eyebrow){margin:12px 0 14px;font-size:12px}
+ .lab-copy .lab-note{display:none}
+ .lab-demo{padding:16px}
+ .lab-visual{height:230px}
+ .lab-help{margin-top:8px}
+ /* --- #produkte: zwei Kacheln --- */
+ #produkte.produkte-band{padding:8px 0 36px}
+ .produkte-band .section-title{font-size:32px;margin-bottom:0}
+ .produkte-band .section-sub{margin:12px 0 22px;font-size:12px}
+ .showcase-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;overflow:visible;padding:0;margin:0;scroll-snap-type:none}
+ .showcase-grid.solo{grid-template-columns:1fr}
+ .showcase-card{flex:none;min-width:0;border-radius:8px}
+ .showcase-card img{aspect-ratio:1;object-position:50% 45%}
+ .showcase-body{padding:12px 12px 14px}
+ .showcase-body h3{font-size:19px;letter-spacing:-.4px;margin:0 0 6px}
+ .showcase-body p{display:none}
+ .showcase-cta{flex-direction:column;align-items:stretch;gap:8px}
+ .showcase-price{font-size:13px;white-space:nowrap}
+ .showcase-cta .btn{width:100%;padding:12px 6px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--ink);color:var(--bg);border:0;border-radius:999px}
+ .dark .showcase-cta .btn{background:var(--card);color:var(--ink)}
+ .panel .flow-btn.active{background:var(--card);color:var(--ink);box-shadow:0 1px 4px #0002}
+ /* --- #oberflaechen --- */
+ .surface-story{padding:32px 0}
+ .surface-grid{gap:18px}
+ .surface-visual img{aspect-ratio:1.15;object-position:50% 88%}
+ .surface-visual[data-shot=scene] img{aspect-ratio:1.15;object-position:32% 50%}
+ .surface-copy h2{font-size:34px;letter-spacing:-1.4px}
+ .surface-copy>p:not(.eyebrow){margin-top:12px;font-size:12px}
+ .surface-copy .finish-label{margin-top:18px!important;font-size:11px!important}
+ .surface-copy .finish-description{font-size:11px!important;margin:10px 0 14px!important}
+ .surface-copy small{margin-top:14px;font-size:11px}
+ /* --- #neue-muster: Zweierreihe --- */
+ .skeleton-story{padding:26px 0}
+ .pattern-feature-heading{margin-bottom:12px}
+ .pattern-feature-heading h2{font-size:30px;letter-spacing:-1.3px}
+ .pattern-feature-heading>p{margin-top:10px;font-size:12px;max-width:none}
+ .pattern-pair{display:flex;grid-template-columns:none;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-left:var(--wrap-x);margin:0 calc(-1*var(--wrap-x));padding:0 var(--wrap-x) 8px;scrollbar-width:none}
+ .pattern-pair::-webkit-scrollbar{display:none}
+ .pattern-pair article{flex:0 0 86%;scroll-snap-align:start;min-width:0;background:#ffffff0d;border-radius:8px;overflow:hidden}
+ .pattern-pair .skeleton-image{border-radius:0}
+ .pattern-pair .skeleton-image img{aspect-ratio:5/6}
+ .pattern-pair .skeleton-copy{padding:12px 14px 14px}
+ .pattern-pair h3{font-size:22px}
+ .pattern-pair .skeleton-copy>p:not(.eyebrow){font-size:12px;margin:6px 0 10px;max-width:none;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+ .pattern-pair .skeleton-facts{display:none}
+ .pattern-pair small{font-size:11px;margin-top:10px;max-width:none}
+ /* --- #konfigurator: nur Kopf --- */
+ #konfigurator.configurator{padding-top:32px}
+ #konfigurator .studio-heading{padding-bottom:16px}
+ #konfigurator .studio-heading h2{font-size:32px}
+ #konfigurator .studio-heading>p{display:none}
+ /* mobile.js hängt die Tab-Leiste vor das Panel in .config-grid: ohne 6-px-Lücke direkt unter der Bühne, Lücke opak abgedeckt, weicher Schatten nach unten */
+ #konfigurator .config-grid>.mtabs{top:calc(var(--stage-h) + env(safe-area-inset-top,0px));box-shadow:0 10px 18px -10px #3c2d1e33;transition:top .38s cubic-bezier(.22,1,.36,1)}
+ #konfigurator .config-grid>.mtabs::before{content:'';position:absolute;left:-7px;right:-7px;top:-8px;height:9px;background:var(--card)}
+ /* Ausstieg: Bühne und Tab-Leiste rollen GEMEINSAM aus. Die Bühne trägt unten einen Rand in Tab-Höhe (--m-tabs-h, gemessen in mobile-home.js),
+    die Tabs holen ihn mit negativem Rand zurück — gleiche Lage im Fluss, aber die klebende Bühne löst sich erst, wenn auch die Tabs gehen
+    (vorher schob der Grid-Rand die Tabs unter die Bühne: Nummern weg, Unterstreichung blitzte an der runden Bühnenecke hervor) */
+ body.is-mobile #konfigurator .config-grid>.stage:not(.stage-full){margin-bottom:var(--m-tabs-h,55px)}
+ body.is-mobile #konfigurator .config-grid>.mtabs{margin-top:calc(-1*var(--m-tabs-h,55px))}
+ #konfigurator .panel{padding-bottom:16px}
+ /* --- Szenen-Journal: Wischreihe --- */
+ .scene-journal{padding-block:28px}
+ .scene-journal .collection-heading{margin-bottom:14px}
+ .scene-journal .collection-heading h2{font-size:36px}
+ .scene-journal-grid{display:flex;grid-template-columns:none;gap:12px;row-gap:0;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-left:var(--wrap-x);margin:0 calc(-1*var(--wrap-x));padding:0 var(--wrap-x) 8px;scrollbar-width:none}
+ .scene-journal-grid::-webkit-scrollbar{display:none}
+ .scene-journal-grid figure,.scene-journal-grid figure:nth-child(2),.scene-journal-grid figure:nth-child(even){flex:0 0 86%;scroll-snap-align:start;min-width:0;margin:0;padding-top:0;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+ .scene-journal-grid .image-expand{border-radius:0}
+ .scene-journal-grid img{aspect-ratio:4/3}
+ .scene-journal figcaption{padding:10px 14px 14px}
+ .scene-journal h3{font-size:20px}
+ .scene-journal figcaption p{margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+ .scene-disclosure{margin-top:12px}
+ /* ===== B · Neuaufbau ===== */
+ :root{--wrap-x:20px}
+ /* Auf dem Handy entfallen als eigene Sektionen: Formlabor, Produkte-Showcase, Oberflächen-Story, Neue Muster, Szenen-Journal, Studio-Strip,
+    Hero-Cover, Doppel-CTA, Formenwelt-Bedienung (Chips/Pfeile) und die Formenkarten 7–9 (Muster leben im Oberflächen-Katalog) */
+ #formlabor,#produkte,#oberflaechen,#neue-muster,.scene-journal,.studio-strip,.hero-cover,#hero-cta,#brand-tagline,#hero-sub,.world-tabs,.world-controls,.world-type,.world-meta>span,.hero-foot,.collection-note,.rail-count,.collection-heading>p,#design-grid .design-card:nth-child(n+7),#hero-use small,.scene-disclosure{display:none}
+ section[id]{scroll-margin-top:8px}
+ /* --- Hero „Lebendige Bühne“: 3D-Formenwelt auf einer hellen Bühne, Text im Verlauf darunter; Wischen wechselt die Form --- */
+ .form-hero{display:grid;grid-template-columns:100%;padding:0!important;height:calc(100svh - var(--m-chrome,100px));min-height:520px;max-height:800px;position:relative;overflow:hidden;isolation:isolate;margin:0}
+ .hero-intro,.form-world{grid-area:1/1;min-width:0}
+ .form-world{display:block;position:relative;height:auto;margin:0;border-radius:0;background:radial-gradient(92% 64% at 50% 36%,color-mix(in srgb,var(--bg-soft) 50%,#d6d9c3) 0%,var(--bg) 100%);overflow:hidden;z-index:0;padding:0;--world-mode:bg}
+ .dark .form-world{background:radial-gradient(92% 64% at 50% 36%,color-mix(in srgb,var(--bg-soft) 72%,#8d9680) 0%,var(--bg) 100%)}
+ .form-world picture{display:contents}
+ .form-world .hero-fallback{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 55%;opacity:1;transition:opacity .9s ease;z-index:0}
+ .form-world.ready .hero-fallback{opacity:0}
+ .form-world #hero-viewer{position:absolute;inset:0;width:100%;height:100%;opacity:0;transform:scale(1.03);transition:opacity .9s ease,transform 1.2s cubic-bezier(.22,1,.36,1);z-index:1;touch-action:pan-y}
+ .form-world.ready #hero-viewer{opacity:1;transform:none}
+ /* Verlauf hängt am Textblock (--intro-h aus mobile-home.js), bewusst schmal: er endet 26 px über den Punkten — die Vasenfüße samt Kontaktschatten
+    stehen 30 px darüber (studio.js) und bleiben ganz sichtbar, nichts läuft hinter Kicker/Headline */
+ .form-world::after{content:'';position:absolute;inset:0;z-index:2;pointer-events:none;background:radial-gradient(120% 80% at 50% 38%,transparent 60%,color-mix(in srgb,var(--bg) 70%,transparent) 100%),linear-gradient(to top,var(--bg) calc(var(--intro-h,300px) - 10px),color-mix(in srgb,var(--bg) 70%,transparent) calc(var(--intro-h,300px) + 3px),color-mix(in srgb,var(--bg) 28%,transparent) calc(var(--intro-h,300px) + 14px),transparent calc(var(--intro-h,300px) + 26px))}
+ /* Poster (Foto bis zur 3D bzw. dauerhaft bei reduced motion/schwachem Gerät): das Foto füllt die ganze Bühne — dafür der breite, weiche
+    Verlauf wie bisher; er blendet mit dem Poster aus, sobald die 3D steht */
+ .form-world::before{content:'';position:absolute;inset:0;z-index:2;pointer-events:none;background:linear-gradient(to top,var(--bg) calc(var(--intro-h,300px) - 8px),color-mix(in srgb,var(--bg) 55%,transparent) calc(var(--intro-h,300px) + 26px),transparent calc(var(--intro-h,300px) + 120px));transition:opacity .9s ease}
+ .form-world.ready::before{opacity:0}
+ .hero-intro{display:block;position:relative;z-index:3;align-self:end;justify-self:stretch;width:100%;margin:0;pointer-events:none;padding:0 var(--wrap-x) 14px;gap:0;max-width:none}
+ .hero-intro>div:first-child{display:contents}
+ .cover-kicker,#hero-headline,.hero-side>*{pointer-events:auto}
+ .cover-kicker{display:block;font:500 11px/1.3 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:8px}
+ .form-hero h1{font-size:52px;letter-spacing:-2.5px;line-height:.98;max-width:none;margin:0 0 10px;text-wrap:balance}
+ .hero-side{max-width:none;justify-self:stretch;margin:0;padding:0;width:auto}
+ .hero-side .hero-sub-m{display:block;font-size:13px;line-height:1.5;color:var(--ink-soft);margin:0 0 14px;max-width:none}
+ .hero-side #hero-use{position:static;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:54px;margin:0;padding:0 18px;border:0;border-radius:14px;background:var(--ink);color:var(--bg);font:600 14px var(--sans)!important;transition:transform .12s ease-out}
+ .hero-side #hero-use:active{transform:scale(.97)}
+ .hero-side #hero-use span{margin:0}
+ .m-use-label{display:inline-block} /* fest „Diese Vase gestalten“ — der Name der gezeigten Vase steht in Kapsel und Preiszeile */
+ .hero-hint{display:block;margin-top:10px;font:500 15px/1.3 var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:20px} /* Höhe reserviert: der Preis kommt asynchron, das Intro springt nicht */
+ .hero-hint .hh-stl{display:none}.hero-hint .uvp{font:400 12px var(--sans);color:var(--ink-soft)}
+ .hero-side .hero-hint{display:none} /* bleibt als Preisquelle der Pille („ab …“) im DOM; sichtbar ist die Preiszeile der gezeigten Vase */
+ .m-hero-price{display:block;margin:10px 0 0;font:500 15px/1.3 var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:20px}
+ .m-hero-price .mhp-name{font:500 11px/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-right:3px}
+ .m-hero-price s{font:400 12px var(--sans);color:var(--ink-soft);margin-left:2px}.m-hero-price small{font:400 11px var(--sans);color:var(--ink-soft);margin-left:4px}
+ .hero-side #trust-row{display:none} /* Emoji-Zeile aus content.json bleibt für Desktop/Tablet; mobil steht dieselbe Aussage einmal als .m-trust */
+ /* Vertrauenszeile mit Linien-Icons (mobile-home.js): drei Fakten, einzeilig über die Knopfbreite verteilt */
+ .m-trust{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;margin-top:10px;font:500 11px/1.3 var(--sans);color:var(--ink-soft)}
+ .m-trust span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+ .m-trust svg{width:14px;height:14px;flex:none;color:var(--accent)}
+ /* Positionsanzeige der Bühne: 9 Punkte direkt über dem Kicker (links bündig mit dem Text, weit weg von der Kapsel oben) + einmaliger Wisch-Hinweis */
+ .m-dots{display:flex;align-items:center;gap:5px;height:14px;margin:0 0 12px;pointer-events:none}
+ .m-dots i{flex:none;width:6px;height:6px;border-radius:3px;background:color-mix(in srgb,var(--ink) 22%,transparent);transition:width .3s cubic-bezier(.22,1,.36,1),background .3s}
+ .m-dots i.on{width:18px;background:var(--ink)}
+ .m-swipe-hint{margin-left:10px;font:600 10px/1 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft);white-space:nowrap;opacity:0;transform:translateX(-4px);transition:opacity .4s,transform .4s}
+ .m-swipe-hint.show{opacity:1;transform:none}
+ .hero-foot-link{display:block;text-align:center;margin:-3px 0 -15px;padding-block:15px;font:11px var(--sans);color:var(--ink-soft);text-decoration:none} /* Trefferfläche 44 px hoch, Text an derselben Stelle wie vorher (margin-top 12 px) */
+ /* Live-Kapsel (antippbar → Sheet, „Details ›“) + Pausenknopf: erst sichtbar, wenn 3D läuft */
+ .world-caption{position:absolute;left:14px;top:12px;bottom:auto;z-index:4;pointer-events:auto;display:flex;align-items:center;gap:6px;padding:8px 11px 8px 9px;border-radius:30px;background:color-mix(in srgb,var(--card) 84%,transparent);font:500 10px/1 var(--sans);letter-spacing:.07em;text-transform:uppercase;color:var(--ink);opacity:0;transition:opacity .4s,transform .12s;cursor:pointer;max-width:calc(100% - 64px);box-shadow:0 2px 10px #0000000f}
+ .world-caption:active{transform:scale(.97)}
+ .form-world.ready .world-caption{opacity:1}
+ .world-caption::before{content:'';width:6px;height:6px;border-radius:50%;background:#778858;flex:none}
+ .world-caption>#hero-index{font:inherit;opacity:.7;letter-spacing:inherit;white-space:nowrap;flex:none}.world-caption>#hero-index::after{content:' ·'} /* Typ der gezeigten Vase: „Form“ / „Oberfläche“ */
+ .world-caption h2{font:inherit;margin:0;letter-spacing:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.world-caption p{display:none}
+ .world-caption .m-cap-more{flex:none;font:inherit;letter-spacing:inherit;opacity:.8;padding-left:7px;margin-left:1px;border-left:1px solid color-mix(in srgb,var(--ink) 22%,transparent)}
+ .world-caption::after{content:'';position:absolute;left:-4px;right:-4px;top:-9px;bottom:-9px} /* unsichtbare Trefferfläche ≥ 44 px (einziger Weg ins Hero-Sheet) */
+ .world-meta{position:absolute;top:10px;right:12px;left:auto;z-index:4;display:block;opacity:0;transition:opacity .4s;font-size:14px!important}
+ .form-world.ready .world-meta{opacity:1}
+ #motion-toggle{position:relative;width:36px;height:36px;min-height:0;padding:0;border-radius:50%;background:color-mix(in srgb,var(--card) 84%,transparent);color:var(--ink);font-size:14px!important;display:grid;place-items:center}
+ #motion-toggle::after{content:'';position:absolute;inset:-4px;border-radius:50%} /* 44-px-Trefferfläche, Optik bleibt 36 px */
+ @media(max-height:760px){.hero-side .hero-sub-m{display:none}} /* kurze Displays: Untertitel weg, mehr Bühne */
+ @media(max-height:700px){.form-hero h1{font-size:44px}.hero-side .hero-sub-m,.cover-kicker{display:none}}
+ @media(max-width:360px){.form-hero h1{font-size:44px;letter-spacing:-2px}}
+ /* Intro-Stagger (nur mit JS = body.m-home, damit ohne JS nichts unsichtbar bleibt) */
+ @keyframes m-rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+ @keyframes m-fade{from{opacity:0}}
+ body.m-home .m-dots,body.m-home .cover-kicker,body.m-home #hero-headline,body.m-home .hero-side>*{animation:m-rise .6s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(var(--i,0)*60ms)}
+ body.m-home .form-world:not(.ready) .hero-fallback{animation:m-fade .4s ease both}
+ /* --- Scroll-Reveal (nur Zweitrang-Kacheln, nie von 0, früh und kurz; IO rootMargin 160 px) --- */
+ .m-reveal{opacity:.55;transform:translateY(16px);transition:opacity .35s,transform .35s cubic-bezier(.22,1,.36,1);transition-delay:var(--d,0ms)}
+ .m-reveal.visible{opacity:1;transform:none}
+ @media(prefers-reduced-motion:reduce){.m-reveal{opacity:1;transform:none}}
+ /* --- Katalog „Formen“ (#formen): 2-spaltige Kacheln, Details im Sheet; dunkelgrüner Kontrastblock bleibt --- */
+ .shape-collection{padding:36px 0 calc(92px + env(safe-area-inset-bottom))} /* unten Pillenhöhe (54) + Abstand (14) + 24 px: keine Kachelbeschriftung bleibt dauerhaft unter der Pille */
+ .collection-heading{display:block;margin-bottom:14px}
+ /* Sektionsüberschriften sind Verkaufsinhalt: kein verzögertes Einblenden (studio.js .reveal) auf dem Handy */
+ #formen .collection-heading.reveal,#konfigurator .studio-heading.reveal{opacity:1;transform:none;transition:none}
+ .collection-heading h2{font-size:36px;letter-spacing:-1.6px;line-height:1.05}
+ .rail-hint{display:block;font:500 11px/1.4 var(--sans);letter-spacing:.04em;color:#c1c9b3;margin:0 0 14px}
+ #design-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 10px;margin:0;padding:0;overflow:visible;scroll-snap-type:none;mask-image:none;-webkit-mask-image:none}
+ .design-card{flex:none;position:relative;min-width:0;width:auto;transition:transform .12s ease-out}
+ .design-image{border-radius:6px;transition:transform .12s ease-out}.design-image img{aspect-ratio:5/6;transition:none;transform:none}.design-card:active .design-image{transform:scale(.97)}
+ .design-number{left:10px;top:10px;font-size:10px!important;line-height:1;letter-spacing:.06em;color:#fff;text-shadow:none;background:#211d18a6;padding:6px 7px;border-radius:20px}
+ .design-arrow,.design-card>p{display:none}
+ .design-title{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px;gap:8px}.design-title h3{font-size:20px;letter-spacing:-.4px;line-height:1.1;flex:none}.design-title>span{font-size:12px;color:#c1c9b3;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+ .design-card.rail-current .design-title,.design-grid.rail-js>:not(.rail-current) .design-title{opacity:1}
+ /* --- Katalog „Oberflächen“ (#m-oberflaechen, nur mobil erzeugt): Signatur-Kachel Kupfer-Hammerschlag, Voronoi/Fjordwelle, 6 Swatches --- */
+ #m-oberflaechen{padding:40px 0 36px;background:var(--bg)}
+ #m-oberflaechen .eyebrow{margin-bottom:12px}
+ #m-oberflaechen h2{font:450 36px/1.05 var(--serif);letter-spacing:-1.6px;margin:0 0 10px;color:var(--ink)}#m-oberflaechen h2 em{color:var(--accent);font-weight:400;font-style:italic}
+ #m-oberflaechen .rail-hint{color:var(--ink-soft);margin-bottom:14px}
+ .m-lead,.m-tile,.m-swatch{appearance:none;background:none;border:0;padding:0;color:inherit;text-align:left;font:inherit;cursor:pointer;width:100%;min-width:0;display:block}
+ .m-img{position:relative;overflow:hidden;border-radius:8px;background:var(--bg-soft);transition:transform .12s ease-out}.m-lead:active .m-img,.m-tile:active .m-img,.m-swatch:active .m-img{transform:scale(.97)}
+ .m-lead-wrap{position:relative}
+ .m-lead .m-img{aspect-ratio:7/8;background:#7a4a2a}.m-lead img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 35%;transition:opacity .25s}.m-lead .m-img2{opacity:0}
+ .m-pill{position:absolute;left:10px;top:10px;font:500 10px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase;padding:7px 9px;border-radius:30px;background:color-mix(in srgb,var(--card) 84%,transparent);color:var(--ink)}
+ .m-lead-badge{position:absolute;right:10px;top:10px;font:600 12px/1 var(--sans);padding:7px 9px;border-radius:30px}
+ /* Finish-Wahl: eigene Knopfgruppe unter der Signatur-Pille (40-px-Ziele, 22-px-Punkte), Bild-Crossfade, Farbe wandert ins Sheet/CTA */
+ .m-finish{position:absolute;left:8px;top:40px;z-index:2;display:flex}.m-finish button{width:40px;height:40px;padding:0;border:0;background:none;display:grid;place-items:center;cursor:pointer}
+ .m-finish button::before{content:'';width:22px;height:22px;border-radius:50%;background:var(--hex);border:2px solid #fffb;box-shadow:0 1px 4px #0006;transition:transform .12s}.m-finish button.on::before{border-color:#fff;outline:2px solid #211d18;outline-offset:1px}.m-finish button:active::before{transform:scale(.9)}
+ .m-lead-title{position:absolute;left:0;right:0;bottom:0;z-index:1;padding:56px 16px 16px;background:linear-gradient(to top,#15100cc4 0%,#15100c66 55%,#15100c00 100%);color:#fff;pointer-events:none}.m-lead-title h3{font:450 28px/1.05 var(--serif);letter-spacing:-.7px;margin:0;color:#fff}.m-lead-sub{display:block;font-size:12px;color:#ffffffd9;margin-top:4px} /* Titel liegt auf dem Foto: nie unter der klebenden Pille */
+ .m-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.m-tile .m-img{aspect-ratio:170/212}.m-tile img{width:100%;height:100%;object-fit:cover;display:block}.m-pill-new{background:var(--accent);color:#fff}.dark .m-pill-new{color:#17130f}.m-tile h3{font:450 20px/1.1 var(--serif);margin:8px 0 0}.m-tile>span{font-size:11px;color:var(--ink-soft);display:block;margin-top:2px}
+ /* Swatches = sechs Muster auf derselben Vasenform (Flasche 15 cm, ganze Silhouette, je eine Markenfarbe, Streiflicht, mobile-preview.js) im
+    Hochformat wie die Paar-Kacheln; bis die 3D-Vorschau da ist: Muster-Symbol in der Musterfarbe auf demselben Elfenbein-Grund */
+ .m-swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:18px 10px;margin-top:18px}.m-swatch .m-img{aspect-ratio:4/5;border-radius:8px;display:grid;place-items:center;background:#efe8da}.m-swatch img{width:100%;height:100%;object-fit:cover;display:block;transition:opacity .45s ease}.m-swatch img.m-prev-in{opacity:0}
+ .m-swatch .m-img.is-svg svg{width:52%;height:52%;color:var(--m-hex,#a8987a);display:block}
+ /* Eine Beschriftung für den ganzen Katalog: Serifen-Name links (wie Voronoi/Fjordwelle), zweite Zeile 11 px Aufpreis bzw. „inklusive“, 8 px unter der Kachel */
+ .m-swatch h3{font:450 16px/1.15 var(--serif);letter-spacing:-.2px;margin:8px 0 0;color:var(--ink)}.m-swatch .m-sw-sub{display:block;font:400 11px/1.3 var(--sans);color:var(--ink-soft);margin-top:2px}
+ /* --- Bottom-Sheet (ein DOM-Knoten, mobile-sheet.js) --- */
+ .m-sheet-backdrop{position:fixed;inset:0;background:#211d18;opacity:0;pointer-events:none;transition:opacity .2s;z-index:310;touch-action:none}.m-sheet-backdrop.show{opacity:.55;pointer-events:auto}
+ .m-sheet{position:fixed;left:0;right:0;bottom:0;max-height:88svh;display:flex;flex-direction:column;background:var(--card);color:var(--ink);border-radius:22px 22px 0 0;box-shadow:0 -12px 40px #0004;transform:translateY(100%);transition:transform .42s cubic-bezier(.32,1.25,.4,1);z-index:320;visibility:hidden;outline:0}
+ .m-sheet.open{transform:none;visibility:visible}.m-sheet.closing{transition:transform .24s cubic-bezier(.4,0,1,1);visibility:visible}.m-sheet.dragging{transition:none}
+ .m-sheet-grip{flex:none;width:36px;height:4px;border-radius:2px;background:var(--line);margin:10px auto 6px;touch-action:none}
+ .m-sheet-close{position:absolute;top:10px;right:12px;width:40px;height:40px;border-radius:50%;background:var(--bg);border:1px solid var(--line);color:var(--ink);font:400 22px/1 var(--sans);display:grid;place-items:center;padding:0;z-index:2;cursor:pointer}
+ .m-sheet-scroll{overflow:auto;overscroll-behavior:contain;padding:4px 20px calc(20px + env(safe-area-inset-bottom));min-height:0}
+ /* Bildfläche je Art: Form = Produktfoto 4:5 (Silhouette komplett, Hals sichtbar), Muster = Materialdetail 7:6 */
+ .m-sheet-media{position:relative;aspect-ratio:7/6;border-radius:12px;overflow:hidden;background:var(--bg-soft);touch-action:none}.m-sheet-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 22%;transition:opacity .25s}.m-sheet-img2{opacity:0}.m-sheet-img[hidden]{display:none}
+ .m-sheet[data-kind=form] .m-sheet-media{width:100%;aspect-ratio:4/5;max-height:min(46vh,400px)}.m-sheet[data-kind=form] .m-sheet-img{object-position:50% 18%}
+ /* Swatch: die ganze Vase (3D-Vorschau 4:5) auf ihrem Elfenbein-Grund — gedeckelte Höhe, Bild „contain“ auf gleicher Grundfarbe (nahtlos, nie angeschnitten);
+    das Makro als rundes 72-px-Detail unten rechts */
+ .m-sheet[data-kind=swatch] .m-sheet-media{width:100%;aspect-ratio:4/5;max-height:min(42vh,380px);background:#efe8da}.m-sheet[data-kind=swatch] .m-sheet-img{object-fit:contain;object-position:50% 50%}
+ .m-sheet-inset{position:absolute;right:12px;bottom:12px;z-index:2;width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid #fff;box-shadow:0 4px 14px #0000002e;pointer-events:none}.m-sheet-inset[hidden]{display:none}
+ .m-sheet-svg{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink)}.m-sheet-svg:empty{display:none}.m-sheet-svg svg{width:56%}
+ .m-sheet-media.is-svg{aspect-ratio:auto;height:120px;max-height:none;display:flex;align-items:center;background:#efe8da}
+ .m-sheet-media.is-svg .m-sheet-svg{position:static;display:flex;align-items:center;gap:16px;padding:0 20px;width:100%;color:var(--m-hex,#8a7a5c)}.m-sheet-media.is-svg svg{width:26%;flex:none}.m-sheet-svg span{font:500 12px/1.4 var(--sans);color:#4a4238}
+ .m-sheet-kicker{margin:14px 0 0;font:500 10px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)}
+ .m-sheet h2{font:450 30px/1.05 var(--serif);letter-spacing:-1px;margin:6px 0 4px}.m-sheet h2:focus,.m-sheet:focus{outline:0}
+ .m-sheet-meta{font-size:12px;color:var(--ink-soft);margin:0}
+ .m-sheet-text{font-size:13px;line-height:1.5;margin:10px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+ .m-chips{display:flex;gap:8px;margin-top:12px}.m-chips:empty{display:none}.m-chip{height:40px;padding:0 14px 0 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 12px var(--sans);display:inline-flex;align-items:center;gap:8px;cursor:pointer}.m-chip i{width:16px;height:16px;border-radius:50%;background:var(--hex);border:1px solid #0002}.m-chip[aria-pressed=true]{border-color:var(--ink);background:var(--bg)}
+ .m-sheet-price{margin:16px 0 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.m-sheet-price small{font:600 10px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);margin-right:2px}.m-sheet-price b{font:450 24px/1 var(--serif);letter-spacing:-.5px;color:var(--ink)}.m-sheet-price b.aktion-price{color:var(--accent-dark)}.m-sheet-price s{font:400 13px var(--serif);color:var(--ink-soft)}.m-sheet-price .m-badge{align-self:center}.m-sheet-price:empty{display:none}
+ .m-badge{font:500 11px var(--sans);background:var(--accent);color:#fff;border-radius:999px;padding:3px 8px;font-style:normal}.dark .m-badge{color:#17130f}
+ .m-sheet-facts{font:400 12px/1.4 var(--sans);color:var(--ink-soft);margin:6px 0 0}.m-sheet-facts:empty{display:none} /* „zzgl. 4,90 € Versand · ab 39 € versandfrei“ (settings.pricing.shipping) */
+ .m-sheet-deal{font:600 12px/1.4 var(--sans);color:var(--accent-dark);margin:4px 0 0}.m-sheet-deal:empty{display:none} /* Mengenrabatt „2 Vasen −10 % · 3 Vasen −15 %“, nur wenn er für diese Vase gilt */
+ .dark .m-sheet-deal{color:var(--accent)}
+ .m-sheet-trust{display:flex;align-items:center;justify-content:center;gap:7px;font:500 11px/1.35 var(--sans);color:var(--ink-soft);margin:10px 0 0;text-align:center}.m-sheet-trust:empty{display:none}.m-sheet-trust svg{width:15px;height:15px;flex:none;color:var(--accent)} /* Absicherung am Kaufpunkt: Neudruck + Herkunft */
+ .m-sheet-cta{display:flex;align-items:center;justify-content:center;width:100%;height:54px;margin-top:14px;border:0;border-radius:14px;background:var(--ink);color:var(--bg);font:600 14px var(--sans);cursor:pointer;transition:transform .12s ease-out}.m-sheet-cta:active{transform:scale(.97)}
+ .m-sheet-note{font-size:11px;color:var(--ink-soft);margin:8px 0 0}.m-sheet-note:empty{display:none}
+ .m-sheet-foot{font-size:10px;color:var(--ink-soft);margin:12px 0 0;line-height:1.4}
+ .m-sheet.open .m-sheet-scroll>*{animation:m-rise .4s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(var(--i,0)*40ms)}
+ body.m-sheet-open{overflow:hidden}
+ .m-sheet.flipping .m-sheet-img{opacity:0}
+ .m-flip{position:fixed;z-index:330;object-fit:cover;pointer-events:none;transform-origin:0 0;border-radius:8px;will-change:transform}
+ /* --- Klebender CTA: immer „Vase gestalten ↓/↑ · ab …“ — voll über dem Konfigurator, kompakt darunter, hell über dem Footer --- */
+ /* Ausgeblendet = unsichtbar (visibility nach der Ausfahr-Transition): kein Schatten-/Verlaufsrest lugt am unteren Rand hervor */
+ .m-cta-wrap{position:fixed;left:16px;right:16px;bottom:calc(14px + env(safe-area-inset-bottom));display:flex;gap:8px;z-index:140;transform:translateY(130%);visibility:hidden;transition:transform .42s cubic-bezier(.32,1.25,.4,1),visibility 0s linear .42s;pointer-events:none}.m-cta-wrap.show{transform:none;visibility:visible;transition:transform .42s cubic-bezier(.32,1.25,.4,1),visibility 0s;pointer-events:auto}.m-cta-wrap.hide{transition:transform .24s cubic-bezier(.4,0,1,1),visibility 0s linear .24s}body.has-mbar:not(.m-konf-out) .m-cta-wrap,body.m-sheet-open .m-cta-wrap,body.no-scroll .m-cta-wrap{transform:translateY(130%);visibility:hidden;transition:transform .24s cubic-bezier(.4,0,1,1),visibility 0s linear .24s;pointer-events:none} /* unterhalb des Konfigurators (m-konf-out) ist die Preisleiste ausgefahren → Pille darf kommen */
+ /* Weicher Verlauf hinter der Pille (~64 px, Farbe der Sektion darunter aus mobile-home.js paintFade): Bildunterschriften laufen sanft aus statt
+    hart unter der Pille zu verschwinden; kompakte Pille (unter dem Konfigurator) mit flacherem Verlauf */
+ .m-cta-wrap::before{content:'';position:absolute;z-index:-1;left:-16px;right:-16px;bottom:calc(-14px - env(safe-area-inset-bottom));height:calc(100% + 14px + 40px + env(safe-area-inset-bottom));background:linear-gradient(to bottom,transparent 0,color-mix(in srgb,var(--m-cta-fade,var(--bg)) 70%,transparent) 36px,var(--m-cta-fade,var(--bg)) 64px);pointer-events:none;opacity:0;transition:opacity .3s}
+ .m-cta-wrap.show::before{opacity:1}.m-cta-wrap.show.no-fade::before{opacity:0} /* unten läuft gerade ein Foto durch: kein Schleier darüber */.m-cta-wrap.compact::before{height:calc(100% + 14px + 24px + env(safe-area-inset-bottom));background:linear-gradient(to bottom,transparent 0,color-mix(in srgb,var(--m-cta-fade,var(--bg)) 85%,transparent) 46px)}
+ .m-cta{flex:1;height:54px;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:0 22px;border:0;border-radius:999px;background:var(--ink);color:var(--bg);box-shadow:0 12px 30px #0003;font:600 13px var(--sans);transition:transform .12s,background .2s,color .2s;cursor:pointer;min-width:0}.m-cta:active{transform:scale(.97)}.m-cta-label{white-space:nowrap}.m-cta-price{font:500 15px var(--serif);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.m-cta-price s,.m-cta-price .uvp{font:400 11px var(--sans);color:inherit;opacity:.7;margin-left:4px}.m-cta .aktion-price{color:#f0b494}.dark .m-cta .aktion-price{color:#a8563a}
+ .m-cta-wrap.compact{justify-content:flex-end}.m-cta-wrap.compact .m-cta{flex:0 1 auto;height:44px;padding:0 16px;gap:10px;font-size:12px}.m-cta-wrap.compact .m-cta-price{font-size:14px}.m-cta-wrap.compact .m-cta-cart{width:44px;height:44px;font-size:16px}
+ html:not(.dark) body:not(.dark)>.m-cta-wrap.on-footer .m-cta,html:not(.dark) body:not(.dark)>.m-cta-wrap.on-dark .m-cta{background:var(--card);color:var(--ink);box-shadow:0 0 0 1px #ffffff2e,0 12px 30px #0008}html:not(.dark) body:not(.dark)>.m-cta-wrap.on-footer .m-cta .aktion-price,html:not(.dark) body:not(.dark)>.m-cta-wrap.on-dark .m-cta .aktion-price{color:var(--accent-dark)} /* über dunklen Sektionen (mobile-home.js paintFade: Luminanz < 0,2) Creme-Pille mit dunkler Schrift und hellem Ring — wie im Dunkelmodus */
+ .m-cta-cart{width:54px;height:54px;flex:none;border-radius:50%;border:0;background:var(--card);color:var(--ink);box-shadow:0 12px 30px #0003;font-size:18px;position:relative;cursor:pointer;display:grid;place-items:center;padding:0}.m-cta-cart svg{width:22px;height:22px}.m-cta-cart i{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;border-radius:9px;background:var(--accent);color:#fff;font:600 10px/18px var(--sans);font-style:normal;padding:0 4px}.m-cta-cart.bump{animation:cartBump .55s cubic-bezier(.34,1.56,.64,1)}
+ /* Inline-Bestellwege unter den drei Schritten (Sekundär) und als letztes FAQ-Element (Primär, mit Preis) */
+ .m-inline-cta{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:50px;margin-top:14px;border-radius:14px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:600 13px var(--sans);cursor:pointer;transition:transform .12s}.m-inline-cta:active{transform:scale(.97)}
+ .m-inline-cta b{font:500 15px var(--serif)}.m-inline-cta s{font:400 11px var(--sans);opacity:.7;margin-left:2px}.m-inline-cta .aktion-price{color:var(--accent)}
+ .m-inline-cta-primary{background:var(--ink);color:var(--bg);border-color:var(--ink);margin-top:18px}.m-inline-cta-primary .aktion-price{color:#f0b494}.dark .m-inline-cta-primary .aktion-price{color:#a8563a}
+ /* --- Konfigurator-Kopf, Hinweis-Kapsel, Toast unter der Tab-Leiste, Ankunfts-Puls --- */
+ #konfigurator.configurator{padding-top:32px}#konfigurator .studio-heading{padding-bottom:12px}#konfigurator .studio-heading h2{font-size:32px}#konfigurator .studio-heading>p{display:none}
+ .m-note{margin-top:14px;border:1px dashed var(--line);border-radius:10px;padding:0 12px;background:var(--bg)}.m-note summary{font:500 12px/1.3 var(--sans);color:var(--ink-soft);min-height:40px;display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}.m-note summary::-webkit-details-marker{display:none}.m-note summary span{margin-left:auto;text-decoration:underline;text-underline-offset:2px;flex:none}.m-note[open] summary span{display:none}.m-note #vase-note{display:block;border:0;padding:0 0 10px;margin:0;background:none;font-size:12px;line-height:1.5}
+ /* Toast liegt kurz über der Szenen-Chip-Reihe (unterstes Bühnenband, pointer-events:none → Chips bleiben antippbar) — nie auf dem Vasenkörper,
+    nie über Tab-Leiste oder Form-Chips */
+ body.m-home #toast{top:calc(var(--stage-h) - 84px + env(safe-area-inset-top,0px));bottom:auto;transform:translate(-50%,8px);display:flex;align-items:center;gap:7px;white-space:nowrap;padding:7px 14px 7px 11px;font-size:12px;max-width:calc(100vw - 48px)}body.m-home #toast.show{transform:translate(-50%,0)} /* Unterkante ≥ 8 px über den Szenen-Chips (Platz des Dreh-Hinweises) — die Chips bleiben sichtbar */
+ body.m-home #toast svg{width:16px;height:16px;flex:none;color:#9fc28f}
+ /* Dreh-Hinweis: klein, unten direkt über den Szenen-Chips (nie auf dem Vasenkörper); erscheint, wenn die Bühne ins Bild kommt, und geht nach
+    4 s bzw. beim ersten Berühren (mobile-home.js initStageHint) — statt der Lade-Animation, die ihn auf dem Handy dauerhaft stehen ließ */
+ .stage .stage-hint{bottom:52px;font-size:10px;line-height:14px;font-weight:600;padding:4px 11px;animation:none;opacity:0;transform:translate(-50%,6px);transition:opacity .35s,transform .35s;background:color-mix(in srgb,#38442b 80%,transparent)}
+ .stage .stage-hint.m-show{opacity:1;transform:translateX(-50%)}
+ body.m-toast .stage .stage-hint{opacity:0!important;transition:opacity .15s} /* erst Bestätigung, dann Geste — nie zwei dunkle Pillen übereinander (!important: hintIn-Animation hält sonst opacity 1) */
+ @keyframes m-arrive{from{transform:scale(.97);box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 45%,transparent)}to{transform:none;box-shadow:0 14px 34px #3c2d1e2e}}
+ body.m-arrive .stage:not(.stage-full){animation:m-arrive .6s cubic-bezier(.22,1,.36,1)}body.m-arrive .mtab.active{animation:springPop .32s cubic-bezier(.34,1.56,.64,1)}
+ /* --- Vertrauensband, „Zuhause“, „So geht's“, FAQ, Footer: eine Karte je Block; Handy-Kurztexte (mobile-home.js) statt abgeschnittener Sätze --- */
+ .usps-band{display:none} /* Vertrauenskarte entfällt mobil: sie wiederholte die Trust-Zeile des Heros (Pflanzen-PLA, 3D live) — „matt bis metallic“ steht jetzt in Schritt 1 */
+ #galerie.galerie-band{padding:24px 0 8px}#galerie .section-title{font-size:28px;margin-bottom:4px;text-align:left}#galerie .section-sub{margin:0 0 12px;font-size:12px;white-space:normal;overflow:visible;text-align:left}#galerie-grid{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-left:var(--wrap-x);margin:0 calc(-1*var(--wrap-x));padding:0 var(--wrap-x) 8px;scrollbar-width:none;max-width:none}#galerie-grid::-webkit-scrollbar{display:none}.galerie-item,.galerie-item.big{flex:0 0 72%;aspect-ratio:4/3;height:auto;grid-column:auto;grid-row:auto;scroll-snap-align:start;border-radius:8px;overflow:hidden}
+ #sogehts.steps-band{padding:24px 0}.steps-band .eyebrow{margin-bottom:8px}.steps-band .section-title{font-size:28px;margin-bottom:10px;text-align:left}#steps{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 14px}.step{display:grid;grid-template-columns:36px 1fr;gap:0 12px;padding:9px 0;border-bottom:1px solid var(--line);text-align:left;align-items:start}.step:last-child{border:0}.step-num{grid-row:1/3;font:30px/1 var(--serif);color:var(--accent);margin:0;width:auto;height:auto;background:none;display:block;line-height:1}.step h3{font-size:17px;margin:0 0 2px;font-weight:450}.step p{font-size:12px;line-height:1.45;max-width:none;margin:0;display:block}
+ #faq.faq-band{padding:20px 0 24px}.faq-band .section-title{font-size:28px;margin-bottom:8px;text-align:left}#faq-list details{padding:2px 4px;margin-bottom:2px}#faq-list summary{font-size:13px;min-height:44px;display:flex;align-items:center;gap:10px}#faq-list p{font-size:12px}#faq-list details:nth-of-type(n+5){display:none}#faq-list.m-all details{display:block}.m-faq-more{display:block;margin:6px auto 0;background:none;border:0;color:var(--ink);font:600 13px var(--sans);padding:12px;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+ footer{padding:28px 0 36px}footer .footer-grid{grid-template-columns:1fr;gap:12px;text-align:left}footer .logo{font-size:28px;justify-content:flex-start}footer p{font-size:10.5px;line-height:1.5;margin-bottom:4px}footer .footer-col h4{margin-bottom:6px;font-size:11px}footer .footer-col:last-child p{display:inline}footer .footer-col:last-child p+p::before{content:' · '}
+ footer .footer-col:last-child a{display:inline-block;padding:14px 6px;margin:-14px -6px} /* Direkt-Links: Trefferfläche ≥ 44 px hoch, Zeile unverändert */
+ footer .m-facts .m-dup{display:none} /* „Pflanzenbasiertes PLA“ steht schon im Hero und in der Vertrauenskarte */
+ footer .m-facts p{display:grid;grid-template-columns:16px 1fr;gap:8px;align-items:start}footer .m-facts .m-ico{margin-top:1px}footer .m-facts .m-ico svg{width:15px;height:15px;color:#c1c9b3}
+ /* ===== C · Eine Icon-Sprache (Runde 4): Linien-Icons aus mobile-home.js (ICON/iconize) statt bunter Emoji — Größe hier, nie aus dem SVG ===== */
+ .m-ico{display:inline-grid;place-items:center;flex:none;line-height:0}.m-ico svg{width:16px;height:16px}
+ /* Topbar: vier gleich große Kreise, Icon 18 px */
+ .topbar-actions{gap:6px}
+ .topbar-actions .icon-btn,.topbar-actions .cart-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:38px;min-width:38px;padding:0 10px;font-size:13px;line-height:1;color:var(--ink)}
+ .topbar-actions .m-ico svg{width:18px;height:18px}
+ .topbar-actions .icon-btn,.topbar-actions .cart-btn{position:relative}.topbar-actions .icon-btn::after,.topbar-actions .cart-btn::after{content:'';position:absolute;inset:-4.5px;border-radius:999px} /* Optik 38 px, Trefferfläche 44 px (vom Padding-Rand aus: 1,5 px Rahmen + 3 px; Lücke 6 px → Nachbarn berühren sich, überlappen nicht) */
+ @media(max-width:430px){.topbar-actions .icon-btn,.topbar-actions .cart-btn{width:38px;padding:0}#account-btn{font-size:0;gap:0;overflow:visible}} /* nur das Icon (Name ist hier ohnehin ausgeblendet) — auch vor auth.js, sonst springt die Knopfreihe */
+ /* Ankündigung und Aktionsleiste gleich hoch: der Wechsel nach dem Preis-Laden verschiebt die Seite nicht (war +4 px → CLS) */
+ .announcement{box-sizing:border-box;height:34px;line-height:18px;padding-block:8px}
+ /* Hero-Text erst zeigen, wenn mobile-home.js ihn aufgebaut hat (gleicher Task wie body.m-home): kein Sprung durch Punkte/Knopf/Vertrauenszeile.
+    Sicherheitsnetz: ohne JS nach 2,5 s trotzdem sichtbar (nur ohne reduced motion — dort schaltet studio.css alle Animationen und damit das Netz ab) */
+ @media(prefers-reduced-motion:no-preference){body:not(.m-home) .hero-intro,body:not(.m-home) .form-world>#hero-use{visibility:hidden;animation:m-unhide 0s linear 2.5s forwards}}
+ @keyframes m-unhide{to{visibility:visible}}
+ /* Aktionsleiste: feste Zeilenhöhe (Emoji-/Serifen-Metrik ließ sie nach dem Laden um 4 px wachsen → Layout-Shift), Etikett-Icon statt 🔥 */
+ .aktion-bar{height:34px;line-height:18px}.aktion-bar>*{line-height:18px}
+ .aktion-bar .ab-fire svg{width:14px;height:14px;vertical-align:-3px}
+ /* Bühne: Druck-Ampel und Dreh-Hinweis mit Icon; Wasserzeichen „made by you“ entfällt (hinter der Vase nur angeschnitten lesbar) */
+ .stage .viewer-watermark{display:none}
+ .stage .stage-print{display:inline-flex;align-items:center;gap:5px}.stage .stage-print .m-ico svg{width:14px;height:14px}
+ .stage-hint .sh-mob{display:inline-flex;align-items:center;gap:5px}.stage-hint .m-ico svg{width:12px;height:12px}
+ /* Preisleiste des Konfigurators: Buttons mit Icon; unterhalb des Konfigurators (m-konf-out aus mobile-home.js) weich ausfahren — die Pille übernimmt */
+ .mobile-bar .mb-dl{display:grid;place-items:center}.mobile-bar .mb-dl .m-ico svg{width:20px;height:20px}
+ body.m-konf-out .mobile-bar.show{transform:translateY(calc(100% + 24px))}
+ /* Ausgefahrene Preisleiste lugt nicht hervor: Verlauf (::before, top −22 px) nur bei sichtbarer Leiste, danach visibility:hidden (nach der 300-ms-Ausfahrt) */
+ .mobile-bar{visibility:hidden;transition:transform .3s cubic-bezier(.22,1,.36,1),visibility 0s linear .3s}.mobile-bar.show{visibility:visible;transition:transform .3s cubic-bezier(.22,1,.36,1),visibility 0s}body.m-konf-out .mobile-bar.show{visibility:hidden;transition:transform .3s cubic-bezier(.22,1,.36,1),visibility 0s linear .3s}
+ .mobile-bar::before{transition:opacity .2s}.mobile-bar:not(.show)::before,body.m-konf-out .mobile-bar::before{opacity:0}
+ /* Dunkelmodus im Konfigurator: Kauf-Knopf hell mit dunkler Schrift (style.css „.dark .mb-cart{color:#17130f}“ stach die grüne Fläche aus → 1,8:1),
+    Vollbild-Symbol dunkel auf der hellen Kapsel (wie ↝ daneben), Dreh-Hinweis dunkler Grund mit Creme-Schrift */
+ .dark .mobile-bar .mb-cart{background:#d0e2aa;color:#2b3722}
+ .dark .stage .stage-full-btn{color:#2c3327}
+ .dark .stage .stage-hint{background:#15191280;background:color-mix(in srgb,#141811 82%,transparent);color:#f3f6e9}
+ /* Hinweis-Kapsel im Panel */
+ .m-note summary .m-ico{color:var(--ink-soft)}.m-note summary .m-ico svg{width:15px;height:15px}
+}

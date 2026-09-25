@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="css/style.css">
   <link rel="stylesheet" href="css/studio.css">
   <link rel="stylesheet" href="css/configurator-studio.css">
+  <link rel="stylesheet" href="css/mobile.css" media="(max-width: 700px)">
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#f4efe7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#17130f" media="(prefers-color-scheme: dark)">
@@ -57,12 +58,12 @@
 <main>
 <section class="hero form-hero">
   <div class="hero-intro wrap">
-    <div><span class="cover-kicker" id="cover-kicker">Vasen · von dir entworfen</span><p class="eyebrow" id="brand-tagline">Deine Ideen nehmen Form an</p><h1 id="hero-headline">Deine Idee.<br>Deine Form.</h1><figure class="hero-cover"><picture><source media="(max-width: 700px)" srcset="/img/studio/fdm-hammer-copper.webp"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E" width="1122" height="1402" alt="Gehämmerte Vase aus Kupfer-Silk-PLA, 3D-gedruckt mit sichtbaren Schichten" fetchpriority="high" decoding="async"></picture><span class="cover-badge">Hammerschlag · Kupfer-Silk · 3D-Druck</span></figure></div>
+    <div><span class="cover-kicker" id="cover-kicker">Vasen · von dir entworfen</span><p class="eyebrow" id="brand-tagline">Deine Ideen nehmen Form an</p><h1 id="hero-headline">Deine Idee.<br>Deine Form.</h1><figure class="hero-cover"><picture><source media="(max-width: 700px)" srcset="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E" width="1122" height="1402" alt="Gehämmerte Vase aus Kupfer-Silk-PLA, 3D-gedruckt mit sichtbaren Schichten" fetchpriority="high" decoding="async"></picture><span class="cover-badge">Hammerschlag · Kupfer-Silk · 3D-Druck</span></figure></div>
     <div class="hero-side"><p class="sub" id="hero-sub">Starte mit einer Grundform. Verändere Silhouette, Struktur und Farbe. Was du hier siehst, kannst du wirklich gestalten.</p><p class="sub hero-sub-m" id="hero-sub-m">Deine Vase selbst gestalten – Form, Muster, Farbe und Gravur. Wir drucken dein Original in 3D und liefern es dir.</p><button class="btn btn-primary btn-lg" id="hero-cta">Eigene Form gestalten ↗</button><div class="hero-hint" id="hero-hint"></div><div class="trust-row" id="trust-row"></div></div>
   </div>
   <div class="form-world" id="hero-art">
     <span class="world-type" aria-hidden="true">FORM FOLLOWS YOU.</span>
-    <picture><source media="(max-width: 700px)" srcset="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='4'%20height='3'/%3E"><img class="hero-fallback" src="/img/studio/fdm-collection.webp" alt="Drei 3D-gedruckte Vasen aus den Formen Kugel, Flasche und Kurve" fetchpriority="high"></picture>
+    <picture><img class="hero-fallback" src="/img/studio/fdm-collection.webp" alt="Drei 3D-gedruckte Vasen aus den Formen Kugel, Flasche und Kurve" fetchpriority="high"></picture>
     <canvas id="hero-viewer" role="img" aria-label="Interaktive 3D-Kollektion mit drei selbst gestaltbaren Vasen"></canvas>
     <div class="world-meta"><span><i class="live-dot"></i> LIVE 3D<em class="wm-long"> · ECHTE KONFIGURATOR-FORMEN</em></span><button id="motion-toggle" aria-pressed="false" aria-label="Automatische Bewegung pausieren">Ⅱ Bewegung pausieren</button></div>
     <div class="world-caption"><span id="hero-index">01 / 09</span><h2 id="hero-design-name">Twist</h2><p id="hero-design-detail">Flasche · gedrehte Rippen</p></div>
@@ -500,6 +501,7 @@
 <dialog id="scene-lightbox" class="scene-lightbox"><button class="lightbox-close" aria-label="Bild schließen">✕</button><img alt=""><p></p></dialog>
 <script type="module" src="js/app.js"></script>
 <script src="/js/pwa.js" defer></script>
+<script type="module" src="/js/mobile-home.js"></script>
 <script type="module" src="/js/studio.js"></script>
 <script type="module" src="/js/surface-story.js"></script>
 </body>

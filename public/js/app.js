@@ -29,6 +29,7 @@ import { initAktionBar } from './aktion.js';
 // State
 // ---------------------------------------------------------------------------
 const IS_SMALL = window.matchMedia('(max-width: 980px)').matches;
+const IS_PHONE = window.matchMedia('(max-width: 700px)').matches; // Handy-Layout (mobile.css): nur für die Live-Bühne im Konfigurator
 const state = {
   ...DEFAULTS,
   quality: IS_SMALL ? 0.55 : 1,
@@ -431,15 +432,17 @@ function updateProps() {
   }
 }
 
-// Kamera so setzen, dass das Objekt in Höhe UND Breite passt (auch mobil)
-function frameCamera() {
+// Kamera so setzen, dass das Objekt in Höhe UND Breite passt (auch mobil).
+// live = Live-Bühne (nicht Foto-Shooting/Produktfoto): auf dem Handy (≤ 700 px) ~16 % weiter weg — Hals mit Luft unter „OVJU / LIVE STUDIO“,
+// Fuß über Dreh-Hinweis und Szenen-Chips (mobile.css); Tablet/Desktop unverändert.
+function frameCamera(live = true) {
   const H = currentInfo ? currentInfo.height : 58;
   let rM = currentInfo ? currentInfo.maxRadius : 24;
   if (saucerInfo && state.saucer) rM = Math.max(rM, saucerInfo.outerRadius * 0.82);
   // Ei ragt über den Becher hinaus, wenn Deko-Props sichtbar sind
   const eggExtra = (propsGroup.visible && currentInfo?.product === 'eierbecher') ? 40 : 0;
   // Mobile: mehr Luft oben/unten, damit Badges & Chips das Modell nicht verdecken
-  const halfH = (H * 0.62 + 8 + eggExtra) * (IS_SMALL ? 1.22 : 1), halfW = rM * 1.65;
+  const halfH = (H * 0.62 + 8 + eggExtra) * (IS_SMALL ? 1.22 : 1) * (live && IS_PHONE ? 1.16 : 1), halfW = rM * 1.65;
   const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   const dist = Math.max(halfH / t, halfW / (t * camera.aspect));
   controls.target.set(0, H * 0.5, 0);
@@ -1233,7 +1236,7 @@ function captureThumb() {
 // ---------------------------------------------------------------------------
 function placeCamera(zoom, dir = [0.55, 0.32, 1]) {
   const H = currentInfo ? currentInfo.height : 58;
-  frameCamera();
+  frameCamera(false);
   const d = new THREE.Vector3(...dir).normalize();
   const dist = camera.position.distanceTo(controls.target) * zoom;
   camera.position.copy(controls.target).addScaledVector(d, dist);

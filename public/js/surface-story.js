@@ -13,7 +13,7 @@ function showFinish(){
  img.alt=scene?SCENE_ALT:`3D-gedruckte Hammerschlag-Oberfläche in ${f.name} mit sichtbaren Filamentschichten`;img.closest('[data-view-image]').dataset.viewImage=src;
  img.closest('.surface-visual').dataset.shot=scene?'scene':'detail';
 }
-if(SMALL)showFinish(); // Alt-Text + Lightbox-Bild passend zur <source>
+if(SMALL&&getComputedStyle($('#oberflaechen')).display!=='none')showFinish(); // Alt-Text + Lightbox-Bild passend zur <source> — nicht, wenn die Story auf dem Handy ausgeblendet ist (mobile.css)
 for(const button of document.querySelectorAll('[data-finish-preview]'))button.addEventListener('click',()=>{
  selected=button.dataset.finishPreview;showFinish();
  $('#finish-description').textContent=finishes[selected].description;
