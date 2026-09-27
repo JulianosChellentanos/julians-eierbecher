@@ -413,6 +413,9 @@ input[type=range]::-moz-range-thumb {
 .price { font-family: var(--serif); font-size: 2rem; font-weight: 700; }
 .price-unit { color: var(--ink-soft); font-size: 0.85rem; margin-left: 6px; }
 .price-hint { font-size: 0.78rem; color: var(--ink-soft); text-align: right; }
+/* Versandhinweis direkt am Preis, vor „In den Warenkorb“ (§ 6 Abs. 1 Nr. 2 PAngV) — Text aus pricing.js versandHTML/ustText */
+.price-ship { font-size: 0.76rem; color: var(--ink-soft); line-height: 1.4; margin-top: -4px; }
+.price-ship a, .mb-ship a, .ship-zeile a, .hh-versand a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .price-size {
   font-size: 0.76rem; font-weight: 600; color: var(--accent-dark);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -435,7 +438,7 @@ input[type=range]::-moz-range-thumb {
 .aktion-bar .ab-hint { opacity: 0.85; }
 .aktion-bar .ab-hint::before { content: '·'; margin-right: 10px; opacity: 0.6; }
 .dark .aktion-bar { background: #b8643f; color: #f6efe3; }
-/* durchgestrichener UVP neben dem Aktionspreis */
+/* durchgestrichener Bezugspreis neben dem Aktionspreis = niedrigster Preis der letzten 30 Tage (§ 11 PAngV, pricing.js referenzpreis) */
 .uvp {
   font-family: var(--serif); font-weight: 400; font-size: 0.8em; color: var(--ink-soft);
   text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--accent) 65%, transparent);
@@ -449,6 +452,13 @@ input[type=range]::-moz-range-thumb {
 .aktion-price, .price.aktion, .mb-price b.aktion { color: var(--accent-dark); }
 .aktion-line { font-size: 0.78rem; font-weight: 600; color: var(--accent-dark); }
 .aktion-line[hidden] { display: none; }
+/* Kennzeichnung des Streichpreises: „Niedrigster Preis der letzten 30 Tage: 24,90 €“ (Konfigurator, Warenkorb, Kasse) */
+.price-ref, .ci-ref, .co-ref, .cart-totals .ct-ref { font-size: 0.74rem; font-weight: 400; color: var(--ink-soft); line-height: 1.4; }
+.cart-totals .ct-ref { display: block; margin-top: 6px; }
+.price-ref { margin-top: -6px; }
+.price-ref[hidden] { display: none; }
+.ci-ref { display: block; margin-top: 2px; }
+.co-ref { display: block; margin-top: 6px; }
 .aktion-countdown { font-family: var(--serif); font-variant-numeric: tabular-nums; }
 .price-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 4px; }
 .price-main .aktion-badge { align-self: center; margin-left: 4px; }
@@ -458,9 +468,11 @@ input[type=range]::-moz-range-thumb {
 .ci-right .uvp { margin-left: 0; font-size: 0.78rem; }
 .co-summary .uvp { margin-left: 4px; }
 .cart-totals .ct-aktion, .co-summary .co-aktion { color: var(--accent-dark); font-weight: 600; }
-.cart-totals .ct-aktion b, .co-summary .co-aktion b { font-family: var(--serif); }
+.cart-totals .ct-aktion b, .co-summary .co-aktion b { font-family: var(--serif); white-space: nowrap; padding-left: 8px; }
 .product-tab small .uvp { font-size: 0.9em; margin-left: 4px; }
 .hero-hint .uvp, .showcase-price .uvp { font-size: 0.85em; }
+.showcase-price .ref-zeile { display: block; font-size: 0.72rem; color: var(--ink-soft); margin-top: 3px; white-space: normal; }
+.showcase-price .ship-zeile { display: block; font-family: var(--sans); font-size: 0.72rem; font-weight: 400; color: var(--ink-soft); margin-top: 3px; white-space: normal; }
 @media (max-width: 980px) {
   /* einzeilig kompakt: Name · −16 % · Countdown (Hinweistext nur, wenn Platz ist) */
   .aktion-bar { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px; padding: 8px 12px; }
@@ -471,6 +483,9 @@ input[type=range]::-moz-range-thumb {
 @media (max-width: 640px) {
   .aktion-bar .ab-hint { display: none; }
 }
+/* Einzeilige Leiste zu schmal: bei „Aktionspreise auf …“ (ohne Prozentzahl) entfällt der Geltungsbereich, damit der Countdown
+   sichtbar bleibt (aktion.js fitBar setzt .ab-eng) — neben einer Prozentzahl bleibt er immer stehen */
+.aktion-bar.ab-eng .ab-scope { display: none; }
 .tiny { font-size: 0.76rem; color: var(--ink-soft); text-align: center; }
 
 /* ---------- Produkt-Showcase ---------- */
@@ -608,6 +623,8 @@ footer p { color: var(--ink-soft); font-size: 0.86rem; margin: 0 0 8px; }
 .ci-qty span { min-width: 20px; text-align: center; font-weight: 700; }
 .ci-off { background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
 .ci-hint { color: var(--ink-soft); font-size: 0.7rem; }
+/* „Zur Kasse“ gesperrt (leerer Warenkorb, Farbe nicht mehr im Shop, zu viele Positionen) — sichtbar ausgegraut */
+#cart-checkout:disabled { opacity: 0.45; cursor: not-allowed; }
 .ci-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; white-space: nowrap; }
 .ci-del { border: none; background: none; cursor: pointer; opacity: 0.5; font-size: 0.95rem; }
 .ci-del:hover { opacity: 1; }
@@ -616,11 +633,15 @@ footer p { color: var(--ink-soft); font-size: 0.86rem; margin: 0 0 8px; }
 .ct-grand { font-size: 1.1rem !important; border-top: 1.5px solid var(--line); margin-top: 6px; padding-top: 9px !important; }
 
 .co-summary { background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; }
+.co-sum-head { margin: 16px 0 0; }
 .co-summary div { display: flex; justify-content: space-between; font-size: 0.88rem; padding: 2px 0; gap: 12px; }
 .co-summary em { color: var(--accent-dark); font-style: normal; font-size: 0.78rem; }
 .co-wrap h3 { font-size: 1rem; }
 .co-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .co-grid .wide { grid-column: 1 / -1; }
+/* Grid-Spalten dürfen unter die Eigenbreite der Inputs (size=20, ~249 px) schrumpfen — sonst laufen im Konto-Dialog (max. 440 px)
+   Straße und Ort rechts über den Rand */
+.co-grid > *, .co-grid input { min-width: 0; }
 .co-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .pay-rows { display: flex; flex-direction: column; gap: 8px; }
 .pay-row {
@@ -679,8 +700,10 @@ dialog input:focus, dialog textarea:focus, dialog select:focus { border-color: v
   padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 0.88rem;
 }
 .acc-order small { color: var(--ink-soft); }
-.ao-mid { display: flex; flex-direction: column; gap: 2px; }
-.ao-right { text-align: right; display: flex; flex-direction: column; gap: 2px; }
+/* Status-Spalte nimmt den Platz zwischen Nummer und Betrag, darf dafür umbrechen (Basis 0) — sonst rutscht der Betragsblock bei
+   „Rechnung per Mail“ in eine eigene Zeile */
+.ao-mid { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; flex: 1 1 0; min-width: 84px; }
+.ao-right { text-align: right; display: flex; flex-direction: column; gap: 2px; margin-left: auto; } /* auch nach dem Umbruch rechtsbündig */
 .acc-order a { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .acc-order a:hover { text-decoration: underline; }
 
@@ -722,7 +745,7 @@ dialog input:focus, dialog textarea:focus, dialog select:focus { border-color: v
 .dark .stage-print.p-ok { color: #8fc78f; }
 .dark .stage-print.p-warn { color: #dfb173; }
 .dark input[type=range]::-webkit-slider-thumb { background: var(--ink); border-color: var(--bg-soft); }
-.dark .step-num { color: var(--bg); }
+.dark .step-num { color: var(--accent); } /* Ziffern ohne Kreis (studio.css) — var(--bg) war auf dem Sektionsgrund unsichtbar */
 .dark .ed-handle { fill: var(--bg-soft); }
 html.dark, .dark body { color-scheme: dark; }
 
@@ -1118,6 +1141,9 @@ section[id] { scroll-margin-top: 72px; }
     transform: translateY(115%); transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
   }
   .mobile-bar.show { transform: none; }
+  /* Kennzeichnung des Streichpreises über der ganzen Leiste (§ 11 PAngV) — nur während einer Aktion mit Bezugspreis */
+  .mb-ref { grid-column: 1 / -1; font-size: 0.66rem; line-height: 1.2; color: var(--ink-soft); margin: -2px 0 -4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mb-ref[hidden] { display: none; }
   .mobile-bar::before { content: ''; position: absolute; left: 0; right: 0; top: -22px; height: 22px;
     background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 80%, transparent)); pointer-events: none; }
   .dark .mobile-bar { box-shadow: 0 14px 40px rgba(0,0,0,0.5); }

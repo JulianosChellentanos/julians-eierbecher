@@ -1,8 +1,8 @@
 // formsam — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal + Rechtsseiten + Widerruf
 // Start: node server.js   →   http://<host>:4488   (Admin: /admin, Standard-Passwort bei Neuinstallation: formsam-admin)
 import http from 'node:http';
-import { createGzip, constants as zc } from 'node:zlib';
-import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync } from 'node:fs';
+import { createGzip, gzipSync, constants as zc } from 'node:zlib';
+import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { mkdir, writeFile, readdir, readFile, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
-  widerrufEingang, adminWiderruf, lieferzeitText } from './lib/mail-templates.js';
+  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse } from './lib/mail-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -74,7 +74,8 @@ function sanitizeMuster(m) {
 }
 
 // ---------------------------------------------------------------------------
-// Aktionen (settings.aktionen): zeitlich begrenzte Prozent-Rabatte auf den Stückpreis (UVP → Aktionspreis).
+// Aktionen (settings.aktionen): zeitlich begrenzte Prozent-Rabatte auf den Stückpreis (Normalpreis → Aktionspreis; als Streichpreis
+//   zeigt der Shop den niedrigsten Preis der letzten 30 Tage — siehe „Preis-Historie“ unten und pricing.js referenzpreis()).
 //   { id 'ak-…', name ≤ 60, prozent 1–90 (ganz), start/ende ISO-UTC (ende > start), produkte 'alle'|'eierbecher'|'vase',
 //     muster [Muster-Keys] (leer = alle Oberflächen; „nur Gehämmert“ = ['gehaemmert']),
 //     mengenrabatt (true = Mengenrabatt zusätzlich, false = entfällt während der Aktion), hinweis ≤ 120, aktiv }
@@ -123,7 +124,7 @@ function sanitizeAktionen(list, { lenient = false } = {}) {
   const out = [], ids = new Set();
   list.slice(0, 50).forEach((a, i) => {
     let ak;
-    try { ak = sanitizeAktion(a, i); } catch (err) { if (!lenient) throw err; console.warn(`⚠️  ${err.message} — Eintrag verworfen`); return; }
+    try { ak = sanitizeAktion(a, i); } catch (err) { if (!lenient) throw err; console.warn(`⚠️  ${err.message} – Eintrag verworfen`); return; }
     while (ids.has(ak.id)) ak.id = newAktionId();   // doppelte IDs (kopierter Eintrag) → neue ID
     ids.add(ak.id);
     out.push(ak);
@@ -180,6 +181,24 @@ function produktSperre(items) {
     const product = it?.product;
     if (product === 'eierbecher' && !produktAktiv('eierbecher')) return EIERBECHER_GESPERRT;
     if (!['vase', 'eierbecher'].includes(product)) return 'Unbekanntes Produkt';
+  }
+  return null;
+}
+/**
+ * Farben, die der Admin aus dem Shop genommen hat („Im Shop“ aus): /api/colors liefert sie nicht mehr, der Client rechnet ihren
+ * Aufpreis deshalb nicht — der Server (colorOfItem findet auch inaktive) würde ihn aber berechnen. Solche Zeilen (Körperfarbe,
+ * bei Farbschrift auch die Schriftfarbe) weisen Quote, PayPal und Checkout ab (→ 400), statt anders zu rechnen als die Kasse.
+ * Unbekannte Farben (nicht in den Einstellungen) bleiben wie bisher ohne Aufpreis erlaubt.
+ */
+function farbSperre(items) {
+  for (const it of Array.isArray(items) ? items : []) {
+    const c = colorOfItem(it);
+    if (c && !c.active) return `Die Farbe „${c.name}“ ist derzeit nicht verfügbar – bitte wähle für dieses Design eine andere Farbe.`;
+    const cfg = it?.config || {};
+    if (String(cfg.text || '').trim() && cfg.textStyle === 'farbe' && typeof cfg.textColor === 'string') {
+      const t = (settings.colors || []).find((x) => x?.id === cfg.textColor);
+      if (t && !t.active) return `Die Schriftfarbe „${t.name}“ ist derzeit nicht verfügbar – bitte wähle für dieses Design eine andere Schriftfarbe.`;
+    }
   }
   return null;
 }
@@ -276,7 +295,7 @@ function sanitizeCompany(raw) {
   const stDigits = co.steuerNr.replace(/\D/g, '').length;
   if (co.steuerNr && (!/^[0-9 /-]+$/.test(co.steuerNr) || stDigits < 10 || stDigits > 13)) throw httpError(400, 'Firma: Steuernummer ungültig (z. B. 12/345/67890)');
   const iban = cleanIban(co.iban);
-  if (iban === null) throw httpError(400, 'Firma: IBAN ungültig — nur Buchstaben und Ziffern, 15–34 Zeichen, beginnt mit Länderkennung');
+  if (iban === null) throw httpError(400, 'Firma: IBAN ungültig – nur Buchstaben und Ziffern, 15–34 Zeichen, beginnt mit Länderkennung');
   co.iban = iban;
   co.bic = co.bic.toUpperCase().replace(/\s+/g, '');
   return co;
@@ -293,12 +312,14 @@ function settingsHinweise() {
   const co = settings.company || {};
   const out = [];
   if (!co.kleinunternehmer && !String(co.steuerNr || '').trim() && !String(co.ustId || '').trim()) {
-    out.push('Rechnungen mit Umsatzsteuer brauchen eine Steuernummer oder USt-IdNr. — bitte unter Firma eintragen.');
+    out.push('Rechnungen mit Umsatzsteuer brauchen eine Steuernummer oder USt-IdNr. – bitte unter Firma eintragen.');
   }
+  if (historieDefekt) out.push(`Preis-Historie war beim Start unlesbar (gesichert als ${historieDefekt}) – die Streichpreise der nächsten 30 Tage (niedrigster Preis vor einer Aktion) bitte prüfen.`);
+  if (historieGesperrt) out.push('Preis-Historie (data/preis-historie.json) ist nicht lesbar und wird nicht fortgeschrieben – bitte Datei prüfen und den Shop neu starten.');
   let legal = null;
   try { legal = typeof legalMod?.legalWarnings === 'function' ? legalMod.legalWarnings(settings) : null; } catch { legal = null; }
   if (Array.isArray(legal)) out.push(...legal.map(String));
-  else if (!String(co.owner || '').trim()) out.push('Firma: Inhaber (voller Name) fehlt — er gehört auf Rechnungen und ins Impressum.');
+  else if (!String(co.owner || '').trim()) out.push('Firma: Inhaber (voller Name) fehlt – er gehört auf Rechnungen und ins Impressum.');
   return out;
 }
 
@@ -332,7 +353,7 @@ function loadSettings() {
   settings.aktionen = sanitizeAktionen(settings.aktionen, { lenient: true });
   // Ein leeres/ungültiges Admin-Passwort würde den Admin entweder für alle öffnen oder dauerhaft aussperren
   if (typeof settings.adminKey !== 'string' || !settings.adminKey.trim()) {
-    console.warn('⚠️  settings.adminKey ungültig — Standard-Passwort wird verwendet');
+    console.warn('⚠️  settings.adminKey ungültig – Standard-Passwort wird verwendet');
     settings.adminKey = DEFAULT_SETTINGS.adminKey;
   }
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
@@ -397,6 +418,164 @@ async function writeFileAtomic(file, data) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Preis-Historie (data/preis-historie.json) — § 11 PAngV: Wer eine Preisermäßigung bekannt gibt (Streichpreis, „−15 %“),
+// muss den niedrigsten Gesamtpreis der letzten 30 Tage vor Beginn der Ermäßigung als Bezugspreis nennen, und eine
+// Prozentangabe muss sich auf diesen Bezugspreis beziehen (Art. 6a RL 98/6/EG, EuGH C-330/23). Dafür merkt sich der
+// Server jeden preisrelevanten Stand als Momentaufnahme:
+//   { at (ISO), pricing: { products: { vase: { single, discounts }, eierbecher: { single, untersetzer, discounts } }, gravur, farbschrift,
+//     muster, volumen }, colors: [{ id, aufpreis }], aktionen: [{ id, name, prozent, start, ende, produkte, muster, mengenrabatt }]
+//     (nur aktive Aktionen) }
+// discounts (Mengenstaffel) und mengenrabatt braucht der Warenkorb für den Zeilen-Streichpreis ab 2 Stück (pricing.js tiefstZeile:
+// niedrigster Preis genau dieser Menge in den 30 Tagen); Einträge von vor dieser Erweiterung haben sie nicht → dort kein
+// Zeilen-Streichpreis ab 2 Stück.
+// Eine Momentaufnahme gilt von at bis zum nächsten at; vor dem ersten Eintrag gelten dessen Werte. Neuer Eintrag beim Start
+// (wenn anders als der letzte) und nach jedem Admin-Speichern, das Preise, Farbaufpreise oder Aktionen ändert. Der erste
+// Eintrag übernimmt ALLE aktiven Aktionen, auch abgelaufene (und abgelaufene pausierte — ob sie liefen, weiß der Server
+// nicht; im Zweifel zählt der niedrigere Preis), damit frühere Aktionen im 30-Tage-Fenster mitzählen.
+// Aufbewahrt wird alles der letzten 90 Tage + der letzte Eintrag davor (und was die Fenster laufender Aktionen brauchen).
+// Gerechnet wird nur im Client (pricing.js → referenzpreis(), eine Implementierung); /api/pricing liefert unter
+// preisHistorie kompakt die Einträge, die die 30-Tage-Fenster der gerade laufenden Aktionen schneiden.
+// Individuelle Gutscheine und Mengenrabatte sind keine Preisermäßigung im Sinne von § 11 — der Mengenrabatt zählt nur beim
+// Zeilen-Streichpreis mit (der Vergleich muss dieselbe Menge zum damaligen Preis nehmen).
+// ---------------------------------------------------------------------------
+const HISTORIE_FILE = path.join(DATA, 'preis-historie.json');
+const TAG_MS = 864e5;
+const REF_TAGE = 30;        // § 11 PAngV: Bezugszeitraum vor Beginn der Ermäßigung
+const HISTORIE_TAGE = 90;   // Aufbewahrung
+let preisHistorie = [];     // Momentaufnahmen, nach at aufsteigend
+// Unlesbare preis-historie.json beim Start: historieDefekt = Name der Sicherung (Admin-Hinweis); historieGesperrt = die Datei
+// ließ sich gar nicht lesen (z. B. Rechte) — dann wird sie nicht überschrieben, bis das behoben ist und der Shop neu startet
+let historieDefekt = null;
+let historieGesperrt = false;
+/** Preisrelevanter Stand jetzt (ohne at); erste = true: auch abgelaufene pausierte Aktionen mitnehmen (siehe oben) */
+/** Mengenstaffel für die Momentaufnahme: nur gültige Stufen { qty, off }, nach Menge sortiert */
+const staffelStand = (list) => (Array.isArray(list) ? list : [])
+  .map((t) => ({ qty: Math.round(Number(t?.qty)), off: Number(t?.off) }))
+  .filter((t) => t.qty >= 1 && t.off > 0 && t.off < 100)
+  .sort((x, y) => x.qty - y.qty);
+function preisStand(erste = false, now = Date.now()) {
+  const pr = settings.pricing || {};
+  return {
+    pricing: {
+      products: {
+        vase: { single: euro(pr.vase?.single), discounts: staffelStand(pr.vase?.discounts) },
+        eierbecher: { single: euro(pr.eierbecher?.single), untersetzer: euro(pr.eierbecher?.untersetzer), discounts: staffelStand(pr.eierbecher?.discounts) },
+      },
+      gravur: euro(pr.gravur),
+      farbschrift: euro(pr.farbschrift),
+      muster: sanitizeMuster(pr.muster),
+      volumen: { prozent: Number(pr.volumen?.prozent) || 0, euro: Number(pr.volumen?.euro) || 0 },
+    },
+    // alle Farben (auch inaktive: priceItem rechnet ihren Aufpreis ebenfalls) — fehlt eine Farbe, zählt ihr Aufpreis als 0
+    colors: (settings.colors || []).filter((c) => c && typeof c === 'object' && c.id).map((c) => ({ id: String(c.id), aufpreis: euro(c.aufpreis) })),
+    aktionen: (settings.aktionen || []).filter((a) => a.aktiv || (erste && Date.parse(a.ende) <= now))
+      .map((a) => ({ id: a.id, name: a.name, prozent: a.prozent, start: a.start, ende: a.ende, produkte: a.produkte, muster: Array.isArray(a.muster) ? a.muster : [], mengenrabatt: !!a.mengenrabatt })),
+  };
+}
+const standKey = (e) => JSON.stringify({ pricing: e.pricing, colors: e.colors, aktionen: e.aktionen });
+/**
+ * preis-historie.json lesen (synchron, beim Start) — wie readWiderrufe(): fehlt die Datei, beginnt die Historie leer; ist sie
+ * unlesbar (kaputtes JSON), wird sie als preis-historie.json.defekt-<Zeit> beiseitegelegt und im Log sowie im Admin gemeldet,
+ * statt still mit einer neuen „ersten“ Momentaufnahme überschrieben zu werden (sonst wäre der 30-Tage-Nachweis weg).
+ */
+function loadPreisHistorie() {
+  let text;
+  try { text = readFileSync(HISTORIE_FILE, 'utf8'); } catch (err) {
+    preisHistorie = [];
+    if (err.code === 'ENOENT') return;
+    historieGesperrt = true;
+    console.error(`⚠️  preis-historie.json nicht lesbar (${err.code || err.message}) – sie wird nicht überschrieben; bitte Datei prüfen und den Shop neu starten`);
+    return;
+  }
+  let raw;
+  try {
+    raw = JSON.parse(text);
+    if (!Array.isArray(raw) && !Array.isArray(raw?.eintraege)) throw new Error('keine Liste');
+  } catch (err) {
+    const backup = `${HISTORIE_FILE}.defekt-${Date.now()}`;
+    try {
+      renameSync(HISTORIE_FILE, backup);
+      historieDefekt = path.basename(backup);
+      console.error(`⚠️  preis-historie.json unlesbar (${err.message}) – gesichert als ${historieDefekt}, neue Historie begonnen; Streichpreise laufender und kommender Aktionen (30-Tage-Bezugspreis) prüfen`);
+    } catch (e2) {
+      historieGesperrt = true;   // Sicherung nicht möglich → lieber gar nicht schreiben
+      console.error(`⚠️  preis-historie.json unlesbar (${err.message}) und nicht zu sichern (${e2.message}) – sie wird nicht überschrieben`);
+    }
+    raw = [];
+  }
+  const list = Array.isArray(raw) ? raw : raw.eintraege;
+  preisHistorie = list.filter((e) => e && typeof e === 'object' && Number.isFinite(Date.parse(e.at)) && e.pricing && typeof e.pricing === 'object')
+    .map((e) => ({ at: new Date(Date.parse(e.at)).toISOString(), pricing: e.pricing, colors: Array.isArray(e.colors) ? e.colors : [], aktionen: Array.isArray(e.aktionen) ? e.aktionen : [] }))
+    .sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+  if (list.length > preisHistorie.length) console.warn(`⚠️  preis-historie.json: ${list.length - preisHistorie.length} ungültige Einträge übersprungen`);
+}
+/**
+ * Alte Einträge entfernen: behalten wird alles ab (jetzt − 90 Tage) und der letzte Eintrag davor — reicht ein 30-Tage-Fenster
+ * einer noch laufenden oder geplanten Aktion weiter zurück, gilt dessen Beginn als Grenze.
+ */
+function prunePreisHistorie(now = Date.now()) {
+  let grenze = now - HISTORIE_TAGE * TAG_MS;
+  for (const a of settings.aktionen || []) {
+    if (a.aktiv && Date.parse(a.ende) > now) grenze = Math.min(grenze, Date.parse(a.start) - REF_TAGE * TAG_MS);
+  }
+  let i = preisHistorie.findIndex((e) => Date.parse(e.at) >= grenze);
+  if (i === -1) i = preisHistorie.length;
+  if (i > 1) preisHistorie = preisHistorie.slice(i - 1);
+}
+// Atomar und nacheinander wie saveSettings()
+let historieWrite = Promise.resolve();
+/** Momentaufnahme anhängen, wenn sich der preisrelevante Stand geändert hat (Start, Admin-Speichern) — sonst nichts */
+function notePreisHistorie() {
+  if (historieGesperrt) return historieWrite;   // unlesbare Datei nicht überschreiben (siehe loadPreisHistorie)
+  const now = Date.now();
+  const stand = preisStand(!preisHistorie.length, now);
+  const last = preisHistorie[preisHistorie.length - 1];
+  if (last && standKey(last) === standKey(stand)) return historieWrite;
+  const at = new Date(Math.max(now, last ? Date.parse(last.at) + 1 : 0)).toISOString();
+  preisHistorie.push({ at, ...stand });
+  prunePreisHistorie(now);
+  // eine Zeile je Momentaufnahme — kompakt und trotzdem mit dem Auge lesbar
+  const json = `{"version":1,"eintraege":[\n${preisHistorie.map((e) => JSON.stringify(e)).join(',\n')}\n]}\n`;
+  historieWrite = historieWrite.catch(() => {}).then(() => writeFileAtomic(HISTORIE_FILE, json));
+  return historieWrite;
+}
+/**
+ * Kompakte Historie für /api/pricing: nur die Einträge, die die Fenster [start − 30 Tage, start) der gerade laufenden
+ * Aktionen schneiden (der letzte Eintrag vor dem frühesten Fensterbeginn gilt dort noch; liegt keiner davor, der erste),
+ * Muster- und Farbaufpreise nur > 0 (Farben als { id: aufpreis }), Aktionen nur, wenn ihr Zeitraum die Fenster berührt.
+ */
+function preisHistorieFuer(laufende) {
+  if (!laufende.length || !preisHistorie.length) return [];
+  const starts = laufende.map((a) => Date.parse(a.start));
+  const von = Math.min(...starts) - REF_TAGE * TAG_MS, bis = Math.max(...starts);
+  let i0 = 0;
+  preisHistorie.forEach((e, i) => { if (Date.parse(e.at) <= von) i0 = i; });
+  const out = [];
+  for (let i = i0; i < preisHistorie.length; i++) {
+    const e = preisHistorie[i];
+    if (i > i0 && Date.parse(e.at) >= bis) break;
+    const pr = e.pricing || {};
+    out.push({
+      at: e.at,
+      pricing: {
+        products: pr.products, gravur: pr.gravur, farbschrift: pr.farbschrift, volumen: pr.volumen,
+        muster: Object.fromEntries(Object.entries(pr.muster || {}).filter(([, v]) => v > 0)),
+      },
+      colors: Object.fromEntries((e.colors || []).filter((c) => c.aufpreis > 0).map((c) => [c.id, c.aufpreis])),
+      aktionen: (e.aktionen || []).filter((a) => Date.parse(a.start) < bis && Date.parse(a.ende) > von)
+        .map(({ id, prozent, start, ende, produkte, muster, mengenrabatt }) => ({ id, prozent, start, ende, produkte, muster, mengenrabatt })),
+    });
+  }
+  return out;
+}
+/** Alle Aktionen aus der Historie (je id + Zeitraum einmal, neuester Stand) — der Admin warnt damit auch vor gelöschten Vor-Aktionen */
+function historieAktionen() {
+  const map = new Map();
+  for (const e of preisHistorie) for (const a of e.aktionen || []) map.set(`${a.id}|${a.start}|${a.ende}`, a);
+  return [...map.values()];
 }
 
 // ---------------------------------------------------------------------------
@@ -518,24 +697,42 @@ function userFromReq(req) {
   }
   return users.find((u) => u.id === s.userId) || null;
 }
-const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address || null });
+// emailVerified: Adresse per Link bestätigt (user.emailVerifiedAt) — erst dann zeigt das Konto Gastbestellungen mit dieser Adresse
+const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address || null, emailVerified: !!u.emailVerifiedAt });
 
 // --- Passwort vergessen: Token nur als SHA-256-Hash im Konto (user.reset = { hash, exp }), 60 Minuten gültig
 const RESET_TTL = 60 * 60 * 1000;
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
-function userByResetToken(token) {
+/** Konto zu einem Mail-Token (field 'reset' = Passwort vergessen, 'verify' = E-Mail bestätigen) — nur gültige, nicht abgelaufene */
+function userByToken(token, field) {
   const t = String(token || '');
   if (!/^[A-Za-z0-9_-]{20,64}$/.test(t)) return null;
   const h = Buffer.from(sha256(t), 'hex');
   const now = Date.now();
   let found = null;
   for (const u of users) {   // alle Konten durchgehen (kein Abbruch → keine Zeitmessung möglich)
-    const r = u.reset;
+    const r = u[field];
     if (!r || !/^[0-9a-f]{64}$/.test(String(r.hash || ''))) continue;
     if (crypto.timingSafeEqual(h, Buffer.from(r.hash, 'hex')) && Number(r.exp) > now) found = u;
   }
   return found;
 }
+const userByResetToken = (token) => userByToken(token, 'reset');
+
+// --- E-Mail-Adresse bestätigen (Double-Opt-in): bei der Registrierung wird die Adresse nicht geprüft — wer sie nur eintippt,
+//   darf keine fremden Gastbestellungen (Status, Sendungsnummer, Guthaben-Code, Altbestand-Rechnungen) sehen. Der Link aus der
+//   Willkommensmail (bzw. „Link erneut senden“ im Konto) setzt user.emailVerifiedAt — aber nur zusammen mit der Anmeldung
+//   in genau diesem Konto: Klickt die echte Inhaberin der Adresse den Link aus einer Mail, die jemand anderes mit ihrer
+//   Adresse ausgelöst hat, bestätigt sie damit nicht das fremde Konto. Token als SHA-256-Hash (user.verify = { hash, exp }).
+//   Ein Passwort-Reset über die Mail bestätigt die Adresse ebenfalls (er beweist den Zugriff aufs Postfach und löst alle
+//   anderen Sitzungen). Bestehende Konten beginnen unbestätigt.
+const VERIFY_TTL = VERIFY_TAGE * 864e5;
+function newVerifyToken(u) {
+  const token = crypto.randomBytes(24).toString('base64url');
+  u.verify = { hash: sha256(token), exp: Date.now() + VERIFY_TTL };
+  return token;
+}
+const verifyLinkFor = (token) => `${baseUrlFor(settings)}/?verify=${token}`;
 // Rate-Limit für „Passwort vergessen“ (im Speicher): max. 3 Anfragen je E-Mail in 15 Minuten,
 // je IP großzügiger (10), damit ein Proxy ohne X-Forwarded-For nicht alle Kunden gemeinsam sperrt.
 // Der Speicher ist hart gedeckelt (FORGOT_MAX_KEYS) und wird höchstens einmal pro Minute durchgekehrt.
@@ -556,6 +753,11 @@ function forgotLimited(key, max = 3, windowMs = 15 * 60 * 1000) {
   // Map ist einfügegeordnet → bei Überlauf fliegen die ältesten Schlüssel raus
   while (forgotHits.size > FORGOT_MAX_KEYS) forgotHits.delete(forgotHits.keys().next().value);
   return false;
+}
+/** Nur nachsehen (ohne zu zählen): ist das Limit für key im Zeitfenster erreicht? — für Sperren, die nur Fehlgriffe zählen */
+function rateLimitReached(key, max, windowMs = 15 * 60 * 1000) {
+  const now = Date.now();
+  return (forgotHits.get(key) || []).filter((t) => now - t < windowMs).length >= max;
 }
 // X-Forwarded-For ist clientgesteuert — nur hinter eigenem Reverse-Proxy auswerten (TRUST_PROXY=1 = ein Proxy,
 // der seinen Wert hinten anhängt); ohne Proxy zählt die Socket-Adresse
@@ -614,7 +816,7 @@ async function noteMailSkipped(order, note) {
 /** Ergebnis von mailer.queue() vermerken: eingereiht/gesendet → mailsSent[key], sonst Hinweis. */
 async function noteQueued(order, key, subject, to, q) {
   if (q.status === 'wartet' || q.status === 'gesendet') return noteMailSent(order, key, subject, to);
-  return noteMailSkipped(order, `E-Mail „${subject}“ an ${to} nicht gesendet: ${q.error || q.status} — liegt im Versandprotokoll`);
+  return noteMailSkipped(order, `E-Mail „${subject}“ an ${to} nicht gesendet: ${q.error || q.status} – liegt im Versandprotokoll`);
 }
 /**
  * AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) als HTML-Anhänge der Bestellbestätigung — so hat die Kundschaft
@@ -728,7 +930,7 @@ hooks.widerruf = async (w) => {
 // Neues Kundenkonto → Willkommensmail
 hooks.userRegistered = async (user) => {
   if (!isEmail(user?.email)) return;
-  const m = welcome({ user, settings, baseUrl: baseUrlFor(settings) });
+  const m = welcome({ user, settings, baseUrl: baseUrlFor(settings), verifyLink: user.verifyLink || '' });
   await mailer.queue({ to: { name: user.name, email: user.email }, subject: m.subject, text: m.text, html: m.html, kind: 'willkommen', ref: user.id });
 };
 
@@ -824,17 +1026,25 @@ function priceItem(item, aktionen = aktiveAktionen()) {
 /**
  * Summen einer Bestellung: Zeilen (priceItem), Zwischensumme, Gutschein, Versand, Gesamt.
  * aktionen = [{ id, name, prozent, ersparnis, produkte, muster }] für jede Aktion, die mindestens eine Zeile reduziert hat
- * (Ersparnis = Σ aktionBetrag·qty dieser Aktion, informativ), sortiert nach Ersparnis absteigend; aktion = aktionen[0] || null.
+ * (Ersparnis = Σ je Zeile max(0, Normalpreis mit Staffel − Zeilenpreis), informativ; Mails und Beleg zeigen nur Ersparnis > 0),
+ * sortiert nach Ersparnis absteigend; aktion = aktionen[0] || null.
  * Gutschein während einer Aktion: nur mit coupon.mitAktion — sonst coupon null und couponError mit lesbarer Meldung
- * (genannt wird die Aktion mit der größten Ersparnis); ungültiger Code / Mindestbestellwert nicht erreicht → coupon null
- * ohne couponError (Meldung wie bisher im Client).
+ * (genannt wird die Aktion mit der größten Ersparnis); Mindestbestellwert nicht erreicht → coupon null mit couponError;
+ * unbekannter/inaktiver Code → coupon null ohne couponError (allgemeine Meldung im Client).
  */
 function computeTotals(items, couponCode) {
   const aks = aktiveAktionen();
   const lines = items.map((it) => ({ ...it, ...priceItem(it, aks) }));
   const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
-  const ersparnisJe = new Map();   // Aktions-ID → Σ aktionBetrag·qty
-  for (const l of lines) if (l.aktionProzent > 0 && l.aktionId) ersparnisJe.set(l.aktionId, (ersparnisJe.get(l.aktionId) || 0) + l.aktionBetrag * l.qty);
+  // Aktions-ID → Σ Ersparnis der Zeilen: Normalpreis der Zeile MIT dem Mengenrabatt, der ohne die Aktion gälte, minus Zeilenpreis
+  // (≥ 0) — ohne „Mengenrabatt zusätzlich“ spart eine Aktion bei 2+ Stück weniger als aktionBetrag·qty, evtl. gar nichts.
+  // Gleiche Rechnung wie linePrice().ersparnis in public/js/pricing.js (Warenkorb).
+  const ersparnisJe = new Map();
+  for (const l of lines) {
+    if (!(l.aktionProzent > 0) || !l.aktionId) continue;
+    const normal = Math.round((l.uvp * l.qty) * (1 - discountFor(l.product, l.qty) / 100) * 100) / 100;
+    ersparnisJe.set(l.aktionId, (ersparnisJe.get(l.aktionId) || 0) + Math.max(0, Math.round((normal - l.line) * 100) / 100));
+  }
   const aktionen = aks.filter((a) => ersparnisJe.has(a.id))
     .map((a) => ({ id: a.id, name: a.name, prozent: a.prozent, ersparnis: Math.round(ersparnisJe.get(a.id) * 100) / 100, produkte: a.produkte, muster: a.muster || [] }))
     .sort((x, y) => y.ersparnis - x.ersparnis);
@@ -845,7 +1055,10 @@ function computeTotals(items, couponCode) {
   let afterCoupon = subtotal;
   if (couponCode) {
     const c = settings.coupons.find((x) => x.active && String(x.code || '').trim().toLowerCase() === String(couponCode).trim().toLowerCase());
-    if (c && subtotal >= (c.minOrder || 0)) {
+    // Mindestbestellwert nicht (mehr) erreicht — z. B. Menge im Warenkorb verringert: mit Meldung statt still ohne Gutschein
+    // abrechnen (die Kasse zeigt sie, der Checkout lehnt mit 400 ab)
+    if (c && subtotal < (c.minOrder || 0)) couponError = `Gutschein „${c.code}“ gilt erst ab einem Bestellwert von ${money(c.minOrder)}.`;
+    else if (c) {
       // Guthaben-Gutschein (Gutschrift): höchstens der noch offene Restwert
       const rest = isGuthaben(c) ? couponRest(c) : null;
       if (rest !== null && rest <= 0) {
@@ -854,7 +1067,8 @@ function computeTotals(items, couponCode) {
         couponError = `Gutschein „${c.code}“ ist nicht mit der Aktion „${aktion.name}“ kombinierbar.`;
       } else {
         const off = c.type === 'fixed' ? Math.min(rest ?? c.value, c.value, subtotal) : subtotal * c.value / 100;
-        coupon = { code: c.code, type: c.type, value: c.value, off: Math.round(off * 100) / 100 };
+        // guthaben: Anrechnung eines Guthabens (Gutschrift) — die Rechnung weist das Entgelt dann ohne diesen Abzug aus (USt!)
+        coupon = { code: c.code, type: c.type, value: c.value, off: Math.round(off * 100) / 100, ...(isGuthaben(c) ? { guthaben: true } : {}) };
         afterCoupon = Math.round((subtotal - coupon.off) * 100) / 100;
       }
     }
@@ -923,9 +1137,36 @@ function belegJahreswechsel(prefix, next, now = new Date()) {
 function nextBelegNr(prefixKey, nextKey, fallbackPrefix, now = new Date()) {
   const j = belegJahreswechsel(settings[prefixKey] || fallbackPrefix, settings[nextKey], now);
   if (j.gewechselt) console.log(`🗓️  Nummernkreis ${prefixKey}: Jahreswechsel „${settings[prefixKey]}“ → „${j.prefix}“, Zähler beginnt bei 1`);
+  // Sicherheitsnetz: eine Nummer, die schon auf einem Beleg steht, wird nie ein zweites Mal vergeben (§ 14 Abs. 4 Nr. 4 UStG) —
+  // auch wenn Präfix oder Zähler zurückgesetzt wurden (alter Admin-Tab, Tippfehler, erneuter Jahreswechsel)
+  let n = j.next;
+  while (belegeVergeben.has(j.prefix + String(n).padStart(4, '0'))) n++;
+  if (n !== j.next) console.warn(`⚠️  Nummernkreis ${prefixKey}: ${j.prefix}${String(j.next).padStart(4, '0')} ist schon vergeben – weiter mit ${j.prefix}${String(n).padStart(4, '0')}`);
+  const nr = j.prefix + String(n).padStart(4, '0');
+  belegeVergeben.add(nr);
   settings[prefixKey] = j.prefix;
-  settings[nextKey] = j.next + 1;
-  return j.prefix + String(j.next).padStart(4, '0');
+  settings[nextKey] = n + 1;
+  return nr;
+}
+/** Alle ausgestellten Belegnummern (Rechnung, Gutschrift, Storno) — beim Start aus den Bestellungen, danach bei jedem Schreiben */
+const belegeVergeben = new Set();
+function merkeBelege(o) {
+  for (const nr of [o?.invoiceNo, o?.reklamation?.gutschriftNo, o?.storno?.nr]) if (nr) belegeVergeben.add(String(nr));
+}
+/**
+ * Präfix aus einem Admin-Patch prüfen (key 'invoicePrefix' | 'creditPrefix') → { prefix, hinweis } — prefix null = nichts ändern.
+ * Leer → das aktuelle bleibt (kein Rückfall auf den festen Standard „…-2026-“). Ergibt das Präfix nach dem Jahreswechsel genau
+ * das aktuelle, ist es der Stand eines Admin-Tabs, der vor dem automatischen Wechsel geladen wurde → nicht übernehmen (mit
+ * Hinweis), sonst stünde beim nächsten Beleg wieder der Jahreswechsel mit Zähler 1 an. Jede andere Jahreszahl vor dem
+ * aktuellen Jahr würde den Zähler ebenfalls auf 1 setzen und Nummern doppelt vergeben → 400.
+ */
+function belegPraefixAusPatch(key, raw, label) {
+  const neu = oneLine(raw, 20);
+  if (!neu || neu === settings[key]) return { prefix: null };   // leer oder unverändert (auch ein noch nicht umgestelltes Vorjahres-Präfix)
+  const j = belegJahreswechsel(neu, 1);
+  if (j.prefix === settings[key]) return { prefix: null, hinweis: `${label} „${neu}“ nicht übernommen – der Nummernkreis steht nach dem Jahreswechsel schon auf „${settings[key]}“.` };
+  if (j.gewechselt) throw httpError(400, `${label}: Die Jahreszahl in „${neu}“ liegt vor dem aktuellen Jahr – der Zähler würde neu beginnen und Nummern doppelt vergeben.`);
+  return { prefix: neu };
 }
 /** Vergleich mit dem Admin-Passwort in konstanter Zeit; ein leeres/ungültiges Passwort passt nie. */
 function adminKeyMatches(k) {
@@ -936,6 +1177,59 @@ function adminKeyMatches(k) {
 function isAdmin(req) {
   return adminKeyMatches(req.headers['x-admin-key']);
 }
+
+// ---------------------------------------------------------------------------
+// Zugriffsschlüssel für Belege und Modelldateien (orders/<ID>/rechnung.html, gutschrift.html, *.stl, *.3mf)
+//   Neue Bestellungen bekommen order.accessKey (16 Zufallsbytes, base64url). Die Dateien gibt es nur mit ?k=<accessKey>
+//   (Links in Kasse, Mails, Konto, Admin), mit dem Admin-Passwort im Header x-admin-key oder — bei Bestellungen von vor
+//   dem Schlüssel (ohne accessKey) — wie bisher allein über die Bestellnummer. Falscher/fehlender Schlüssel → 404 wie bei
+//   einer unbekannten Bestellung. Upload und Abschluss in der Kasse (/api/order/<ID>/stl|complete) verlangen den Schlüssel
+//   ebenfalls (Header x-order-key), sonst könnte, wer eine Bestellnummer errät, Druckdateien austauschen oder den Link holen.
+//   Fehlgriffe (404) auf /orders/ und /api/order/ zählen je IP; nach ORDER_MISS_MAX in 15 Minuten gibt es 429 — außer mit
+//   gültigem Schlüssel oder Admin-Header (ein 128-Bit-Schlüssel lässt sich nicht erraten; gebremst wird das Durchprobieren
+//   von Bestellnummern). Der Schlüssel steht nie in Logs, im CSV-/JSON-Export oder in öffentlichen APIs.
+// ---------------------------------------------------------------------------
+const ORDER_MISS_MAX = 20;
+const newAccessKey = () => crypto.randomBytes(16).toString('base64url');
+const sha256Buf = (s) => crypto.createHash('sha256').update(String(s)).digest();
+/** Schlüssel passt zur Bestellung? Vergleich in konstanter Zeit (über SHA-256, damit auch die Länge nichts verrät) */
+function accessKeyMatches(order, k) {
+  const key = typeof order?.accessKey === 'string' ? order.accessKey : '';
+  if (!key || typeof k !== 'string' || !k) return false;
+  return crypto.timingSafeEqual(sha256Buf(k), sha256Buf(key));
+}
+/** Schlüssel aus der Anfrage: Header x-order-key (Kasse) oder ?k= (Links) */
+const requestOrderKey = (req, url) => String(req.headers['x-order-key'] || url.searchParams.get('k') || '');
+/**
+ * Zugriff auf eine Bestellung über ihre Nummer → 'ok' | 'miss' (404) | 'gesperrt' (429).
+ * order = gelesene Bestellung oder null (unbekannt/unzulässig); offen(order) = Zugriff ohne Schlüssel erlaubt.
+ * Jeder Fehlgriff zählt für die IP-Sperre; Admin-Header und gültiger Schlüssel kommen immer durch.
+ */
+function orderZugriff(req, url, order, offen) {
+  if (isAdmin(req)) return order ? 'ok' : 'miss';   // Admin: weder Sperre noch Zählung
+  if (order && accessKeyMatches(order, requestOrderKey(req, url))) return 'ok';
+  const key = `order-miss:${clientIp(req)}`;
+  if (rateLimitReached(key, ORDER_MISS_MAX)) return 'gesperrt';
+  if (order && offen(order)) return 'ok';
+  forgotLimited(key, ORDER_MISS_MAX);
+  return 'miss';
+}
+const TOO_MANY = { ok: false, error: 'Zu viele Anfragen – bitte in 15 Minuten noch einmal versuchen.' };
+/** Belege/Modelle: ohne Schlüssel nur Altbestand (Bestellungen von vor dem Schlüssel) */
+const dateiOffen = (o) => !o.accessKey;
+/**
+ * Kasse (Upload/Abschluss): ohne Schlüssel nur Altbestand und — bis zum Abschluss — Bestellungen aus einem Shop-Tab, der vor
+ * der Umstellung geladen wurde (cart.js ohne Schlüssel, order.kasseOhneSchluessel). Kann nach der Übergangszeit entfallen.
+ */
+const kasseOffen = (o) => !o.accessKey || (o.kasseOhneSchluessel === true && !o.completedAt);
+/** Relativer Link auf eine Datei der Bestellung (Rechnung, Gutschrift, Modell) — mit ?k=, sobald die Bestellung einen Schlüssel hat */
+function orderFileUrl(order, file) {
+  const u = `/orders/${encodeURIComponent(order.orderId)}/${encodeURIComponent(file)}`;
+  return order.accessKey ? `${u}?k=${encodeURIComponent(order.accessKey)}` : u;
+}
+/** Bestellung ohne Zugriffsschlüssel (JSON-Backup): der Schlüssel ist ein Geheimnis wie das Admin-Passwort */
+const ohneSchluessel = (o) => { const { accessKey, ...rest } = o || {}; return rest; };
+
 async function readOrder(id) {
   return normalizeOrder(JSON.parse(await readFile(path.join(ORDERS, id, 'order.json'), 'utf8')));
 }
@@ -1025,6 +1319,7 @@ async function writeOrder(order) {
   await writeFile(tmp, JSON.stringify(order, null, 2));
   await rename(tmp, file);
   trackCouponUse(order);
+  merkeBelege(order);
 }
 
 // ---------------------------------------------------------------------------
@@ -1032,9 +1327,14 @@ async function writeOrder(order) {
 // mehrere Bestellungen aufgebraucht wird — ohne das wäre ein Erstattungs-Code beliebig oft einlösbar. Eingelöst ist, was
 // nicht stornierte Bestellungen mit diesem Code abgezogen haben; die Zahl kommt aus den Bestelldateien (beim Start
 // eingelesen, bei jedem writeOrder aktualisiert) — ein veralteter Admin-Stand kann den Gutschein so nicht „auffüllen“.
+// Fest eingelöst ist eine Bestellung erst mit dem Abschluss der Kasse (completedAt bzw. Rechnungsnummer) oder bezahlt
+// (PayPal); eine angelegte, aber nie abgeschlossene Kasse (Upload fehlgeschlagen, Tab geschlossen) hält den Betrag nur
+// GUTHABEN_RESERVIERUNG_MS lang fest — sonst wäre das Guthaben blockiert, bis jemand die verwaiste Bestellung storniert.
+// Der Abschluss prüft danach noch einmal (handleComplete), ob der Betrag inzwischen anderweitig eingelöst wurde.
 // Normale Rabattcodes (OSTERN10 …) bleiben unbegrenzt einlösbar.
 // ---------------------------------------------------------------------------
-const couponUse = new Map();   // CODE (groß) → Map(orderId → abgezogener Betrag)
+const GUTHABEN_RESERVIERUNG_MS = 2 * 3600e3;
+const couponUse = new Map();   // CODE (groß) → Map(orderId → { off, fest, at })
 function trackCouponUse(order) {
   const id = order?.orderId;
   if (!id) return;
@@ -1042,16 +1342,60 @@ function trackCouponUse(order) {
   const code = String(order.coupon?.code || '').trim().toUpperCase();
   if (!code || order.status === 'storniert') return;
   if (!couponUse.has(code)) couponUse.set(code, new Map());
-  couponUse.get(code).set(id, Number(order.coupon.off) || 0);
+  couponUse.get(code).set(id, {
+    off: Number(order.coupon.off) || 0,
+    fest: !!order.completedAt || !!order.invoiceNo || order.paymentStatus === 'bezahlt',
+    at: Date.parse(order.createdAt) || Date.now(),
+  });
 }
+/** Einlösung aus couponUse entfernen (z. B. die Reservierung einer PayPal-Kasse, sobald die Bestellung sie übernimmt) */
+const untrackCouponUse = (id) => { for (const m of couponUse.values()) m.delete(id); };
 const isGuthaben = (c) => !!c?.guthaben && c.type === 'fixed';
-/** Restwert eines Guthaben-Gutscheins: Wert − Summe der Einlösungen (auf Cent, nie negativ) */
-function couponRest(c) {
-  const used = [...(couponUse.get(String(c?.code || '').trim().toUpperCase())?.values() || [])].reduce((a, v) => a + v, 0);
+/**
+ * Gutschein-Liste aus dem Admin übernehmen, ohne Guthaben zu verlieren: Guthaben-Codes (guthaben: true) legt nur der Server an
+ * (Reklamation „gutschein“ erledigen). Ein Admin-Tab, der vor der Gutschrift geladen wurde, kennt den neuen Code nicht — fehlt er
+ * im Patch, bleibt er trotzdem stehen. Löschen nur ausdrücklich über loeschen (Codes aus dem 🗑 des Admins).
+ * Kommt ein Guthaben-Code im Patch vor, bleiben die vom Server gesetzten Felder (Code, Art, Wert, Notiz) — nur aktiv,
+ * Mindestbestellwert und „mit Aktion“ kommen aus dem Admin. Ein Eintrag mit guthaben: true, den der Server nicht als Guthaben
+ * kennt (umbenannt, veralteter Tab nach dem Löschen), wird verworfen — sonst entstünde neues Guthaben ohne Gutschrift.
+ */
+function mergeCoupons(alt, neu, loeschen) {
+  const key = (x) => String(x ?? '').trim().toUpperCase();
+  const weg = new Set((Array.isArray(loeschen) ? loeschen : []).map(key));
+  const guthaben = new Map((alt || []).filter((c) => c && typeof c === 'object' && c.guthaben && !weg.has(key(c.code))).map((c) => [key(c.code), c]));
+  const out = [], drin = new Set();
+  for (const c of neu) {
+    if (!c || typeof c !== 'object') continue;
+    const k = key(c.code), g = guthaben.get(k);
+    if (g) {
+      if (drin.has(k)) continue;   // doppelt im Patch → einmal
+      out.push({ ...c, code: g.code, type: g.type, value: g.value, guthaben: true, ...(g.note !== undefined ? { note: g.note } : {}) });
+    } else if (c.guthaben) continue;
+    else out.push(c);
+    drin.add(k);
+  }
+  for (const [k, g] of guthaben) if (!drin.has(k)) out.push(g);
+  return out;
+}
+/** Gutschein aus den Einstellungen zu einem Code (ohne Groß/Klein, ohne active-Prüfung) oder null */
+const couponByCode = (code) => (settings.coupons || []).find((x) => String(x?.code || '').trim().toUpperCase() === String(code || '').trim().toUpperCase()) || null;
+/**
+ * Restwert eines Guthaben-Gutscheins: Wert − Summe der zählenden Einlösungen (fest oder jünger als das Reservierungsfenster),
+ * auf Cent, nie negativ. ohne = orderId, deren eigene Einlösung nicht mitzählt (Nachprüfung beim Abschluss).
+ */
+function couponRest(c, { ohne = null } = {}) {
+  const now = Date.now();
+  let used = 0;
+  for (const [id, e] of couponUse.get(String(c?.code || '').trim().toUpperCase()) || []) {
+    if (id !== ohne && (e.fest || now - e.at < GUTHABEN_RESERVIERUNG_MS)) used += e.off;
+  }
   return Math.max(0, Math.round(((Number(c?.value) || 0) - used) * 100) / 100);
 }
+/** Restwerte aller Guthaben-Gutscheine { CODE: Rest } für den Admin */
+const guthabenRest = () => Object.fromEntries(settings.coupons.filter(isGuthaben).map((c) => [String(c.code).trim().toUpperCase(), couponRest(c)]));
+/** Beim Start: Guthaben-Einlösungen und vergebene Belegnummern aus allen Bestellungen einlesen */
 async function loadCouponUse() {
-  for (const o of await listOrders()) trackCouponUse(o);
+  for (const o of await listOrders()) { trackCouponUse(o); merkeBelege(o); }
 }
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1066,7 +1410,7 @@ function itemLabel(it, { mitAktion = false, mitAufpreis = true } = {}) {
   const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen', lamellen: 'Lamellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' }[c.pattern] || c.pattern;
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${PRESET_LABELS[c.preset] || c.preset || ''}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
-    (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} — 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
+    (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} – 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
     (c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${RIM_LABELS[c.rim]}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
     (it.code ? ` · Design-Code ${it.code}` : '') +
@@ -1178,6 +1522,7 @@ const BELEG_CSS = `
     .summen td{padding:2px 7px;font-size:12.5px}
     .summen .grand td{font-weight:700;font-size:14.5px;border-top:1.5px solid #211d18;padding-top:6px}
     .summen .fein td{font-size:11px;color:#6b6257;padding-top:1px;padding-bottom:1px}
+    .summen .zahl td{font-weight:700;border-top:1px solid #e6ddd0;padding-top:5px}
     .steuer{margin:10px 0 0;font-size:11.5px;color:#4a433b}
     .zahlung{margin-top:10px;padding:9px 14px;background:#f4efe7;border-left:3px solid #c86f4a;border-radius:0 8px 8px 0;font-size:12px}
     .zahlung table{border-collapse:collapse;margin-top:4px}
@@ -1313,6 +1658,18 @@ function druckzettelHTML(order) {
 //   Leistungszeitpunkt als Kalendermonat und Steuernummer bzw. USt-IdNr. (Hinweis im Admin, wenn beides fehlt).
 //   Rechenwerte (Zeilen, Summen) kommen unverändert aus der Bestellung.
 // ---------------------------------------------------------------------------
+/**
+ * Guthaben-Anrechnung einer Bestellung → { code, off, gutschriftNo } oder null (normaler Rabattcode / kein Gutschein).
+ * Neue Bestellungen tragen coupon.guthaben; ältere werden über den Gutschein in den Einstellungen erkannt. Die Gutschrift-Nummer
+ * steht in der Notiz des Gutscheins („Gutschrift GS-2026-0002 zu FS-…“).
+ */
+function guthabenDerBestellung(order) {
+  const c = order?.coupon;
+  if (!c || !(Number(c.off) > 0)) return null;
+  const gc = couponByCode(c.code);
+  if (c.guthaben !== true && !isGuthaben(gc)) return null;
+  return { code: String(c.code || ''), off: euro(c.off), gutschriftNo: /\bGutschrift\s+(\S+)/.exec(String(gc?.note || ''))?.[1] || '' };
+}
 function invoiceHTML(order) {
   const co = settings.company || {};
   const ku = !!co.kleinunternehmer;
@@ -1330,21 +1687,30 @@ function invoiceHTML(order) {
   // (die Summen entstehen wie bisher aus den reduzierten Zeilen); ältere Bestellungen mit nur order.aktion: eine Zeile
   const aktionRow = aktionSummary(order, settings)
     .map((a) => `<tr class="fein"><td>${esc(a.label)}</td><td class="r">${esc(a.value)}</td></tr>`).join('');
-  const ust = ku ? null : ustAus(order.total);
+  // Guthaben (Gutschrift aus einer Reklamation) ist eine Anrechnung, kein Rabatt: Die Gutschrift hat das Entgelt der ersten
+  // Rechnung (samt USt) schon gemindert — hier zählt es als Zahlung. Entgelt und USt beziehen sich deshalb auf den Betrag vor
+  // dem Guthaben, danach „abzüglich Guthaben“ und „Zu zahlen“ (= order.total). Ältere Bestellungen ohne Kennzeichen: über den Code.
+  const guth = guthabenDerBestellung(order);
+  const entgelt = guth ? Math.round((order.total + guth.off) * 100) / 100 : order.total;
+  const ust = ku ? null : ustAus(entgelt);
   const ustRows = ust
     ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer 19 %</td><td class="r">${money(ust.ust)}</td></tr>` : '';
+  const guthRows = guth
+    ? `<tr><td>abzüglich Guthaben „${esc(guth.code)}“${guth.gutschriftNo ? ` <small class="muted">(aus Gutschrift ${esc(guth.gutschriftNo)})</small>` : ''}</td><td class="r">−${money(guth.off)}</td></tr>
+    <tr class="zahl"><td>Zu zahlen</td><td class="r">${money(order.total)}</td></tr>` : '';
   // § 34a UStDV (seit 2025): Hinweis, dass die Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG gilt
-  const steuerNote = ku
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG — es wird keine Umsatzsteuer berechnet.'
-    : 'Alle Beträge in Euro inklusive 19 % Umsatzsteuer.';
+  const steuerNote = (ku
+    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
+    : 'Alle Beträge in Euro inklusive 19 % Umsatzsteuer.') +
+    (guth ? ' Dein Guthaben wird wie eine Zahlung angerechnet und mindert den Gesamtbetrag nicht.' : '');
   const bank = [['Kontoinhaber', co.owner || co.name], ['IBAN', co.iban], ['BIC', co.bic], ['Bank', co.bank], ['Verwendungszweck', order.orderId], ['Betrag', money(order.total)]]
     .filter(([, v]) => String(v || '').trim());
   const bankRows = [];
   for (let i = 0; i < bank.length; i += 2) bankRows.push(bank.slice(i, i + 2));
   const payNote = vorkasse
-    ? `Bitte überweise den Gesamtbetrag innerhalb von 14 Tagen mit deiner Bestellnummer als Verwendungszweck:
+    ? `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von 14 Tagen mit deiner Bestellnummer als Verwendungszweck:
        <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`
-    : `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))} — danke!`;
+    : `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`;
   const meta = [
     ['Rechnungsnummer', esc(order.invoiceNo)],
     ['Rechnungsdatum', esc(dateDE(ausgestellt))],
@@ -1362,18 +1728,19 @@ function invoiceHTML(order) {
   <table class="pos"><tr><th>Pos.</th><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
   <table class="summen">
     <tr><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
-    ${order.coupon ? `<tr><td>Gutschein „${esc(order.coupon.code)}“</td><td class="r">−${money(order.coupon.off)}</td></tr>` : ''}
+    ${order.coupon && !guth ? `<tr><td>Gutschein „${esc(order.coupon.code)}“</td><td class="r">−${money(order.coupon.off)}</td></tr>` : ''}
     <tr><td>Versand</td><td class="r">${order.shipping === 0 ? 'kostenlos' : money(order.shipping)}</td></tr>
-    <tr class="grand"><td>Gesamtbetrag</td><td class="r">${money(order.total)}</td></tr>
+    <tr class="grand"><td>Gesamtbetrag</td><td class="r">${money(entgelt)}</td></tr>
     ${ustRows}
     ${aktionRow}
+    ${guthRows}
   </table>
   <p class="steuer">${steuerNote}</p>
   <div class="zahlung">${payNote}</div>
-  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> — jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${esc(lieferzeitText(settings))}${vorkasse ? ' ab Zahlungseingang' : ''}.</p>
-  <p class="klein">Produkthinweise: Alle Artikel bestehen aus pflanzenbasiertem PLA (nicht spülmaschinengeeignet, nicht dauerhaft über 50 °C aussetzen).
-  Vasen sind für Trockenblumen konzipiert; das Material wird imprägniert und ist in der Regel wasserfest — eine Garantie für Wasserdichtigkeit wird nicht übernommen.
-  Bei individuell gestalteten Formen (Formen-Editor) wird keine Garantie für die Standfestigkeit übernommen.</p>`;
+  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${esc(lieferzeitText(settings))}. ${esc(fristBeginnKurz(order.payment))}</p>
+  <p class="klein">Produkthinweise: Alle Artikel bestehen aus PLA, einem Kunststoff auf Pflanzenbasis (nicht spülmaschinengeeignet, keinen Temperaturen über 50 °C aussetzen, z. B. heißes Wasser, Heizung, Auto im Sommer).
+  Vasen sind für Trockenblumen gedacht; das Material wird imprägniert und ist in der Regel wasserfest – eine Wasserdichtigkeit wird aber nicht zugesagt.
+  Bei individuell gestalteten Formen (Formen-Editor) wird keine Standfestigkeit zugesagt.</p>`;
   return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body });
 }
 
@@ -1389,10 +1756,10 @@ function creditNoteHTML(order) {
   const betrag = euro(r.betrag);
   const ust = co.kleinunternehmer ? null : ustAus(betrag);
   const vatNote = co.kleinunternehmer
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG — es wird keine Umsatzsteuer berechnet.'
+    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
     : `Im Gutschriftbetrag enthaltene USt (19 %): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
   const how = {
-    gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> — einlösbar im Checkout des Shops, ohne Mindestbestellwert und auch während einer Aktion. Ist die Bestellung kleiner, bleibt der Rest auf dem Code.`,
+    gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> – einlösbar in der Kasse des Shops im Feld „Gutscheincode“, ohne Mindestbestellwert und auch während einer Aktion. Ist die Bestellung kleiner, bleibt der Rest auf dem Code.`,
     ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${esc(maskIban(r.iban))}` : ''} innerhalb von 5 Werktagen.`,
     paypal: `Erstattung über PayPal auf das Zahlungskonto der Bestellung${r.refundId ? ` (Referenz ${esc(r.refundId)})` : ''}.`,
   }[r.art] || esc(REKLA_ART[r.art] || '');
@@ -1420,6 +1787,87 @@ function creditNoteHTML(order) {
   <div class="zahlung"><b>Art der Erstattung:</b> ${how}</div>
   <p class="dank">Diese Gutschrift bezieht sich auf die oben genannte Rechnung bzw. Bestellung${order.invoiceNo ? ' und mindert deren Betrag entsprechend' : ''}. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
   return belegSeite({ title: `Gutschrift ${r.gutschriftNo || ''} · ${BRAND}`, co, body });
+}
+
+// ---------------------------------------------------------------------------
+// Stornorechnung (HTML, druckbar) — orders/<ID>/storno.html, entsteht, sobald eine Bestellung mit ausgestellter Rechnung
+// storniert wird (die Rechnung gibt es schon ab dem Abschluss der Kasse, auch bei Vorkasse vor der Zahlung). Sie hebt die
+// Rechnung auf: negativer Betrag, ohne Kleinunternehmerregelung mit negativer USt (sonst bliebe die ausgewiesene Steuer nach
+// § 14c UStG geschuldet). Nummer aus dem Gutschrift-Nummernkreis, Datei wird nie überschrieben (GoBD). Wurde schon eine
+// Gutschrift/Erstattung (Reklamation) ausgestellt, storniert der Beleg nur den Rest.
+// ---------------------------------------------------------------------------
+/** Beträge des Stornos → { entgelt, gutschrift, betrag, guth } (betrag = aufzuhebender Rest, positiv) */
+function stornoBetraege(order) {
+  const guth = guthabenDerBestellung(order);
+  const entgelt = guth ? Math.round((euro(order.total) + guth.off) * 100) / 100 : euro(order.total);
+  const r = order.reklamation;
+  const gutschrift = r?.status === 'erledigt' && r.art !== 'nachdruck' && r.gutschriftNo ? euro(r.betrag) : 0;
+  return { entgelt, gutschrift, betrag: Math.max(0, Math.round((entgelt - gutschrift) * 100) / 100), guth };
+}
+function stornoHTML(order) {
+  const co = settings.company || {};
+  const ku = !!co.kleinunternehmer;
+  const st = order.storno || {};
+  const { entgelt, gutschrift, betrag, guth } = stornoBetraege(order);
+  const ust = ku ? null : ustAus(betrag);
+  const rechnungVom = dateDE(order.completedAt || order.createdAt);
+  const r = order.reklamation || {};
+  const meta = [
+    ['Stornonummer', esc(st.nr || '')],
+    ['Datum', esc(dateDE(st.at))],
+    ['zu Rechnung', `${esc(order.invoiceNo)}<small>vom ${esc(rechnungVom)}</small>`],
+    ['Bestellnummer', esc(order.orderId)],
+  ];
+  const ustRows = ust
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">−${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer 19 %</td><td class="r">−${money(ust.ust)}</td></tr>` : '';
+  const vatNote = ku
+    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
+    : `Die in Rechnung ${esc(order.invoiceNo)} ausgewiesene Umsatzsteuer wird in dieser Höhe berichtigt.`;
+  const bezahlt = order.paymentStatus === 'bezahlt';
+  const zahlung = [
+    bezahlt
+      ? `Den bereits gezahlten Betrag${gutschrift ? ', soweit noch nicht erstattet,' : ''} erstatte ich dir ${order.payment === 'paypal' ? 'über PayPal' : 'per Überweisung'}.`
+      : 'Du musst nichts überweisen. Hast du schon überwiesen, erstatte ich dir den Betrag.',
+    guth ? `Dein Guthaben „${esc(guth.code)}“ über ${money(guth.off)} steht dir wieder zur Verfügung.` : '',
+  ].filter(Boolean).join(' ');
+  const cu = order.customer || {};
+  const body = `
+  <section class="anschrift">
+    <div class="empfaenger"><div class="ruecksende">${belegRuecksende(co)}</div>
+      <b>${esc(cu.name)}</b><br>${esc(cu.street)}<br>${esc(cu.zip)} ${esc(cu.city)}</div>
+    <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
+  </section>
+  <h1>Stornorechnung</h1>
+  <table class="pos"><tr><th>Position</th><th class="r">Betrag</th></tr>
+    <tr><td>Stornierung der Rechnung ${esc(order.invoiceNo)} vom ${esc(rechnungVom)} · Bestellung ${esc(order.orderId)}<br><small class="muted">Die Bestellung wurde storniert.</small></td><td class="r">−${money(entgelt)}</td></tr>
+    ${gutschrift ? `<tr><td>bereits gutgeschrieben mit Gutschrift ${esc(r.gutschriftNo)}</td><td class="r">${money(gutschrift)}</td></tr>` : ''}</table>
+  <table class="summen">
+    <tr class="grand"><td>Stornobetrag</td><td class="r">−${money(betrag)}</td></tr>
+    ${ustRows}
+  </table>
+  <p class="steuer">${vatNote}</p>
+  <div class="zahlung">${zahlung}</div>
+  <p class="dank">Diese Stornorechnung hebt die Rechnung ${esc(order.invoiceNo)} auf. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
+  return belegSeite({ title: `Stornorechnung ${st.nr || ''} · ${BRAND}`, co, body });
+}
+/**
+ * Beim Wechsel auf „storniert“ (unter der Bestellsperre, vor writeOrder): Stornorechnung zu einer ausgestellten Rechnung
+ * anlegen — einmal je Bestellung (order.storno = { nr, at }). Ohne Rechnung (Kasse nie abgeschlossen) oder wenn schon alles
+ * gutgeschrieben ist, gibt es nichts aufzuheben.
+ */
+async function stornoBeleg(order) {
+  if (!order.invoiceNo || order.storno?.nr) return;
+  if (stornoBetraege(order).betrag <= 0) {
+    addHistory(order, order.status, `Keine Stornorechnung nötig: Rechnung ${order.invoiceNo} ist bereits vollständig gutgeschrieben`, 'system');
+    return;
+  }
+  const nr = nextBelegNr('creditPrefix', 'nextCredit', DEFAULT_SETTINGS.creditPrefix);
+  order.storno = { nr, at: new Date().toISOString() };
+  await saveSettings();
+  const file = path.join(ORDERS, order.orderId, 'storno.html');
+  if (!existsSync(file)) await writeFileAtomic(file, stornoHTML(order));
+  else console.warn(`⚠️  ${order.orderId}: storno.html existiert bereits – ${nr} nicht als Datei geschrieben`);
+  addHistory(order, order.status, `Stornorechnung ${nr} zu Rechnung ${order.invoiceNo} ausgestellt`, 'system');
 }
 
 // ---------------------------------------------------------------------------
@@ -1505,6 +1953,125 @@ async function paypalRefund(order, amount) {
 }
 
 // ---------------------------------------------------------------------------
+// Kasse mit PayPal: vor der Zahlung dieselben Prüfungen wie beim Checkout (pruefeKasse), Preisgarantie ab dem Klick auf
+// „Jetzt kaufen“ und ein Sicherheitsnetz, falls der Checkout nach eingezogener Zahlung trotzdem ablehnt.
+//   /api/paypal/create merkt sich je PayPal-Order-ID den geprüften Stand (Warenkorb-Hash, Gutschein, Summen, Zeitpunkt der
+//   Beschaffenheits-Bestätigung). Der Checkout übernimmt genau diese Summen, wenn Warenkorb und eingezogener Betrag passen —
+//   endet in der Zwischenzeit eine Aktion oder ändert der Admin Preise, bleibt es beim bezahlten Betrag. Im Speicher, 3 Stunden
+//   (nach einem Neustart rechnet der Checkout wie bei Vorkasse neu). Lehnt der Checkout nach dem Einzug ab, wird die Zahlung
+//   automatisch über PayPal erstattet; klappt das nicht, bekommt der Shop eine Mail und einen Hinweis im Admin.
+// ---------------------------------------------------------------------------
+const MAX_POSITIONEN = 20;   // verschiedene Designs je Bestellung (Client begrenzt den Warenkorb genauso)
+const PAYPAL_PENDING_TTL = 3 * 3600e3;
+const paypalPending = new Map();   // PayPal-Order-ID → { hash, totals, beschaffenheitAt, at }
+const kasseHash = (items, couponCode) => sha256(JSON.stringify({ items, coupon: String(couponCode || '').trim().toUpperCase() }));
+function paypalPendingAufraeumen(now = Date.now()) {
+  for (const [id, e] of paypalPending) if (now - e.at > PAYPAL_PENDING_TTL) paypalPending.delete(id);
+}
+/** Kundendaten aus der Kasse: nur die bekannten Felder, ohne Steuerzeichen, mit Längengrenzen (Notiz darf Zeilenumbrüche haben) */
+function kundeAus(raw) {
+  const clip = (v, n, nl = false) => String(v ?? '').replace(nl ? /[^\S\n]+|[\x00-\x08\x0b-\x1f\x7f]+/g : /[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, n);
+  return {
+    name: clip(raw?.name, 120), email: clip(raw?.email, 254).toLowerCase(),
+    street: clip(raw?.street, 200), zip: clip(raw?.zip, 20), city: clip(raw?.city, 120),
+    note: clip(raw?.note, 1000, true),
+  };
+}
+/**
+ * Gemeinsame Prüfung für /api/paypal/create (vor der Zahlung) und /api/checkout: Adresse, Warenkorb (1–20 Positionen),
+ * Produkt- und Farbsperre, gesonderte Vereinbarung zu Wasser und Standfestigkeit (§ 476 Abs. 1 Satz 2 BGB), Gutschein und der
+ * in der Kasse angezeigte Gesamtbetrag (expectedTotal, § 312j Abs. 2 BGB / AGB § 6 Abs. 1: es gilt der Preis, den die Kasse
+ * zeigt) — weicht er vom Server-Betrag ab, gibt es 409 statt einer Bestellung zu einem anderen Preis.
+ * garantie = gemerkter Stand aus /api/paypal/create (Summen stehen fest, Vereinbarung wurde vor der Zahlung geprüft).
+ * → { customer, items, totals } oder { status, error, code?, total?, customer }
+ */
+function pruefeKasse(data, { garantie = null } = {}) {
+  const customer = kundeAus(data?.customer);
+  if (!customer.name || !isEmail(customer.email) || !customer.street || !customer.zip || !customer.city) {
+    return { status: 400, error: 'Bitte Adresse vollständig ausfüllen', customer };
+  }
+  const items = data?.items;
+  if (!Array.isArray(items) || !items.length) return { status: 400, error: 'Warenkorb ist leer', customer };
+  if (items.length > MAX_POSITIONEN) return { status: 400, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.`, customer };
+  if (garantie) return { customer, items, totals: garantie.totals };
+  // Produktschalter (derzeit Eierbecher) und aus dem Shop genommene Farben vor der Preisberechnung abweisen
+  const sperre = produktSperre(items) || farbSperre(items);
+  if (sperre) return { status: 400, error: sperre, customer };
+  // Ohne die gesonderte Vereinbarung gälten die objektiven Anforderungen (§ 434 Abs. 3 BGB) — Kassen-Tabs von vor der
+  // Umstellung schicken das Feld nicht und müssen neu laden
+  if (data.beschaffenheit !== true) {
+    return { status: 400, error: 'Bitte bestätige die Vereinbarung zu Wasser und Standfestigkeit (Häkchen in der Kasse) – fehlt das Häkchen, lade die Seite bitte neu.', customer };
+  }
+  const totals = computeTotals(items, data.couponCode);
+  // Gutschein, der (inzwischen) nicht mehr gilt — laufende Aktion, Mindestbestellwert unterschritten, aufgebraucht: lieber abbrechen
+  // als still ohne Gutschein abrechnen — der Kunde sieht die Meldung in der Kasse und kann den Code entfernen
+  if (data.couponCode && totals.couponError) return { status: 400, error: totals.couponError, customer };
+  const exp = data.expectedTotal === undefined || data.expectedTotal === null || data.expectedTotal === '' ? NaN : Number(data.expectedTotal);
+  if (!Number.isFinite(exp)) {
+    return { status: 409, code: 'preis', total: totals.total, customer, error: 'Die Kasse ist nicht mehr aktuell – bitte lade die Seite neu und prüf den Betrag.' };
+  }
+  if (Math.abs(exp - totals.total) > 0.005) {
+    return { status: 409, code: 'preis', total: totals.total, customer, error: `Der Preis hat sich gerade geändert: Gesamt jetzt ${money(totals.total)}. Bitte prüf die Kasse und bestätige noch einmal.` };
+  }
+  return { customer, items, totals };
+}
+/**
+ * Automatische Erstattung einer eingezogenen PayPal-Zahlung, zu der die Kasse keine Bestellung anlegen konnte.
+ * Idempotent über die PayPal-Request-Id (interne Kennung, Präfix bleibt). → { erstattet, fehler? } — Ergebnis steht im Capture-Speicher.
+ */
+async function paypalKasseErstatten(id, cap, grund) {
+  if (cap.erstattet) return { erstattet: true };
+  try {
+    if (!paypalEnabled() || !settings.paypal?.secret) throw new Error('PayPal-Zugangsdaten fehlen');
+    const token = await paypalToken();
+    const hdr = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const r = await fetch(`${paypalBase()}/v2/checkout/orders/${id}`, { headers: hdr });
+    const j = r.ok ? await r.json() : null;
+    const capId = j?.purchase_units?.[0]?.payments?.captures?.[0]?.id;
+    if (!capId) throw new Error(`Zahlungseinzug zu ${id} bei PayPal nicht gefunden (HTTP ${r.status})`);
+    const rr = await fetch(`${paypalBase()}/v2/payments/captures/${capId}/refund`, {
+      method: 'POST',
+      headers: { ...hdr, 'PayPal-Request-Id': `ovju-kasse-${id}` },
+      body: JSON.stringify({ note_to_payer: 'Deine Bestellung konnte nicht angelegt werden – die Zahlung wird vollständig erstattet.' }),
+    });
+    const rj = await rr.json().catch(() => ({}));
+    if (!rr.ok || !['COMPLETED', 'PENDING'].includes(rj.status)) throw new Error(rj.details?.[0]?.description || rj.message || `PayPal antwortet mit HTTP ${rr.status}`);
+    cap.erstattet = { at: new Date().toISOString(), refundId: String(rj.id || ''), status: rj.status, grund };
+    delete cap.problem;
+    console.warn(`↩️  PayPal ${id}: Kasse abgelehnt (${grund}) – ${cap.amount} ${cap.currency} automatisch erstattet`);
+    return { erstattet: true };
+  } catch (err) {
+    cap.problem = { at: new Date().toISOString(), grund, fehler: String(err?.message || err) };
+    console.error(`⚠️  PayPal ${id}: Kasse abgelehnt (${grund}) – automatische Erstattung fehlgeschlagen: ${cap.problem.fehler}`);
+    return { erstattet: false, fehler: cap.problem.fehler };
+  } finally {
+    await saveCaptures().catch((e) => console.error('paypal-captures.json konnte nicht gespeichert werden:', e?.message || e));
+  }
+}
+/** Checkout lehnt nach eingezogener PayPal-Zahlung ab: erstatten, den Shop informieren, der Kundschaft ehrlich sagen, was passiert */
+async function kasseAbgelehntNachZahlung(res, id, cap, status, body, kunde) {
+  const grund = String(body.error || 'Bestellung abgelehnt');
+  const r = await paypalKasseErstatten(id, cap, grund);
+  try {   // Meldung an den Shop — unabhängig von „Kopie an den Shop“, hier geht es um Geld
+    const adminTo = mailSettings(settings.mail).adminTo || String(settings.company?.email || '').trim();
+    if (isEmail(adminTo)) {
+      const m = adminPaypalKasse({ p: { id, amount: cap.amount, currency: cap.currency, capturedAt: cap.capturedAt, grund, erstattet: r.erstattet, fehler: r.fehler, customer: { name: kunde?.name, email: kunde?.email } }, settings, baseUrl: baseUrlFor(settings) });
+      await mailer.queue({ to: adminTo, subject: m.subject, text: m.text, html: m.html, kind: 'admin-paypal', ref: id });
+    }
+  } catch (err) { console.error(`PayPal ${id}: Meldung an den Shop fehlgeschlagen:`, err?.message || err); }
+  const zusatz = r.erstattet
+    ? ' Deine PayPal-Zahlung habe ich deshalb automatisch erstattet – das Geld ist in wenigen Tagen wieder bei dir.'
+    : ' Deine PayPal-Zahlung ist bei mir eingegangen – ich melde mich bei dir und erstatte sie.';
+  return send(res, status, { ...body, error: `${grund}${zusatz}`, bezahlt: true, erstattet: r.erstattet });
+}
+/** Admin-Hinweise: eingezogene PayPal-Zahlungen der letzten 30 Tage ohne Bestellung und ohne Erstattung (älter als 15 Minuten) */
+function paypalHinweise(now = Date.now()) {
+  return Object.entries(paypalCaptures)
+    .filter(([, c]) => c && !c.usedBy && !c.erstattet && Number.isFinite(Date.parse(c.capturedAt)) && now - Date.parse(c.capturedAt) > 15 * 60e3 && now - Date.parse(c.capturedAt) < 30 * TAG_MS)
+    .map(([id, c]) => `PayPal-Zahlung ${id} über ${c.amount} ${c.currency} vom ${dateDE(c.capturedAt)} gehört zu keiner Bestellung${c.problem ? ` (automatische Erstattung fehlgeschlagen: ${c.problem.fehler})` : ''} – bitte in PayPal prüfen und erstatten.`);
+}
+
+// ---------------------------------------------------------------------------
 // Reklamation / Rückversand / Gutschrift (order.reklamation) — Endpoint POST /api/admin/reklamation
 //   { status: offen|ruecksendung|eingegangen|erledigt|abgelehnt, art: nachdruck|gutschein|ueberweisung|paypal,
 //     grund, betrag, ruecksendung, iban?, gutschriftNo?, gutscheinCode?, refundId?, note?, createdAt, updatedAt, resolvedAt? }
@@ -1565,7 +2132,7 @@ async function readWiderrufe() {
   } catch (err) {
     const backup = `${WIDERRUF_FILE}.defekt-${Date.now()}`;
     await rename(WIDERRUF_FILE, backup);
-    console.error(`⚠️  widerrufe.json unlesbar (${err.message}) — gesichert als ${path.basename(backup)}, neue Liste begonnen`);
+    console.error(`⚠️  widerrufe.json unlesbar (${err.message}) – gesichert als ${path.basename(backup)}, neue Liste begonnen`);
     return [];
   }
 }
@@ -1618,10 +2185,35 @@ function legalFallbackHTML(slug) {
   const anbieter = [co.name || BRAND, co.owner, co.street, companyOrt(co)].map((x) => String(x || '').trim()).filter(Boolean).map(esc).join('<br>');
   return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${titel} · ${BRAND}</title>
   <style>body{font-family:system-ui,sans-serif;background:#f4efe7;color:#211d18;max-width:640px;margin:40px auto;padding:0 20px;line-height:1.6}h1{font-family:Georgia,serif;font-weight:normal}a{color:#9e4f2c}</style></head><body>
-  <h1>${titel}</h1><p>Diese Seite ist gleich wieder erreichbar — bitte versuch es in ein paar Minuten noch einmal.</p>
+  <h1>${titel}</h1><p>Diese Seite ist gleich wieder erreichbar – bitte versuch es in ein paar Minuten noch einmal.</p>
   <p><b>Anbieter</b><br>${anbieter}${co.email ? `<br>E-Mail: ${esc(co.email)}` : ''}</p>
   ${slug === 'widerruf' && co.email ? `<p>Du möchtest einen Vertrag widerrufen? Schreib mir einfach eine E-Mail an ${esc(co.email)}.</p>` : ''}
   <p><a href="/">Zurück zum Shop</a></p></body></html>`;
+}
+
+/**
+ * Fehlerseite für Beleg- und Modell-Links (/orders/…) bei 404 (Link unvollständig, falscher Schlüssel, unbekannt) und 429
+ * (zu viele Fehlgriffe) — im formsam-Look, mit Weg zur Hilfe, ohne Auskunft darüber, ob es die Bestellung gibt.
+ */
+function sendBelegFehler(res, code) {
+  const co = settings.company || {};
+  const mail = String(co.email || '').trim();
+  const text = code === 429
+    ? '<p>Von deinem Anschluss kamen gerade zu viele Aufrufe mit unvollständigen Links. Bitte versuch es in 15 Minuten noch einmal – mit dem vollständigen Link aus deiner Bestellbestätigung.</p>'
+    : '<p>Dieser Link ist unvollständig oder nicht mehr gültig. Den vollständigen Link zu deiner Rechnung findest du in deiner Bestellbestätigung per E-Mail (Knopf „Rechnung ansehen“) – kopiere ihn am besten ganz, er endet mit einem langen Schlüssel.</p>';
+  const html = `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${code === 429 ? 'Bitte kurz warten' : 'Link nicht gültig'} · ${BRAND}</title>
+  <style>@font-face{font-family:'Fraunces';src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:400 700;font-display:swap}
+  @font-face{font-family:'Inter';src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
+  body{margin:0;background:#f4efe7;color:#211d18;font:16px/1.6 Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+  main{max-width:560px;margin:48px auto;padding:32px 28px;background:#fbf8f2;border-radius:18px;box-shadow:0 14px 36px rgba(33,29,24,.08)}
+  .logo{display:block;height:34px;width:auto;margin-bottom:24px}.wortmarke{font-family:Fraunces,Georgia,serif;font-size:30px}
+  h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:26px;line-height:1.2;margin:0 0 12px}a{color:#9e4f2c}
+  @media (max-width:600px){main{margin:16px;padding:24px 20px}}</style></head><body><main>
+  ${logoHTML(34)}<h1>${code === 429 ? 'Bitte kurz warten' : 'Dieser Link funktioniert so nicht'}</h1>${text}
+  ${mail ? `<p>Findest du die E-Mail nicht mehr? Schreib mir an <a href="mailto:${esc(mail)}">${esc(mail)}</a> und nenn mir deine Bestellnummer – ich schicke dir den Link noch einmal.</p>` : ''}
+  <p><a href="/">Zum Shop</a></p></main></body></html>`;
+  res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer', ...(code === 429 ? { 'Retry-After': '900' } : {}) });
+  res.end(html);
 }
 
 // ---------------------------------------------------------------------------
@@ -1639,88 +2231,94 @@ async function listOrders() {
 }
 
 async function handleCheckout(req, res) {
-  const data = JSON.parse((await readBody(req)).toString('utf8'));
-  const { items, payment, paypalOrderId, couponCode } = data;
-  // Kundendaten: nur die bekannten Felder, ohne Steuerzeichen, mit Längengrenzen (Notiz darf Zeilenumbrüche haben)
-  const clip = (v, n, nl = false) => String(v ?? '').replace(nl ? /[^\S\n]+|[\x00-\x08\x0b-\x1f\x7f]+/g : /[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, n);
-  const customer = {
-    name: clip(data.customer?.name, 120), email: clip(data.customer?.email, 254).toLowerCase(),
-    street: clip(data.customer?.street, 200), zip: clip(data.customer?.zip, 20), city: clip(data.customer?.city, 120),
-    note: clip(data.customer?.note, 1000, true),
-  };
-  if (!customer.name || !isEmail(customer.email) || !customer.street || !customer.zip || !customer.city) {
-    return send(res, 400, { ok: false, error: 'Bitte Adresse vollständig ausfüllen' });
-  }
-  if (!Array.isArray(items) || !items.length || items.length > 20) {
-    return send(res, 400, { ok: false, error: 'Warenkorb ist leer' });
-  }
-  // Produktschalter: gesperrte Produkte (derzeit Eierbecher) und Unbekanntes werden vor der Preisberechnung abgewiesen
-  const sperre = produktSperre(items);
-  if (sperre) return send(res, 400, { ok: false, error: sperre });
-  const totals = computeTotals(items, couponCode);
-  // Gutschein, der wegen einer (inzwischen) laufenden Aktion nicht mehr gilt: lieber abbrechen als still ohne Gutschein
-  // abrechnen — der Kunde sieht die Meldung im Checkout und kann den Code entfernen
-  if (couponCode && totals.couponError) return send(res, 400, { ok: false, error: totals.couponError });
-  // PayPal: Zahlung serverseitig bestätigen (Capture-Speicher bzw. Nachfrage bei PayPal), Betrag/Währung
-  // müssen zur Bestellung passen und die PayPal-ID darf nur einmal verwendet werden — sonst keine Bestellung
-  let paypalCap = null;
+  let data;
+  try { data = JSON.parse((await readBody(req)).toString('utf8')); } catch { data = null; }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return send(res, 400, { ok: false, error: 'Ungültige Anfrage' });
+  const { payment, paypalOrderId } = data;
+  // PayPal zuerst: Zahlung serverseitig bestätigen (Capture-Speicher bzw. Nachfrage bei PayPal) — ist das Geld schon eingezogen,
+  // endet jede Ablehnung danach mit automatischer Erstattung (kasseAbgelehntNachZahlung), nie mit „bezahlt, aber keine Bestellung“.
+  // Die PayPal-ID darf nur einmal verwendet werden; Betrag/Währung müssen zur Bestellung passen.
+  let paypalCap = null, garantie = null;
+  const ppId = String(paypalOrderId || '');
   if (payment === 'paypal') {
     if (!paypalEnabled()) return send(res, 400, { ok: false, error: 'PayPal nicht aktiviert' });
-    if (!PAYPAL_ID_RE.test(String(paypalOrderId || ''))) return send(res, 400, { ok: false, error: 'Ungültige PayPal-Zahlungs-ID' });
-    try { paypalCap = await verifyPaypalCapture(paypalOrderId); } catch (err) {
-      console.error(`PayPal-Prüfung ${paypalOrderId} fehlgeschlagen:`, err?.message || err);
+    if (!PAYPAL_ID_RE.test(ppId)) return send(res, 400, { ok: false, error: 'Ungültige PayPal-Zahlungs-ID' });
+    try { paypalCap = await verifyPaypalCapture(ppId); } catch (err) {
+      console.error(`PayPal-Prüfung ${ppId} fehlgeschlagen:`, err?.message || err);
       return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt' });
     }
     if (paypalCap.usedBy) return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt (bereits einer Bestellung zugeordnet)' });
-    if (paypalCap.amount !== totals.total.toFixed(2) || paypalCap.currency !== settings.pricing.currency) {
-      return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt (Betrag weicht von der Bestellung ab)' });
-    }
+    if (paypalCap.erstattet) return send(res, 400, { ok: false, error: 'Diese Zahlung wurde bereits erstattet – bitte starte die Kasse neu.' });
+    // Preisgarantie: gleicher Warenkorb + Gutschein wie bei „Jetzt kaufen“ und genau der damals berechnete Betrag eingezogen
+    const pend = paypalPending.get(ppId);
+    if (pend && pend.hash === kasseHash(data.items, data.couponCode) && paypalCap.amount === pend.totals.total.toFixed(2) && paypalCap.currency === settings.pricing.currency) garantie = pend;
+  }
+  const k = pruefeKasse(data, { garantie });
+  if (k.error) {
+    const body = { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) };
+    return paypalCap ? kasseAbgelehntNachZahlung(res, ppId, paypalCap, k.status, body, k.customer) : send(res, k.status, body);
+  }
+  const { customer, totals } = k;
+  if (paypalCap && (paypalCap.amount !== totals.total.toFixed(2) || paypalCap.currency !== settings.pricing.currency)) {
+    return kasseAbgelehntNachZahlung(res, ppId, paypalCap, 400, { ok: false, error: 'Zahlung nicht bestätigt (Betrag weicht von der Bestellung ab)' }, customer);
   }
   // Guthaben-Gutschein: zwei gleichzeitige Bestellungen dürfen den Restwert nicht doppelt ausgeben — Prüfung und
   // Reservierung passieren ohne await dazwischen (PayPal ist schon bezahlt → dann nicht mehr abbrechen)
-  const gc = totals.coupon ? settings.coupons.find((x) => String(x.code || '').trim().toUpperCase() === String(totals.coupon.code).trim().toUpperCase()) : null;
+  const gc = totals.coupon ? couponByCode(totals.coupon.code) : null;
   if (gc && isGuthaben(gc) && !paypalCap && couponRest(gc) + 0.005 < totals.coupon.off) {
-    return send(res, 400, { ok: false, error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst — bitte prüf den Betrag in der Kasse.` });
+    return send(res, 400, { ok: false, error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst – bitte prüf den Betrag in der Kasse.` });
   }
   const orderId = newOrderId();
-  if (totals.coupon) trackCouponUse({ orderId, coupon: totals.coupon, status: 'neu' });
-  if (paypalCap) { paypalCap.usedBy = orderId; await saveCaptures(); }
+  const createdAt = new Date().toISOString();
+  if (paypalCap) untrackCouponUse(`paypal:${ppId}`);   // Reservierung aus /api/paypal/create geht auf die Bestellung über
+  if (totals.coupon) trackCouponUse({ orderId, coupon: totals.coupon, status: 'neu', createdAt, paymentStatus: paypalCap ? 'bezahlt' : 'offen' });
+  if (paypalCap) { paypalCap.usedBy = orderId; paypalPending.delete(ppId); await saveCaptures(); }
   await mkdir(path.join(ORDERS, orderId), { recursive: true });
   const account = userFromReq(req);
   const order = {
     orderId,
+    // Zugriffsschlüssel für Rechnung, Gutschrift und Modelldateien (siehe orderZugriff) — geht nur an die Kasse zurück
+    accessKey: newAccessKey(),
+    // Kasse aus einem Shop-Tab von vor der Umstellung (cart.js schickt mitSchluessel noch nicht): Upload und Abschluss
+    // dort ohne Schlüssel, damit die Bestellung nicht hängen bleibt — die Belege schützt der Schlüssel trotzdem
+    ...(data.mitSchluessel === true ? {} : { kasseOhneSchluessel: true }),
     userId: account?.id || null,
-    createdAt: new Date().toISOString(),
+    createdAt,
     status: 'neu',
     payment: paypalCap ? 'paypal' : 'vorkasse',
     paymentStatus: paypalCap ? 'bezahlt' : 'offen',
     paidAt: paypalCap ? paypalCap.capturedAt : null,
-    paypalOrderId: paypalCap ? String(paypalOrderId) : null,
+    paypalOrderId: paypalCap ? ppId : null,
     customer,
     lines: totals.lines.map((l, i) => ({
       product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
       color: l.color, colorName: l.colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
-      // Aktion: UVP (Preis vor der Aktion), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
+      // Aktion: uvp = Normalpreis (Preis vor der Aktion, Feldname historisch), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
       // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
       uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName ?? null, aktionId: l.aktionId ?? null,
       // Farbschrift (zweites Filament) kommt als 3MF mit zwei Teilen, sonst STL
       stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
     subtotal: totals.subtotal, coupon: totals.coupon, shipping: totals.shipping, total: totals.total,
-    // Gesonderte Bestätigung in der Kasse (Wasser/Standfestigkeit, § 476 Abs. 1 Satz 2 BGB): Zeitpunkt als Nachweis
-    beschaffenheitBestaetigt: data.beschaffenheit === true ? new Date().toISOString() : null,
+    // Gesonderte Vereinbarung in der Kasse (Wasser/Standfestigkeit, § 476 Abs. 1 Satz 2 BGB): Zeitpunkt als Nachweis — Pflicht
+    // (pruefeKasse); bei PayPal der Zeitpunkt vor der Zahlung (/api/paypal/create)
+    beschaffenheitBestaetigt: garantie?.beschaffenheitAt || createdAt,
     aktionen: totals.aktionen,   // [{ id, name, prozent, ersparnis, produkte, muster }] je betroffener Aktion (nach Ersparnis absteigend)
     aktion: totals.aktion,       // aktionen[0] | null (Kompatibilität)
     invoiceNo: null, filesComplete: false,
     trackingNo: '', adminNote: '',
   };
   await writeOrder(order);
-  send(res, 200, { ok: true, orderId, itemCount: order.lines.length, total: order.total });
+  // accessKey: Upload und Abschluss schicken ihn als x-order-key mit (Links auf Rechnung/Modelle tragen ihn als ?k=)
+  send(res, 200, { ok: true, orderId, accessKey: order.accessKey, itemCount: order.lines.length, total: order.total });
 }
 
-async function handleStlUpload(req, res, id, idx) {
-  let order;
-  try { order = await readOrder(id); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
+// Upload und Abschluss nur mit Schlüssel (x-order-key) — sonst 404 wie bei einer unbekannten Bestellung (siehe orderZugriff)
+async function handleStlUpload(req, res, id, idx, url) {
+  let order = null;
+  try { order = await readOrder(id); } catch { order = null; }
+  const z = orderZugriff(req, url, order, kasseOffen);
+  if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
   if (order.filesComplete) return send(res, 400, { ok: false, error: 'Bestellung abgeschlossen' });
   const i = parseInt(idx, 10);
   if (!(i >= 0 && i < order.lines.length)) return send(res, 400, { ok: false, error: 'Ungültiger Index' });
@@ -1738,12 +2336,23 @@ async function handleStlUpload(req, res, id, idx) {
 
 // Idempotent: ein zweiter Aufruf (Retry, Doppelklick, Dritte) liefert nur noch die Rechnungsdaten —
 // keine neue Rechnungsnummer, kein erneutes Schreiben, keine zweite Bestätigungsmail
-async function handleComplete(req, res, id) {
+async function handleComplete(req, res, id, url) {
   let order;
   const release = await lockOrder(id);
   try {
-    try { order = await readOrder(id); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
-    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: `/orders/${id}/rechnung.html`, invoiceNo: order.invoiceNo });
+    try { order = await readOrder(id); } catch { order = null; }
+    const z = orderZugriff(req, url, order, kasseOffen);
+    if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
+    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
+    // Guthaben: die Reservierung einer nicht abgeschlossenen Kasse gilt nur GUTHABEN_RESERVIERUNG_MS — wurde der Betrag seitdem
+    // anderweitig eingelöst, wird diese Bestellung nicht mehr abgeschlossen (keine Rechnung), sondern als abgebrochen storniert
+    const gc = order.coupon && order.paymentStatus !== 'bezahlt' && order.status !== 'storniert' ? couponByCode(order.coupon.code) : null;
+    if (gc && isGuthaben(gc) && couponRest(gc, { ohne: order.orderId }) + 0.005 < euro(order.coupon.off)) {
+      setOrderStatus(order, 'storniert', `Kasse abgebrochen: Guthaben „${gc.code}“ wurde inzwischen anderweitig eingelöst`, 'system');
+      await writeOrder(order);
+      return send(res, 409, { ok: false, code: 'guthaben', error: `Dein Guthaben „${gc.code}“ wurde inzwischen eingelöst – bitte starte die Kasse neu.` });
+    }
+    if (order.status === 'storniert') return send(res, 409, { ok: false, error: 'Diese Bestellung wurde storniert – bitte starte die Kasse neu.' });
     if (!order.invoiceNo) {
       order.invoiceNo = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
       await saveSettings();
@@ -1755,8 +2364,8 @@ async function handleComplete(req, res, id) {
     if (!existsSync(invoiceFile)) await writeFileAtomic(invoiceFile, invoiceHTML(order));
     await writeOrder(order);
   } finally { release(); }
-  console.log(`📦 Bestellung ${id} — ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
-  send(res, 200, { ok: true, invoiceUrl: `/orders/${id}/rechnung.html`, invoiceNo: order.invoiceNo });
+  console.log(`📦 Bestellung ${id} – ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
+  send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
   await runHook('orderCompleted', order);
 }
 
@@ -1783,6 +2392,7 @@ const server = http.createServer(async (req, res) => {
     // --- öffentliche API
     if (p === '/api/pricing') {
       const pr = settings.pricing;
+      const laufende = aktiveAktionen();
       return send(res, 200, {
         currency: pr.currency,
         products: {
@@ -1800,11 +2410,16 @@ const server = http.createServer(async (req, res) => {
         paypal: { enabled: settings.paypal.enabled && !!settings.paypal.clientId, clientId: settings.paypal.clientId, sandbox: settings.paypal.sandbox },
         // laufende Aktionen (nach Prozent absteigend; leer = keine), aktion = primäre (Kompatibilität)
         // + Serverzeit für den Countdown im Shop (Client rechnet den Zeitversatz heraus)
-        aktionen: aktiveAktionen().map(publicAktion),
-        aktion: publicAktion(aktiveAktion()),
+        aktionen: laufende.map(publicAktion),
+        aktion: publicAktion(laufende[0] || null),
         serverNow: new Date().toISOString(),
+        // § 11 PAngV: Preis-Historie für die 30-Tage-Fenster der laufenden Aktionen (leer ohne Aktion) — pricing.js referenzpreis()
+        // rechnet daraus den niedrigsten Preis der letzten 30 Tage vor Aktionsbeginn (Streichpreis) und die Prozentangabe
+        preisHistorie: preisHistorieFuer(laufende),
         // Shop-Angaben (Lieferzeit/Liefergebiet) für Kasse, Produktseiten und Hinweise
-        shop: { lieferzeit: settings.shop.lieferzeit, liefergebiet: settings.shop.liefergebiet },
+        // fristBeginn: Satz je Zahlungsart wie in Bestätigung, Rechnung und AGB § 7 (lib/lieferfrist.js) — Hinweis nach dem Bestellen;
+        // kleinunternehmer: Hinweis „keine USt. nach § 19 UStG“ am Preis (§ 6 Abs. 1 PAngV, pricing.js ustText)
+        shop: { lieferzeit: settings.shop.lieferzeit, liefergebiet: settings.shop.liefergebiet, fristBeginn: { vorkasse: fristBeginnKurz('vorkasse'), paypal: fristBeginnKurz('paypal') }, kleinunternehmer: !!settings.company?.kleinunternehmer },
         // Hersteller = Anbieter (dieselben Angaben wie im Impressum) — Herstellerangabe beim Produktangebot (GPSR Art. 19)
         anbieter: (({ name, owner, street, zip, city, country, email }) => ({ name: name || BRAND, owner, street, zip, city, country, email }))(settings.company || {}),
       });
@@ -1815,13 +2430,14 @@ const server = http.createServer(async (req, res) => {
       const mail = String(email || '').trim().toLowerCase();
       if (!name?.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return send(res, 400, { ok: false, error: 'Bitte Name und gültige E-Mail angeben' });
       if (String(password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
-      if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto — bitte anmelden' });
+      if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto – bitte anmelden' });
       const salt = crypto.randomBytes(16).toString('hex');
-      const user = { id: crypto.randomUUID(), name: name.trim(), email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString() };
+      const user = { id: crypto.randomUUID(), name: name.trim(), email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
+      const verifyToken = newVerifyToken(user);   // Bestätigungslink kommt mit der Willkommensmail
       users.push(user);
       await saveUsers();
       send(res, 200, { ok: true, token: createSession(user.id), user: publicUser(user) });
-      return runHook('userRegistered', { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt });
+      return runHook('userRegistered', { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
     }
     if (req.method === 'POST' && p === '/api/auth/login') {
       const { email, password } = JSON.parse((await readBody(req)).toString('utf8'));
@@ -1842,7 +2458,7 @@ const server = http.createServer(async (req, res) => {
       if (mail.length > 254 || !isEmail(mail)) return send(res, 400, { ok: false, error: 'Bitte eine gültige E-Mail-Adresse angeben' });   // 254 = RFC-5321-Maximum
       // IP-Limit zuerst und kurzschließend: eine gesperrte IP legt keine neuen Mail-Schlüssel mehr an
       if (forgotLimited(`ip:${clientIp(req)}`, FORGOT_IP_MAX) || forgotLimited(`mail:${mail}`)) {
-        return send(res, 429, { ok: false, error: 'Zu viele Anfragen — bitte in 15 Minuten noch einmal versuchen.' });
+        return send(res, 429, { ok: false, error: 'Zu viele Anfragen – bitte in 15 Minuten noch einmal versuchen.' });
       }
       send(res, 200, { ok: true });
       const u = users.find((x) => x.email === mail);
@@ -1865,26 +2481,76 @@ const server = http.createServer(async (req, res) => {
       u.salt = crypto.randomBytes(16).toString('hex');
       u.hash = hashPw(body.password, u.salt);
       delete u.reset;
+      // Der Reset-Link kam per Mail an diese Adresse → sie gehört der Person, die jetzt das Passwort setzt
+      if (!u.emailVerifiedAt) u.emailVerifiedAt = new Date().toISOString();
+      delete u.verify;
       for (const [t, s] of Object.entries(sessions)) if (s.userId === u.id) delete sessions[t];
       await saveUsers();
       return send(res, 200, { ok: true, token: createSession(u.id), user: publicUser(u) });
     }
+    // E-Mail bestätigen: Token aus dem Link + Anmeldung in genau diesem Konto (siehe newVerifyToken)
+    if (req.method === 'POST' && p === '/api/auth/verify') {
+      let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
+      const me = userFromReq(req);
+      if (!me) return send(res, 401, { ok: false, error: 'Bitte melde dich an – dann bestätige ich deine E-Mail-Adresse.' });
+      if (me.emailVerifiedAt) return send(res, 200, { ok: true, user: publicUser(me), schon: true });
+      const u = userByToken(body?.token, 'verify');
+      if (!u || u.id !== me.id) return send(res, 400, { ok: false, error: 'Der Bestätigungslink ist ungültig, abgelaufen oder gehört zu einem anderen Konto – im Konto kannst du einen neuen anfordern.' });
+      u.emailVerifiedAt = new Date().toISOString();
+      delete u.verify;
+      await saveUsers();
+      console.log(`✉️  E-Mail-Adresse bestätigt (Konto ${u.id})`);
+      return send(res, 200, { ok: true, user: publicUser(u) });
+    }
+    // Bestätigungslink erneut senden (angemeldet; je IP und Adresse begrenzt wie „Passwort vergessen“)
+    if (req.method === 'POST' && p === '/api/auth/verify-resend') {
+      const u = userFromReq(req);
+      if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      if (u.emailVerifiedAt) return send(res, 200, { ok: true, schon: true });
+      if (forgotLimited(`verify-ip:${clientIp(req)}`, FORGOT_IP_MAX) || forgotLimited(`verify-mail:${u.email}`)) {
+        return send(res, 429, { ok: false, error: 'Zu viele Anfragen – bitte in 15 Minuten noch einmal versuchen.' });
+      }
+      const token = newVerifyToken(u);
+      await saveUsers();
+      send(res, 200, { ok: true });
+      try {
+        const m = emailBestaetigung({ user: { name: u.name, email: u.email }, link: verifyLinkFor(token), settings, baseUrl: baseUrlFor(settings) });
+        await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'email-bestaetigung', ref: u.id });
+      } catch (err) { console.error('Bestätigungsmail fehlgeschlagen:', err?.message || err); }
+      return;
+    }
     if (p === '/api/auth/me') {
       const u = userFromReq(req);
       if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      // Zuordnung: Bestellungen dieses Kontos (userId) immer; Bestellungen mit derselben E-Mail-Adresse (Gast, Altbestand)
+      // erst, wenn die Adresse bestätigt ist — sonst sähe, wer sich mit einer fremden Adresse registriert, deren Bestellungen
+      const verified = !!u.emailVerifiedAt;
       const orders = (await listOrders())
-        .filter((o) => o.userId === u.id || (o.customer?.email || '').toLowerCase() === u.email)
-        .map((o) => ({
-          orderId: o.orderId, createdAt: o.createdAt, status: o.status || 'neu',
-          total: o.total, invoiceNo: o.invoiceNo, trackingNo: o.trackingNo || '', carrier: o.carrier || '',
-          paidAt: o.paidAt || null, shippedAt: o.shippedAt || null,
-          pieces: (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
-          reklamation: publicRekla(o.reklamation),   // ohne IBAN/Grund/Notiz
-          // Zeitleiste fürs Konto — nur echte Statuswechsel mit Zeitpunkt; interne Notizen (Admin/Automatik/Mail) bleiben hier
-          history: (o.history || []).filter((h) => h && h.by !== 'mail')
-            .filter((h, i, a) => i === 0 || h.status !== a[i - 1].status)
-            .slice(-30).map((h) => ({ at: h.at, status: h.status })),
-        }));
+        .filter((o) => o.userId === u.id || (verified && (o.customer?.email || '').toLowerCase() === u.email))
+        .map((o) => {
+          // Beleg-Links und Guthaben-Code nur für Bestellungen dieses Kontos (und Altbestand ohne Schlüssel — der erscheint nur
+          // bei bestätigter Adresse): über die Adresse zugeordnete Gastbestellungen zeigen Belegnummern, Link und Code stehen in
+          // meinen Mails an die Kundschaft (Bestellbestätigung, Reklamation)
+          const links = o.userId === u.id || !o.accessKey;
+          const r = o.reklamation;
+          return {
+            orderId: o.orderId, createdAt: o.createdAt, status: o.status || 'neu',
+            total: o.total, invoiceNo: o.invoiceNo, trackingNo: o.trackingNo || '', carrier: o.carrier || '',
+            invoiceUrl: o.invoiceNo && links ? orderFileUrl(o, 'rechnung.html') : null,
+            // Stornobeleg (Rechnung aufgehoben) — Nummer immer, Link wie bei der Rechnung
+            stornoNo: o.storno?.nr || '', stornoUrl: o.storno?.nr && links ? orderFileUrl(o, 'storno.html') : null,
+            paidAt: o.paidAt || null, shippedAt: o.shippedAt || null,
+            pieces: (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+            reklamation: r ? {   // ohne IBAN/Grund/Notiz
+              ...publicRekla(r), gutscheinCode: links ? (r.gutscheinCode || '') : '', gutscheinPerMail: !links && !!r.gutscheinCode,
+              gutschriftUrl: r.gutschriftNo && links ? orderFileUrl(o, 'gutschrift.html') : null,
+            } : null,
+            // Zeitleiste fürs Konto — nur echte Statuswechsel mit Zeitpunkt; interne Notizen (Admin/Automatik/Mail) bleiben hier
+            history: (o.history || []).filter((h) => h && h.by !== 'mail')
+              .filter((h, i, a) => i === 0 || h.status !== a[i - 1].status)
+              .slice(-30).map((h) => ({ at: h.at, status: h.status })),
+          };
+        });
       return send(res, 200, { ok: true, user: publicUser(u), orders });
     }
     if (req.method === 'POST' && p === '/api/auth/address') {
@@ -1905,12 +2571,12 @@ const server = http.createServer(async (req, res) => {
       const orderId = clipText(body.orderId, 40).toUpperCase().replace(/\s+/g, '');
       const nachricht = String(body.nachricht ?? '').replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, ' ').trim();
       if (name.length < 2 || name.length > 120) return send(res, 400, { ok: false, error: 'Bitte gib deinen Namen an (2 bis 120 Zeichen).' });
-      if (email.length > 254 || !isEmail(email)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an — dorthin schicke ich die Eingangsbestätigung.' });
+      if (email.length > 254 || !isEmail(email)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an – dorthin schicke ich die Eingangsbestätigung.' });
       if (orderId && !ORDER_ID_RE.test(orderId)) return send(res, 400, { ok: false, error: 'Die Bestellnummer hat nicht das richtige Format (z. B. FS-260927-A1B2C3). Du kannst das Feld auch leer lassen.' });
       if (nachricht.length > 2000) return send(res, 400, { ok: false, error: 'Die Nachricht ist zu lang (höchstens 2000 Zeichen).' });
       if (forgotLimited(`widerruf-ip:${clientIp(req)}`, WIDERRUF_IP_MAX)) {
         const mail = String(settings.company?.email || '').trim();
-        return send(res, 429, { ok: false, error: `Zu viele Anfragen — bitte in 15 Minuten noch einmal versuchen${mail ? ` oder schreib mir direkt an ${mail}` : ''}.` });
+        return send(res, 429, { ok: false, error: `Zu viele Anfragen – bitte in 15 Minuten noch einmal versuchen${mail ? ` oder schreib mir direkt an ${mail}` : ''}.` });
       }
       // Zuordnung: Bestellung existiert UND die E-Mail stimmt (ohne Groß/Klein) — sonst wird nur die Erklärung gespeichert
       let order = null;
@@ -1983,7 +2649,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && mDesign) {
       const code = normalizeCode(mDesign[1]);
       const d = designs[code];
-      if (!d) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht — bitte prüfen (z. B. B statt 8).' });
+      if (!d) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht – bitte prüfen (z. B. B statt 8).' });
       d.loads = (d.loads || 0) + 1; d.lastLoad = Date.now();
       saveDesigns();
       return send(res, 200, { ok: true, code, config: d.config });
@@ -2029,7 +2695,7 @@ const server = http.createServer(async (req, res) => {
     if (mList) {
       const code = normalizeCode(mList[1]);
       const l = lists[code];
-      if (!l) return send(res, 404, { ok: false, error: 'Diese Liste gibt es nicht — bitte den Code prüfen.' });
+      if (!l) return send(res, 404, { ok: false, error: 'Diese Liste gibt es nicht – bitte den Code prüfen.' });
       if (req.method === 'GET') return send(res, 200, { ok: true, list: publicList(l) });
       let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
       if (!b.token || b.token !== l.token) return send(res, 403, { ok: false, error: 'Nur der Besitzer kann diese Liste ändern.' });
@@ -2050,14 +2716,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/quote') {
       const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
-      const sperre = produktSperre(items);
+      if (Array.isArray(items) && items.length > MAX_POSITIONEN) return send(res, 400, { ok: false, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.` });
+      const sperre = produktSperre(items) || farbSperre(items);
       if (sperre) return send(res, 400, { ok: false, error: sperre });
-      const t = computeTotals(items || [], couponCode);
+      const t = computeTotals(Array.isArray(items) ? items : [], couponCode);
       return send(res, 200, {
         ok: true,
         lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line, parts: l.parts, color: l.color, uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName, aktionId: l.aktionId })),
         subtotal: t.subtotal, coupon: t.coupon, couponValid: couponCode ? !!t.coupon : null,
-        couponError: t.couponError,   // nur gesetzt, wenn der Gutschein wegen einer Aktion abgelehnt wurde
+        couponError: t.couponError,   // Grund, wenn ein bekannter Code nicht gilt (Aktion, Mindestbestellwert, aufgebraucht)
         aktionen: t.aktionen,         // [{ id, name, prozent, ersparnis, produkte, muster }] je Aktion mit betroffener Zeile (Ersparnis absteigend)
         aktion: t.aktion,             // aktionen[0] | null
         shipping: t.shipping, total: t.total,
@@ -2065,30 +2732,37 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/checkout') return await handleCheckout(req, res);
     const mUp = p.match(/^\/api\/order\/([A-Z0-9-]+)\/stl\/(\d+)$/);
-    if (req.method === 'PUT' && mUp) return await handleStlUpload(req, res, mUp[1], mUp[2]);
+    if (req.method === 'PUT' && mUp) return await handleStlUpload(req, res, mUp[1], mUp[2], url);
     const mDone = p.match(/^\/api\/order\/([A-Z0-9-]+)\/complete$/);
-    if (req.method === 'POST' && mDone) return await handleComplete(req, res, mDone[1]);
+    if (req.method === 'POST' && mDone) return await handleComplete(req, res, mDone[1], url);
 
     // --- PayPal
     if (req.method === 'POST' && p === '/api/paypal/create') {
-      if (!settings.paypal.enabled) return send(res, 400, { ok: false, error: 'PayPal nicht aktiviert' });
-      const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
-      const sperre = produktSperre(items);
-      if (sperre) return send(res, 400, { ok: false, error: sperre });
-      const t = computeTotals(items, couponCode);
-      // Wie beim Checkout: ein Gutschein, der nicht (mehr) gilt, bricht vor der Zahlung ab — sonst wäre bezahlt, die Bestellung aber abgelehnt
-      if (couponCode && t.couponError) return send(res, 400, { ok: false, error: t.couponError });
+      if (!paypalEnabled()) return send(res, 400, { ok: false, error: 'PayPal nicht aktiviert' });
+      let data; try { data = JSON.parse((await readBody(req)).toString('utf8')); } catch { data = null; }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return send(res, 400, { ok: false, error: 'Ungültige Anfrage' });
+      // Vor der Zahlung genau die Prüfungen des Checkouts (Adresse, 1–20 Positionen, Sperren, Vereinbarung, Gutschein, angezeigter
+      // Betrag) — sonst wäre bezahlt, die Bestellung aber abgelehnt
+      const k = pruefeKasse(data);
+      if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) });
+      const t = k.totals;
       const token = await paypalToken();
       const r = await fetch(`${paypalBase()}/v2/checkout/orders`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           intent: 'CAPTURE',
-          purchase_units: [{ amount: { currency_code: settings.pricing.currency, value: t.total.toFixed(2) }, description: 'formsam — individuell gestaltete Vasen, 3D-gedruckt' }],
+          purchase_units: [{ amount: { currency_code: settings.pricing.currency, value: t.total.toFixed(2) }, description: 'formsam – individuell gestaltete Vasen, 3D-gedruckt' }],
         }),
       });
       const j = await r.json();
-      return send(res, r.ok ? 200 : 500, r.ok ? { ok: true, id: j.id } : { ok: false, error: j.message || 'PayPal-Fehler' });
+      if (!r.ok || !j?.id) return send(res, 500, { ok: false, error: j?.message || 'PayPal-Fehler' });
+      // Preisgarantie ab hier (siehe paypalPending) + Guthaben für die Dauer der Zahlung reservieren (wie eine offene Kasse)
+      paypalPendingAufraeumen();
+      const at = new Date().toISOString();
+      paypalPending.set(String(j.id), { hash: kasseHash(k.items, data.couponCode), totals: t, beschaffenheitAt: at, at: Date.now() });
+      if (t.coupon?.guthaben) trackCouponUse({ orderId: `paypal:${j.id}`, coupon: t.coupon, status: 'neu', createdAt: at });
+      return send(res, 200, { ok: true, id: j.id });
     }
     const mCap = p.match(/^\/api\/paypal\/capture\/([A-Z0-9]+)$/i);
     if (req.method === 'POST' && mCap) {
@@ -2117,13 +2791,15 @@ const server = http.createServer(async (req, res) => {
         mailStatuses: Object.keys(STATUS_MAIL),   // Status mit Mail-Vorlage (Admin blendet Status-Mail-Knöpfe danach ein)
         reklaStatus: REKLA_STATUS, reklaArt: REKLA_ART, reklaPhases: REKLA_PHASES,
         aktionen: aktiveAktionen().map(publicAktion), aktion: publicAktion(aktiveAktion()), serverNow: new Date().toISOString(),   // Übersicht: alle laufenden Aktionen + Countdown
+        // Aktionen laut Preis-Historie (auch gelöschte) — Hinweis im Bereich Aktionen: Vor-Aktion < 30 Tage vor dem Start (§ 11 PAngV)
+        aktionenHistorie: historieAktionen(),
         // erledigte Erstattungen/Gutschriften (kein Nachdruck) — Umsatz-KPIs ziehen sie ab
         kpi: { erstattet: Math.round(orders.reduce((s, o) => s + refundAmount(o), 0) * 100) / 100, erstattungen: orders.filter((o) => refundAmount(o) > 0).length },
         info: { node: process.version, uptime: Math.round(process.uptime()), startedAt: SERVER_STARTED },
         // Hinweise für die Übersicht (z. B. fehlende Steuernummer bei Rechnungen mit USt) + Zahl offener Widerrufe
-        hinweise: settingsHinweise(),
+        hinweise: [...settingsHinweise(), ...paypalHinweise()],
         // Restwert je Guthaben-Gutschein (Gutschrift aus Reklamation) — Admin zeigt ihn in der Gutschein-Tabelle
-        couponRest: Object.fromEntries(settings.coupons.filter(isGuthaben).map((c) => [String(c.code).trim().toUpperCase(), couponRest(c)])),
+        couponRest: guthabenRest(),
         widerrufeOffen: await withWiderrufe((list) => ({ result: list.filter((w) => w.status !== 'erledigt').length })).catch(() => 0),
       });
     }
@@ -2144,6 +2820,7 @@ const server = http.createServer(async (req, res) => {
         try { aktionen = sanitizeAktionen(patch.aktionen); } catch (err) { return send(res, err.httpCode || 400, { ok: false, error: err.message }); }
       }
       if (patch.coupons !== undefined && !Array.isArray(patch.coupons)) return send(res, 400, { ok: false, error: 'Gutscheine: Liste erwartet' });
+      if (patch.couponsLoeschen !== undefined && !Array.isArray(patch.couponsLoeschen)) return send(res, 400, { ok: false, error: 'Gutscheine löschen: Liste erwartet' });
       // Produktschalter: Objekt { eierbecher: true|false } (ein mitgeschicktes vase wird ignoriert — Vasen sind immer an)
       if (patch.produkte !== undefined) {
         if (!patch.produkte || typeof patch.produkte !== 'object' || Array.isArray(patch.produkte)) return send(res, 400, { ok: false, error: 'Produkte: ungültiges Format' });
@@ -2153,7 +2830,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       // Firma, Shop- und Rechtsangaben: nur bekannte Felder, geprüft und gekürzt; fehlende Felder behalten den alten Stand
-      let company, shop, legal;
+      let company, shop, legal, invoicePrefix = { prefix: null }, creditPrefix = { prefix: null };
       for (const k of ['company', 'shop', 'legal']) {
         if (patch[k] !== undefined && (!patch[k] || typeof patch[k] !== 'object' || Array.isArray(patch[k]))) {
           return send(res, 400, { ok: false, error: `${{ company: 'Firma', shop: 'Shop-Angaben', legal: 'Rechtsangaben' }[k]}: ungültiges Format` });
@@ -2163,17 +2840,22 @@ const server = http.createServer(async (req, res) => {
         if (patch.company !== undefined) company = sanitizeCompany({ ...settings.company, ...patch.company });
         if (patch.shop !== undefined) shop = sanitizeShop({ ...settings.shop, ...patch.shop });
         if (patch.legal !== undefined) legal = sanitizeLegal({ ...settings.legal, ...patch.legal });
+        // Nummernkreise: nur echte Änderungen (siehe belegPraefixAusPatch) — ein veralteter Admin-Tab setzt nichts zurück
+        if (patch.invoicePrefix !== undefined) invoicePrefix = belegPraefixAusPatch('invoicePrefix', patch.invoicePrefix, 'Rechnungspräfix');
+        if (patch.creditPrefix !== undefined) creditPrefix = belegPraefixAusPatch('creditPrefix', patch.creditPrefix, 'Gutschriftpräfix');
       } catch (err) { return send(res, err.httpCode || 400, { ok: false, error: err.message }); }
       const prevPricing = settings.pricing;
-      // Nur bekannte Wurzel-Schlüssel übernehmen
-      for (const k of ['pricing', 'colors', 'coupons', 'printing']) {
+      // Nur bekannte Wurzel-Schlüssel übernehmen (Gutscheine gesondert, siehe mergeCoupons)
+      for (const k of ['pricing', 'colors', 'printing']) {
         if (patch[k] !== undefined) settings[k] = patch[k];
       }
+      if (patch.coupons !== undefined) settings.coupons = mergeCoupons(settings.coupons, patch.coupons, patch.couponsLoeschen);
       if (company) settings.company = company;
       if (shop) settings.shop = shop;
       if (legal) settings.legal = legal;
-      // Rechnungs-Nummernkreis: Präfix als Text (≤ 20 Zeichen) — der Jahreswechsel passiert automatisch beim nächsten Beleg
-      if (patch.invoicePrefix !== undefined) settings.invoicePrefix = oneLine(patch.invoicePrefix, 20) || DEFAULT_SETTINGS.invoicePrefix;
+      // Rechnungs-Nummernkreis: Präfix als Text (≤ 20 Zeichen) — der Jahreswechsel passiert automatisch beim nächsten Beleg;
+      // der Zähler läuft weiter (nextBelegNr überspringt ohnehin jede schon vergebene Nummer)
+      if (invoicePrefix.prefix) settings.invoicePrefix = invoicePrefix.prefix;
       if (aktionen) settings.aktionen = aktionen;
       // Produktschalter übernehmen (fehlende Schlüssel behalten den alten Stand)
       if (patch.produkte !== undefined) settings.produkte = sanitizeProdukte({ ...settings.produkte, ...patch.produkte });
@@ -2181,7 +2863,7 @@ const server = http.createServer(async (req, res) => {
       settings.coupons = settings.coupons.filter((c) => c && typeof c === 'object');
       for (const c of settings.coupons) c.mitAktion = !!c.mitAktion;
       // Gutschrift-Nummernkreis: Präfix als Text (≤ 20 Zeichen), nächste Nummer als ganze Zahl ≥ 1
-      if (patch.creditPrefix !== undefined) settings.creditPrefix = oneLine(patch.creditPrefix, 20) || DEFAULT_SETTINGS.creditPrefix;
+      if (creditPrefix.prefix) settings.creditPrefix = creditPrefix.prefix;
       if (patch.nextCredit !== undefined) settings.nextCredit = Math.max(1, Math.round(Number(patch.nextCredit)) || 1);
       // Aufpreise: Muster nur mit bekannten Keys, Zahlen ≥ 0; Farbschrift ≥ 0 — fehlen sie im Patch, bleiben die alten Werte
       if (patch.pricing !== undefined) {
@@ -2210,7 +2892,12 @@ const server = http.createServer(async (req, res) => {
         settings.mail = mailSettings(next);
       } else settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
       await saveSettings();
-      return send(res, 200, { ok: true });
+      // Preise, Farbaufpreise oder Aktionen geändert → Momentaufnahme für den 30-Tage-Tiefstpreis (§ 11 PAngV)
+      await notePreisHistorie().catch((err) => console.error('Preis-Historie konnte nicht gespeichert werden:', err?.message || err));
+      // hinweis: nicht übernommene Angaben (z. B. Präfix aus einem Tab von vor dem Jahreswechsel) — der Admin zeigt ihn an
+      const hinweis = [invoicePrefix.hinweis, creditPrefix.hinweis].filter(Boolean).join(' ');
+      // coupons: gespeicherter Stand (inkl. Guthaben-Codes, die der Tab noch nicht kannte) — der Admin übernimmt ihn
+      return send(res, 200, { ok: true, coupons: settings.coupons, couponRest: guthabenRest(), ...(hinweis ? { hinweis } : {}) });
     }
     if (req.method === 'POST' && p === '/api/admin/order-update') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
@@ -2248,6 +2935,7 @@ const server = http.createServer(async (req, res) => {
             ? `Versendet${order.carrier ? ' mit ' + CARRIER_LABELS[order.carrier] : ''} · ${order.trackingNo}` : null;
           const payNote = paidViaStatus && paymentStatus === 'bezahlt' ? 'Zahlung eingegangen' : null;
           setOrderStatus(order, status, note || shipNote || payNote, 'admin');
+          if (order.status === 'storniert' && prevStatus !== 'storniert') await stornoBeleg(order);
         } else if (trackingChanged && order.trackingNo) {
           addHistory(order, order.status, `Sendungsnummer hinterlegt${order.carrier ? ' (' + CARRIER_LABELS[order.carrier] + ')' : ''}: ${order.trackingNo}`, 'admin');
         }
@@ -2309,8 +2997,8 @@ const server = http.createServer(async (req, res) => {
       const grund = clipText(body.grund, 500);
       const note = clipText(body.note, 500);
       const iban = body.iban === undefined ? undefined : cleanIban(body.iban);
-      if (iban === null) return bad('IBAN ungültig — nur Buchstaben und Ziffern (Leerzeichen erlaubt), 15–34 Zeichen, beginnt mit Länderkennung');
-      let order, phase = null, info = '';
+      if (iban === null) return bad('IBAN ungültig – nur Buchstaben und Ziffern (Leerzeichen erlaubt), 15–34 Zeichen, beginnt mit Länderkennung');
+      let order, phase = null, info = '', coupon = null;
       const release = await lockOrder(orderId);
       try {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
@@ -2321,7 +3009,7 @@ const server = http.createServer(async (req, res) => {
           case 'anlegen': {
             // Eine zweite Reklamation nur nach Ablehnung oder erledigtem Nachdruck — erledigte Erstattungen bleiben stehen (kein doppeltes Geld)
             if (r && !(r.status === 'abgelehnt' || (r.status === 'erledigt' && r.art === 'nachdruck'))) {
-              return bad(`Zu dieser Bestellung gibt es bereits eine Reklamation (${REKLA_STATUS[r.status] || r.status}) — erst erledigen, ablehnen oder zurücknehmen`);
+              return bad(`Zu dieser Bestellung gibt es bereits eine Reklamation (${REKLA_STATUS[r.status] || r.status}) – erst erledigen, ablehnen oder zurücknehmen`);
             }
             const art = String(body.art || '');
             if (!REKLA_ART[art]) return bad('Unbekannte Art (nachdruck | gutschein | ueberweisung | paypal)');
@@ -2339,7 +3027,7 @@ const server = http.createServer(async (req, res) => {
             order.reklamation = { status: ruecksendung ? 'ruecksendung' : 'offen', art, grund, betrag, ruecksendung, createdAt: now, updatedAt: now };
             if (art === 'ueberweisung' && iban) order.reklamation.iban = iban;
             clearReklaMails();   // neue Reklamation = neuer Mailzyklus
-            addHistory(order, order.status, `Reklamation angelegt — ${REKLA_ART[art]}${art !== 'nachdruck' ? ` über ${money(betrag)}` : ''}${ruecksendung ? ', Rücksendung erwartet' : ''}: ${grund}`, 'admin');
+            addHistory(order, order.status, `Reklamation angelegt – ${REKLA_ART[art]}${art !== 'nachdruck' ? ` über ${money(betrag)}` : ''}${ruecksendung ? ', Rücksendung erwartet' : ''}: ${grund}`, 'admin');
             if (art === 'nachdruck') {
               // Alle Positionen zurück in die Druckwarteschlange; Bestellstatus wieder „bezahlt“ (bzw. „neu“ bei offener Zahlung)
               for (const l of order.lines) l.print = { status: 'offen', ...(l.print?.note ? { note: l.print.note } : {}) };
@@ -2360,7 +3048,7 @@ const server = http.createServer(async (req, res) => {
           }
           case 'erledigen': {
             if (!r) return bad('Keine Reklamation zu dieser Bestellung');
-            if (r.status === 'erledigt') { info = 'Reklamation war bereits erledigt — nichts geändert'; break; }   // idempotent: keine zweite Gutschrift/Mail
+            if (r.status === 'erledigt') { info = 'Reklamation war bereits erledigt – nichts geändert'; break; }   // idempotent: keine zweite Gutschrift/Mail
             if (!REKLA_OPEN.includes(r.status)) return bad(`Erledigen ist im Status „${REKLA_STATUS[r.status] || r.status}“ nicht möglich`);
             if (r.art === 'ueberweisung' && iban) r.iban = iban;
             if (r.art === 'ueberweisung' && !r.iban) return bad('Für die Erstattung per Überweisung fehlt die IBAN des Kunden');
@@ -2382,15 +3070,16 @@ const server = http.createServer(async (req, res) => {
                 // Guthaben: Restwert bleibt für spätere Bestellungen, gilt auch während einer Aktion (es ist Geld der Kundschaft)
                 settings.coupons.push({ code: r.gutscheinCode, type: 'fixed', value: r.betrag, minOrder: 0, active: true, mitAktion: true, guthaben: true, note: `Gutschrift ${r.gutschriftNo} zu ${orderId}` });
               }
+              if (r.art === 'gutschein') coupon = couponByCode(r.gutscheinCode);   // der Admin übernimmt ihn in seine Gutschein-Liste
               await saveSettings();
             }
             r.status = 'erledigt'; r.updatedAt = now; r.resolvedAt = now;
             // Ausgestellte Gutschrift nie überschreiben (GoBD) — liegt schon eine vor, bleibt sie stehen
             const creditFile = path.join(ORDERS, orderId, 'gutschrift.html');
             if (r.gutschriftNo && !existsSync(creditFile)) await writeFileAtomic(creditFile, creditNoteHTML(order));
-            else if (r.gutschriftNo) console.warn(`⚠️  ${orderId}: gutschrift.html existiert bereits — ${r.gutschriftNo} nicht als Datei geschrieben`);
+            else if (r.gutschriftNo) console.warn(`⚠️  ${orderId}: gutschrift.html existiert bereits – ${r.gutschriftNo} nicht als Datei geschrieben`);
             const detail = { gutschein: `Gutschein ${r.gutscheinCode}`, ueberweisung: `Überweisung ${maskIban(r.iban)}`, paypal: `PayPal-Referenz ${r.refundId || '—'}`, nachdruck: 'Nachdruck' }[r.art];
-            addHistory(order, order.status, `Reklamation erledigt — ${REKLA_ART[r.art]}${r.gutschriftNo ? `, Gutschrift ${r.gutschriftNo} über ${money(r.betrag)}` : ''} (${detail})${note ? ': ' + note : ''}`, 'admin');
+            addHistory(order, order.status, `Reklamation erledigt – ${REKLA_ART[r.art]}${r.gutschriftNo ? `, Gutschrift ${r.gutschriftNo} über ${money(r.betrag)}` : ''} (${detail})${note ? ': ' + note : ''}`, 'admin');
             phase = 'erledigt';
             break;
           }
@@ -2414,7 +3103,7 @@ const server = http.createServer(async (req, res) => {
         }
         await writeOrder(order);
       } finally { release(); }
-      send(res, 200, info ? { ok: true, order, info } : { ok: true, order });
+      send(res, 200, { ok: true, order, ...(info ? { info } : {}), ...(coupon ? { coupon, couponRest: couponRest(coupon) } : {}) });
       if (phase) await runHook('reklamation', order, phase, { notify: body.notify !== false });
       return;
     }
@@ -2454,7 +3143,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/users') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      return send(res, 200, { ok: true, users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt, address: u.address || null })) });
+      return send(res, 200, { ok: true, users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt, address: u.address || null, emailVerifiedAt: u.emailVerifiedAt || null })) });
     }
     const mAdminOrder = p.match(/^\/api\/admin\/order\/([A-Z0-9-]+)$/);
     if (req.method === 'GET' && mAdminOrder) {
@@ -2464,12 +3153,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/export') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      // Backup ohne Geheimnisse (SMTP-Passwort, PayPal-Secret, Admin-Passwort) — die Datei landet im Download-Ordner
-      return send(res, 200, { exportedAt: new Date().toISOString(), settings: adminSettingsView(), orders: await listOrders() });
+      // Backup ohne Geheimnisse (SMTP-Passwort, PayPal-Secret, Admin-Passwort, Zugriffsschlüssel der Belege) — die Datei landet im Download-Ordner
+      return send(res, 200, { exportedAt: new Date().toISOString(), settings: adminSettingsView(), orders: (await listOrders()).map(ohneSchluessel) });
     }
     if (p === '/api/admin/orders.csv') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const orders = await listOrders();
+      // Datum/Uhrzeit in deutscher Zeit wie auf Belegen und in Mails (der Server läuft in UTC) — sonst stünde eine Bestellung vom
+      // 1.1. 00:30 in der CSV am 31.12. und im Vorjahr
+      const dtCsv = (iso) => (iso && Number.isFinite(Date.parse(iso)) ? new Date(iso).toLocaleString('de-DE', { timeZone: TZ }) : '');
       // Formel-Injection (Excel/Calc): Zellen, die mit = + - @ Tab/CR beginnen, bekommen ein Hochkomma (OWASP)
       const csvEsc = (v) => {
         let s = String(v ?? '');
@@ -2479,8 +3171,8 @@ const server = http.createServer(async (req, res) => {
       const rows = [['Bestellung', 'Datum', 'Status', 'Zahlart', 'Rechnung', 'Name', 'E-Mail', 'Straße', 'PLZ', 'Ort', 'Positionen', 'Gutschein', 'Aktion', 'Summe', 'Tracking', 'Versender', 'Bezahlt am', 'Versendet am', 'Reklamation'].join(';')];
       for (const o of orders) {
         rows.push([
-          csvEsc(o.orderId), csvEsc(new Date(o.createdAt).toLocaleString('de-DE')), csvEsc(o.status || 'neu'),
-          csvEsc(o.payment || ''), csvEsc(o.invoiceNo || ''), csvEsc(o.customer?.name || o.name || ''),
+          csvEsc(o.orderId), csvEsc(dtCsv(o.createdAt)), csvEsc(o.status || 'neu'),
+          csvEsc(o.payment || ''), csvEsc(o.invoiceNo ? `${o.invoiceNo}${o.storno?.nr ? ` (storniert: ${o.storno.nr})` : ''}` : ''), csvEsc(o.customer?.name || o.name || ''),
           csvEsc(o.customer?.email || o.email || ''), csvEsc(o.customer?.street || ''), csvEsc(o.customer?.zip || ''),
           csvEsc(o.customer?.city || ''),
           csvEsc((o.lines || []).map((l) => `${l.qty}x ${itemLabel(l, { mitAktion: true })}`).join(' | ')),
@@ -2489,8 +3181,8 @@ const server = http.createServer(async (req, res) => {
           csvEsc(orderAktionen(o).map((a) => `${a.name} / −${a.prozent} %${a.produkte !== undefined || a.muster !== undefined ? ` ${aktionScopeLabel(a)}` : ''} / ${euro(a.ersparnis).toFixed(2).replace('.', ',')}`).join(' | ')),
           csvEsc((o.total ?? 0).toFixed(2).replace('.', ',')), csvEsc(o.trackingNo || ''),
           csvEsc(CARRIER_LABELS[o.carrier] || ''),
-          csvEsc(o.paidAt ? new Date(o.paidAt).toLocaleString('de-DE') : ''),
-          csvEsc(o.shippedAt ? new Date(o.shippedAt).toLocaleString('de-DE') : ''),
+          csvEsc(dtCsv(o.paidAt)),
+          csvEsc(dtCsv(o.shippedAt)),
           csvEsc(o.reklamation ? `${REKLA_STATUS[o.reklamation.status] || o.reklamation.status} / ${REKLA_ART[o.reklamation.art] || o.reklamation.art} / ${euro(o.reklamation.betrag).toFixed(2).replace('.', ',')}` : ''),
         ].join(';'));
       }
@@ -2509,6 +3201,7 @@ const server = http.createServer(async (req, res) => {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
         setOrderStatus(order, status, null, 'admin');
+        if (order.status === 'storniert' && prevStatus !== 'storniert') await stornoBeleg(order);
         await writeOrder(order);
       } finally { release(); }
       send(res, 200, { ok: true, order });
@@ -2531,7 +3224,7 @@ const server = http.createServer(async (req, res) => {
         if (!isEmail(cust.email)) return send(res, 400, { ok: false, error: 'Die Bestellung hat keine gültige Kunden-E-Mail' });
         const r = await mailer.send({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: m.kind, ref: order.orderId });
         if (r.ok && m.key) await noteMailSent(order, m.key, m.subject, cust.email);
-        if (!r.ok && /nicht eingerichtet/.test(r.error || '')) r.error += ' — die Nachricht liegt im Versandprotokoll und kann nach der Einrichtung erneut gesendet werden';
+        if (!r.ok && /nicht eingerichtet/.test(r.error || '')) r.error += ' – die Nachricht liegt im Versandprotokoll und kann nach der Einrichtung erneut gesendet werden';
         return send(res, 200, { ok: !!r.ok, id: r.id, error: r.error || '' });
       } catch (err) {
         return send(res, err.httpCode || 500, { ok: false, error: err.message || 'Serverfehler' });
@@ -2574,7 +3267,7 @@ const server = http.createServer(async (req, res) => {
     // Druckzettel (Seite, A4) — Key per Header oder ?k=
     const mZettel = p.match(/^\/admin\/druckzettel\/([A-Z0-9-]+)$/);
     if (req.method === 'GET' && mZettel) {
-      if (!isAdmin(req) && !adminKeyMatches(url.searchParams.get('k'))) return send(res, 401, 'Nicht angemeldet — bitte über den Admin-Bereich öffnen.', 'text/plain; charset=utf-8');
+      if (!isAdmin(req) && !adminKeyMatches(url.searchParams.get('k'))) return send(res, 401, 'Nicht angemeldet – bitte über den Admin-Bereich öffnen.', 'text/plain; charset=utf-8');
       let order;
       try { order = await readOrder(mZettel[1]); } catch { return send(res, 404, 'Bestellung unbekannt', 'text/plain; charset=utf-8'); }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -2594,11 +3287,15 @@ const server = http.createServer(async (req, res) => {
         } catch (err) { console.error(`Rechtsseite /${slug} fehlgeschlagen:`, err?.message || err); }
       }
       const out = code === 200 ? html : code === 503 ? legalFallbackHTML(slug) : 'Nicht gefunden';
+      // gzip wie bei den statischen Dateien (die Seiten sind 40–60 KB, komprimiert etwa ein Viertel)
+      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && Buffer.byteLength(out) > 1024;
       res.writeHead(code, {
-        'Content-Type': code === 404 ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
+        'Content-Type': code === 404 ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding',
+        ...(gz ? { 'Content-Encoding': 'gzip' } : {}),
         ...(code === 503 ? { 'Retry-After': '300' } : {}),
       });
-      return res.end(req.method === 'HEAD' ? undefined : out);
+      if (req.method === 'HEAD') return res.end();
+      return res.end(gz ? gzipSync(out, { level: zc.Z_BEST_SPEED }) : out);
     }
 
     // --- Seiten & Dateien
@@ -2611,15 +3308,27 @@ const server = http.createServer(async (req, res) => {
     if (p === '/admin' || p === '/admin/') return send(res, 200, adminHTML(), 'text/html; charset=utf-8');
 
     if (p.startsWith('/orders/')) {
-      const file = path.normalize(path.join(ORDERS, p.slice('/orders/'.length)));
-      // Nur Rechnung/Gutschrift (Links in Mails/Konto) und Modelldateien (reine Geometrie) — order.json mit Kundendaten,
-      // interner Notiz und Historie wird nie ausgeliefert
-      const base = path.basename(file);
-      const allowed = base === 'rechnung.html' || base === 'gutschrift.html' || /\.(stl|3mf)$/i.test(base);
-      if (!allowed || !file.startsWith(ORDERS + path.sep) || !existsSync(file) || !statSync(file).isFile()) {
-        return send(res, 404, { ok: false, error: 'Nicht gefunden' });
+      // Nur Rechnung/Gutschrift (Links in Mails/Konto) und Modelldateien — order.json mit Kundendaten, interner Notiz und
+      // Historie wird nie ausgeliefert. Zugriff mit ?k=<accessKey>, Admin-Header oder (Altbestand ohne Schlüssel) allein
+      // über die Bestellnummer; sonst 404 ohne Auskunft, zu viele Fehlgriffe je IP → 429 (siehe orderZugriff)
+      const m = p.match(/^\/orders\/([^/]+)\/([^/]+)$/);
+      const base = m ? m[2] : '';
+      const allowed = base === 'rechnung.html' || base === 'gutschrift.html' || base === 'storno.html' || /\.(stl|3mf)$/i.test(base);
+      let order = null;
+      if (m && allowed && ORDER_ID_RE.test(m[1])) { try { order = await readOrder(m[1]); } catch { order = null; } }
+      const z = orderZugriff(req, url, order, dateiOffen);
+      // Fehlerseiten als kleine HTML-Seite im formsam-Look (der Link kommt aus einer Mail — kein rohes JSON), ohne jede
+      // Auskunft über die Bestellung; Statuscode wie bisher
+      if (z === 'gesperrt') return sendBelegFehler(res, 429);
+      const file = order ? path.join(ORDERS, m[1], base) : '';
+      if (z !== 'ok' || !file.startsWith(ORDERS + path.sep) || !existsSync(file) || !statSync(file).isFile()) {
+        return sendBelegFehler(res, 404);
       }
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store',
+        // Der Link trägt den Schlüssel: nie als Referrer weitergeben, nicht indexieren
+        'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow',
+      });
       return createReadStream(file).pipe(res);
     }
 
@@ -2658,15 +3367,18 @@ const server = http.createServer(async (req, res) => {
 });
 
 loadSettings();
+loadPreisHistorie();
+notePreisHistorie().catch((err) => console.error('Preis-Historie konnte nicht gespeichert werden:', err?.message || err));
 loadDesigns();
 loadLists();
 loadUsers();
 loadCaptures();
-loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen konnten nicht gelesen werden:', err?.message || err));
 // Sicherheitsnetz: ein einzelner Fehler außerhalb der try/catch-Pfade darf den Shop nicht beenden
 process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ablehnung:', err));
 process.on('uncaughtException', (err) => console.error('Unbehandelte Ausnahme:', err));
-server.listen(PORT, '0.0.0.0', () => {
+// Erst Guthaben-Einlösungen und vergebene Belegnummern aus den Bestellungen lesen, dann Anfragen annehmen — sonst könnte eine
+// Bestellung direkt nach dem Start ein schon verbrauchtes Guthaben einlösen oder eine vergebene Nummer bekommen
+loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummern konnten nicht gelesen werden:', err?.message || err)).then(() => server.listen(PORT, '0.0.0.0', () => {
   console.log(`formsam Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);
   // Rechtsseiten früh laden, damit ein fehlendes/fehlerhaftes lib/legal.js gleich im Log steht (die Routen versuchen es erneut)
   legalModule().then((m) => {
@@ -2676,4 +3388,4 @@ server.listen(PORT, '0.0.0.0', () => {
   });
   // Outbox laden: wartende Zustellungen aus der Zeit vor dem Neustart sofort weiterverarbeiten
   mailer.resume().catch((e) => console.error('✉️  Outbox konnte nicht geladen werden:', e?.message || e));
-});
+}));

@@ -319,6 +319,8 @@
   .ak-banner b { font-family: var(--serif); font-weight: 700; font-size: .95rem; }
   .ak-banner.off { background: var(--bg-soft); color: var(--ink-soft); }
   .ak-banner-l { font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-soft); font-weight: 700; margin-top: 14px; }
+  .ak-pangv { margin-top: 10px; font-size: .8rem; }
+  .ak-pangv[hidden] { display: none; }
   .ak-err { color: var(--red); font-size: .8rem; font-weight: 600; margin-top: 8px; }
   .ak-err:empty { display: none; }
   .ak-foot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
@@ -344,7 +346,7 @@
   .dash-ak b { font-family: var(--serif); }
   .dash-ak .dash-ak-sep { color: #d09a80; font-weight: 300; }
   .dash-ak .dash-ak-note { flex-basis: 100%; color: var(--accent-dark); font-size: .78rem; }
-  /* Bestell-Drawer: Aktionszeile je Position, Badge je Bestellung, durchgestrichener UVP */
+  /* Bestell-Drawer: Aktionszeile je Position, Badge je Bestellung, durchgestrichener Normalpreis (nur Admin) */
   .badge.ak { background: #fbe9e0; border-color: #e9b9a3; color: var(--accent-dark); }
   .lc-ak { color: var(--accent-dark); font-size: .78rem; margin-top: 3px; }
   s.uvp { color: var(--ink-soft); margin-right: 4px; }
@@ -586,6 +588,7 @@
       <section id="pane-aktionen" class="pane" data-settings hidden>
         <div class="pane-head"><div><h1>Aktionen</h1><p>Zeitlich begrenzter Prozent-Rabatt auf den Stückpreis — auf alles, ein Produkt oder nur bestimmte Oberflächen (z. B. „nur jetzt: Gehämmert −30 %“). Banner, Streichpreise, Muster-Badges und Countdown erscheinen im Shop automatisch, sobald der Zeitraum läuft.</p></div><button class="ghost" onclick="addAktion()">+ Neue Aktion</button></div>
         <div class="hint info" style="margin-bottom:14px">Mehrere Aktionen dürfen gleichzeitig laufen (z. B. −30 % auf Gehämmert neben −10 % auf alles) — bei Überschneidung gilt je Konfiguration der höhere Rabatt; im Banner steht die höchste zuerst. Ohne „Mengenrabatt zusätzlich“ entfällt die Mengenstaffel für die betroffenen Positionen. Gutscheine gelten während einer Aktion nur, wenn sie unter <a href="#pricing">Preise &amp; Gutscheine</a> als „mit Aktion kombinierbar“ markiert sind. Zeiten sind Ortszeit deines Rechners.</div>
+        <div class="hint" style="margin-bottom:14px"><b>30-Tage-Regel (§ 11 PAngV):</b> Als Streichpreis zeigt der Shop automatisch den <b>niedrigsten Preis der letzten 30 Tage vor dem Start</b> der Aktion („Niedrigster Preis der letzten 30 Tage: …“), und die Prozentzahl bezieht sich darauf. Dafür merkt sich der Server jede Preis-, Aufpreis- und Aktionsänderung (Preis-Historie). Lief in diesen 30 Tagen schon eine Aktion auf dieselben Vasen oder war ein Preis niedriger, fällt der Streichpreis kleiner aus oder ganz weg, und das Banner nennt keine Prozentzahl, nur „Aktionspreise“. Tipp: zwischen zwei Aktionen auf dieselben Vasen mindestens 30 Tage Abstand lassen und Preise nicht kurz vor einer Aktion erhöhen. Gutscheine und Mengenrabatte betrifft die Regel nicht.</div>
         <div id="aktionen-list"></div>
       </section>
 

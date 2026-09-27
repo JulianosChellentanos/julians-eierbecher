@@ -401,7 +401,7 @@ export function buildModel(params) {
     ? Math.min(1, Math.max(0, (amp - HAM_SOFT) / (depthCap - HAM_SOFT))) : 0;
   // Hinweis, wenn die Zellgröße die Wunschtiefe begrenzt (Konfigurator zeigt ihn an)
   const depthNote = (p.pattern === 'gehaemmert' && p.depth > depthCap + 1e-9 && depthCap < hamMax - 1e-9)
-    ? `Bei ${ribs} Schlägen sind max. ${depthCap.toFixed(1).replace('.', ',')} mm möglich — sonst drucken die Näpfe nicht mehr ohne Stützen.`
+    ? `Bei ${ribs} Schlägen sind max. ${depthCap.toFixed(1).replace('.', ',')} mm möglich – sonst drucken die Näpfe nicht mehr ohne Stützen.`
     : '';
   const twistAngle = p.twist * Math.PI;
   // Verlauf des Musters über die Höhe: Phasenverschiebung φ(t).
@@ -598,19 +598,20 @@ export function buildModel(params) {
         if (wallSlope(tt) <= MAX_SLOPE) { best = tt; break; }
         if (best !== null) break;
       }
-      if (best === null) { textInfo.disabled = true; textInfo.reason = 'An dieser Höhe ist die Wand zu stark geneigt — Gravur nicht möglich. Bitte Position oder Form ändern.'; }
+      if (best === null) { textInfo.disabled = true; textInfo.reason = 'An dieser Höhe ist die Wand zu stark geneigt – Gravur nicht möglich. Bitte Position oder Form ändern.'; }
       else { tC = best; textInfo.warn = 'Position auf den flacheren Wandbereich verschoben.'; }
     }
     // (2) Offene Zellen / Mustertiefe an der Textstelle
     const a = ampAt(tC);
     if (!textInfo.disabled && isVase && p.pattern === 'skelett') {
       textInfo.disabled = true;
-      textInfo.reason = 'Bei offenen Voronoi-Zellen ist keine Gravur möglich — anderes Muster wählen (beim Eierbecher geht es).';
+      // Ohne Verweis auf den Eierbecher: der ist per Produktschalter aus, der Hinweis erscheint aber bei jeder Vase
+      textInfo.reason = 'Bei offenen Voronoi-Zellen ist keine Gravur möglich – bitte ein anderes Muster wählen.';
     }
     const maxAmp = isVase ? 2.5 : 2.0; // Eierbecher: kleiner Radius, tiefe Muster schlucken die Schrift
     if (!textInfo.disabled && a > maxAmp) {
       textInfo.disabled = true;
-      textInfo.reason = `Gravur bei über ${String(maxAmp).replace('.', ',')} mm Mustertiefe nicht möglich — Tiefe auf ${String(maxAmp).replace('.', ',')} mm setzen oder anderes Muster wählen.`;
+      textInfo.reason = `Gravur bei über ${String(maxAmp).replace('.', ',')} mm Mustertiefe nicht möglich – Tiefe auf ${String(maxAmp).replace('.', ',')} mm setzen oder anderes Muster wählen.`;
     }
     if (!textInfo.disabled) {
       // (3) Schriftgröße — Reihenfolge nach Lesbarkeit (monoton: mehr Zeichen machen den Text nie größer):
@@ -657,11 +658,11 @@ export function buildModel(params) {
       }
       textInfo.arcMaxDeg = Math.round((arcLim * 180) / Math.PI);
       if (!(m.width > 0) || (!field && arcAt(cap) <= arcLim + 1e-9)) {
-        textInfo.disabled = true; textInfo.reason = 'Diese Zeichen gibt es in der gewählten Schrift nicht — bitte andere Schrift wählen.';
+        textInfo.disabled = true; textInfo.reason = 'Diese Zeichen gibt es in der gewählten Schrift nicht – bitte andere Schrift wählen.';
       } else if (!field) {
         const maxChars = Math.max(1, Math.floor(txt.length * arcLim / arcAt(cap)));
         textInfo.disabled = true; textInfo.maxChars = maxChars; // für den Zeichenzähler im Konfigurator
-        textInfo.reason = `Text zu lang für diesen Umfang — maximal ca. ${maxChars} Zeichen in dieser Schrift (auch bei kleinster Größe ${String(rule.minCap).replace('.', ',')} mm).`;
+        textInfo.reason = `Text zu lang für diesen Umfang – maximal ca. ${maxChars} Zeichen in dieser Schrift (auch bei kleinster Größe ${String(rule.minCap).replace('.', ',')} mm).`;
       } else {
         textInfo.size = cap;
         textInfo.arcDeg = (field.width / rMid) * 180 / Math.PI;
@@ -670,7 +671,7 @@ export function buildModel(params) {
         if (textInfo.warn) warns.push(textInfo.warn);
         if (cap < (p.textSize ?? 7) - 0.01 && cap < wanted - 0.01) warns.push(`Text automatisch auf ${cap.toFixed(1)} mm verkleinert, damit er ${wraps ? 'auf den Umfang' : 'auf die Vorderseite'} passt.`);
         if ((p.textSize ?? 7) < rule.minCap - 0.01) warns.push(`Schrift auf ${rule.minCap} mm vergrößert, damit die feinen Striche druckbar sind.`);
-        if (wraps) warns.push('Text läuft um die Seite — zum Lesen drehen.');
+        if (wraps) warns.push('Text läuft um die Seite – zum Lesen drehen.');
         if (field.missing) warns.push(`Zeichen „${field.missing}“ gibt es in dieser Schrift nicht.`);
         textInfo.warn = warns.join(' ');
         // (4) Kartusche: Querwellen — Feld folgt dem lokalen Wellenniveau der Textmitte (kein Plaque-Schnitt
@@ -893,7 +894,7 @@ export function buildModel(params) {
   // Öffnungs-Hinweis (Vase): eng für Blumen — weich, nicht blockierend; unter VASE_OPEN_TIGHT zeigt die UI ihn rot
   let openingWarn = '';
   if (isVase && openingDia < VASE_OPEN_WARN) {
-    openingWarn = `⚠️ Öffnung nur Ø ${Math.round(openingDia)} mm — bei dieser Form eng für Blumen: breiter stellen oder Form mit weiterer Öffnung wählen`
+    openingWarn = `⚠️ Öffnung nur Ø ${Math.round(openingDia)} mm – bei dieser Form eng für Blumen: breiter stellen oder Form mit weiterer Öffnung wählen`
       + (rimEff === 'muster' ? ', Tiefe verringern oder Rand „Glatt“ wählen' : '') + '.';
   }
   // Außendurchmesser oben: mit Wulst ragt die Lippe über R(1) hinaus

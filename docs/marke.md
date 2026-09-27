@@ -52,7 +52,9 @@ Emojis sparsam — im Shop als Bedien-Symbole, in Texten der Marke nicht.
 | Terrakotta dunkel | `#9e4f2c` | Akzent-**Text** auf Creme (Links, Hervorhebungen, Signatur) | 5,1 : 1 auf Creme |
 | Salbei | `#9caf88` | ruhiger Nebenakzent: Flächen, Häkchen, „erledigt“ | nie als Text auf Creme (2,1 : 1); Tinte auf Salbei 7,1 : 1 |
 
-Faustregel: Creme und Tinte tragen, Terrakotta setzt den Akzent, Salbei beruhigt. Keine weiteren Markenfarben.
+Faustregel: Creme und Tinte tragen, Terrakotta setzt den Akzent, Salbei beruhigt. Keine weiteren Logo- oder Druckfarben.
+
+Die Website nutzt zusätzlich ein dunkles **Studio-Grün** (`#283226`, `#303b2b`, `#35452b`) für Ankündigungsleiste, Footer, dunkle Sektionen und Knöpfe. Es ist eine Oberflächenfarbe der Seite, keine Logofarbe: Auf Studio-Grün steht das Logo in der hellen Variante (`formsam-logo-hell.svg`).
 
 ## Schriften
 
@@ -112,10 +114,10 @@ Auf dunklen Flächen den Schrift-Teil in `currentColor` bzw. `#f4efe7` füllen.
 - [ ] Domains formsam.de (läuft), formsam.com, form-sam.de, formsam.eu registrieren und weiterleiten.
 - [ ] Postfach hallo@formsam.de einrichten und im Admin (Mein Unternehmen → E-Mail) eintragen.
 - [ ] Handles @formsam anlegen, Profilbild und Beiträge aus dem Brand-Kit hochladen.
-- [ ] Paketbeileger drucken lassen (A6, beidseitig).
+- [ ] Paketbeileger drucken lassen (A6, beidseitig) und in jedes Paket legen. Vorher neu bauen, sobald die echte Anschrift und hallo@formsam.de im Admin stehen: Die Rückseite trägt die Herstellerangabe (Name, Post- und E-Mail-Adresse, Art. 9 GPSR) aus den Firmendaten. Mit Musteranschrift oder Gmail-Adresse warnt das Bau-Skript (`tmp-tests/brand-kit-build/_skripte/brandkit.mjs beileger`).
 
 ## Brand-Kit
 
 Fertige Dateien für den Alltag (nicht im Git, liegen im Arbeitsordner unter `tmp-tests/brand-kit/`):
 Logos als PNG (transparent, auf Creme, auf Dunkel) und SVG, Profilbild, Social-Beitrag und Story,
-Paketbeileger A6 (PDF), dieser Leitfaden als PDF, E-Mail-Signatur. Eine `LIESMICH.txt` erklärt jede Datei.
+Paketbeileger A6 (PDF, mit Herstellerangabe aus den Firmendaten), dieser Leitfaden als PDF, E-Mail-Signatur. Eine `LIESMICH.txt` erklärt jede Datei.

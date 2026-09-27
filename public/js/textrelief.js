@@ -8,7 +8,7 @@
 //            → Höhenfeld h(x,y): Fase 0,25 mm an Seiten/Oberkanten, bis H/tan(55°) an Unterseiten.
 
 export const TEXT_STYLES = {
-  gestanzt: { label: 'Gestanzt', hint: 'in die Wand gedrückt — schärfste Kanten', icon: '🪙' },
+  gestanzt: { label: 'Gestanzt', hint: 'in die Wand gedrückt – schärfste Kanten', icon: '🪙' },
   gepraegt: { label: 'Geprägt', hint: 'erhaben mit feiner Fase', icon: '🔤' },
   gehaemmert: { label: 'Gehämmert', hint: 'glatte Schrift auf gehämmertem Schild', icon: '🔨' },
   kissen: { label: 'Kissen', hint: 'weich gewölbt, wie ein Siegel', icon: '🫧' },

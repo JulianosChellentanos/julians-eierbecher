@@ -57,7 +57,7 @@ export async function loadList(code) {
 }
 async function updateList(code, patch) {
   const token = tokenFor(code);
-  if (!token) throw new Error('Diese Liste gehört jemand anderem — du kannst sie kopieren.');
+  if (!token) throw new Error('Diese Liste gehört jemand anderem – du kannst sie kopieren.');
   const r = await api(`/api/list/${encodeURIComponent(code)}`, 'PUT', { token, ...patch });
   const m = mine.find((l) => l.code === code); if (m && patch.name) { m.name = patch.name; saveMine(); }
   return r.list;
@@ -86,7 +86,7 @@ function renderHome() {
   view = 'home'; current = null;
   const box = $('#ls-body');
   box.innerHTML = `
-    <p class="dc-lead">Sammle Designs zu einer Liste — für die Hochzeitstafel, den Geburtstag oder das Team. Jede Liste hat einen Code zum Teilen; wer ihn hat, sieht alle Designs mit Vorschau und kann sie laden oder bestellen.</p>
+    <p class="dc-lead">Sammle Designs zu einer Liste – für die Hochzeitstafel, den Geburtstag oder das Team. Jede Liste hat einen Code zum Teilen; wer ihn hat, sieht alle Designs mit Vorschau und kann sie laden oder bestellen.</p>
     <div class="ls-new">
       <input id="ls-name" placeholder="Name der Liste, z. B. Hochzeit Anna & Tom" maxlength="60">
       <div class="ls-occ" id="ls-occ">${Object.entries(OCCASIONS).map(([id, o], i) => `<button class="occ-chip ${i === 0 ? 'active' : ''}" data-occ="${id}">${o.icon} ${o.label}</button>`).join('')}</div>
@@ -100,7 +100,7 @@ function renderHome() {
     <h3 class="ls-h3">Meine Listen</h3>
     <div class="ls-mine" id="ls-mine">${mine.length ? mine.map((l) => `
       <button class="ls-card" data-open="${l.code}"><span class="ls-card-name">${esc(l.name)}</span><span class="ls-card-code">${formatListCode(l.code)}</span></button>`).join('')
-      : '<p class="tiny left">Noch keine Liste — leg oben deine erste an. 🎉</p>'}</div>`;
+      : '<p class="tiny left">Noch keine Liste – leg oben deine erste an. 🎉</p>'}</div>`;
   let occ = 'hochzeit';
   box.querySelectorAll('.occ-chip').forEach((b) => b.addEventListener('click', () => {
     occ = b.dataset.occ; box.querySelectorAll('.occ-chip').forEach((x) => x.classList.toggle('active', x === b));
@@ -204,7 +204,7 @@ function renderList(list) {
   }));
   const toCart = (it, silent) => {
     const col = hooks.colorInfo?.(it.config?.color);
-    addToCart({
+    return addToCart({
       config: it.config, code: it.code, color: it.config?.color || null,
       colorName: col ? (col.finish && col.finish !== 'matt' ? `${col.name} (${col.finish === 'metall' ? 'metallic' : 'glänzend'})` : col.name) : '',
       colorHex: col?.hex || '#cccccc', thumb: `/api/design/${it.code}/thumb`,
@@ -218,8 +218,10 @@ function renderList(list) {
   $('#ls-allcart')?.addEventListener('click', () => {
     $('#lists-modal').close();
     const ok = list.items.filter(bestellbar);
-    ok.forEach((it, i) => toCart(it, i < ok.length - 1));
-    showToast(`🛒 ${totalOk} Stück im Warenkorb`);
+    // Der Warenkorb nimmt höchstens 20 verschiedene Designs (addToCart meldet das) — die Meldung zählt nur, was wirklich drin ist
+    let stueck = 0, voll = false;
+    ok.forEach((it, i) => { if (!voll && toCart(it, i < ok.length - 1)) stueck += it.qty || 1; else voll = true; });
+    showToast(voll ? `🛒 ${stueck} von ${totalOk} Stück im Warenkorb – mehr als 20 verschiedene Designs passen nicht in eine Bestellung` : `🛒 ${totalOk} Stück im Warenkorb`, voll ? 6000 : undefined);
   });
   $('#ls-addcur')?.addEventListener('click', async (e) => {
     e.currentTarget.disabled = true;
@@ -229,7 +231,7 @@ function renderList(list) {
   $('#ls-copy')?.addEventListener('click', async () => {
     try {
       const l = await createList({ name: list.name, occasion: list.occasion, items: list.items.map((it) => ({ code: it.code, qty: it.qty || 1 })) });
-      renderList(l); showToast('📋 Kopie angelegt — jetzt deine Liste');
+      renderList(l); showToast('📋 Kopie angelegt – jetzt deine Liste');
     } catch (err) { showToast(err.message); }
   });
   $('#ls-delete')?.addEventListener('click', async () => {
@@ -290,7 +292,7 @@ export async function addCurrentToListFlow() {
 /** Warenkorb als Liste speichern */
 export async function createListFromCart(cartItems) {
   const items = cartItems.filter((it) => it.code).map((it) => ({ code: it.code, qty: it.qty }));
-  if (!items.length) throw new Error('Die Warenkorb-Designs haben noch keinen Code — bitte kurz warten.');
+  if (!items.length) throw new Error('Die Warenkorb-Designs haben noch keinen Code – bitte kurz warten.');
   const name = `Meine Auswahl ${new Date().toLocaleDateString('de-DE')}`;
   const l = await createList({ name, occasion: 'sonstiges', items });
   $('#cart-modal').close();

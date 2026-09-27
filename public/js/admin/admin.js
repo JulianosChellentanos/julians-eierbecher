@@ -8,7 +8,8 @@ let DATA = null;          // { settings, orders, statuses, statusLabels, carrier
 let USERS = [];           // Kundenkonten (ohne Hash/Salt)
 let tiers = { egg: [], vase: [] };
 let colors = [];
-let coupons = [];         // [{ code, type, value, minOrder, active, mitAktion }] — mitAktion: mit laufender Aktion kombinierbar
+let coupons = [];         // [{ code, type, value, minOrder, active, mitAktion, guthaben? }] — mitAktion: mit laufender Aktion kombinierbar
+let couponsLoeschen = []; // per 🗑 entfernte Guthaben-Codes — der Server löscht Guthaben nur, wenn sie hier ausdrücklich stehen
 let aktionen = [];        // Vertrag „Aktionen“: [{ id, name, prozent, start, ende (ISO-UTC), produkte, muster [Muster-Keys, leer = alle Oberflächen], mengenrabatt, hinweis, aktiv }]
 let dirty = false;        // ungespeicherte Einstellungen
 let CUR = null;           // geöffnete Bestellnummer (Drawer)
@@ -241,8 +242,23 @@ function queueItems() {
   }
   return items;
 }
+/**
+ * Link auf eine Datei der Bestellung (Rechnung, Gutschrift, Modell) — mit ?k=<accessKey>, sobald die Bestellung einen
+ * Zugriffsschlüssel hat (kommt über /api/admin/data); ohne Schlüssel (Altbestand) wie bisher. Wie orderFileUrl() im Server.
+ */
+/**
+ * Kasse nie abgeschlossen (angelegt, aber kein /complete: Upload fehlgeschlagen, Tab geschlossen) — keine Rechnung, keine
+ * Bestätigungsmail. Nach 30 Minuten gilt sie als abgebrochen; „Stornieren“ räumt sie auf (gibt auch ein Guthaben frei).
+ */
+const kasseAbgebrochen = (o) => !o.completedAt && !o.invoiceNo && (o.status || 'neu') === 'neu';   // bearbeitete Altbestellungen nicht
+const kasseOffenBadge = (o) => (!kasseAbgebrochen(o) ? ''
+  : Date.now() - Date.parse(o.createdAt) > 30 * 60e3
+    ? '<br><span class="badge" title="Die Kasse wurde nie abgeschlossen: keine Rechnung, keine Bestätigungsmail, Druckdateien evtl. unvollständig — am besten stornieren">⚠️ Kasse abgebrochen</span>'
+    : '<br><span class="badge" title="Die Kundschaft ist gerade in der Kasse (Druckdateien werden hochgeladen)">⏳ Kasse läuft</span>');
+const docUrl = (o, file) => `/orders/${encodeURIComponent(o.orderId)}/${encodeURIComponent(file)}${o.accessKey ? `?k=${encodeURIComponent(o.accessKey)}` : ''}`;
+// download="<Dateiname>": der Name kommt so nicht aus der Adresse mit ?k=
 const fileLink = (o, l) => (l.stlFile
-  ? `<a href="/orders/${esc(o.orderId)}/${encodeURIComponent(l.stlFile)}" download onclick="event.stopPropagation()">⬇ ${/\.3mf$/i.test(l.stlFile) ? '3MF (2 Filamente)' : 'STL'}</a>`
+  ? `<a href="${esc(docUrl(o, l.stlFile))}" download="${esc(l.stlFile)}" onclick="event.stopPropagation()">⬇ ${/\.3mf$/i.test(l.stlFile) ? '3MF (2 Filamente)' : 'STL'}</a>`
   : '<span class="muted">keine Datei</span>');
 function applyOrder(order) {
   const i = DATA.orders.findIndex((o) => o.orderId === order.orderId);
@@ -391,7 +407,7 @@ function renderOrders() {
         <td data-l="Kunde">${esc(custName(o))}<br><small class="muted mail" title="${esc(custEmail(o))}">${esc(custEmail(o))}</small></td>
         <td data-l="Positionen"><span class="lines-short">${lines}</span></td>
         <td data-l="Summe" class="num">${o.total != null ? money(o.total) : '—'}<br><small class="muted">${o.payment === 'paypal' ? 'PayPal' : 'Vorkasse'} ${o.paymentStatus === 'bezahlt' ? '<span title="bezahlt">✅</span>' : '<span title="offen">⏳</span>'}</small>${o.coupon ? `<br><small class="muted">🎟️ ${esc(o.coupon.code)}</small>` : ''}${orderAktionen(o).map((a) => `<br><small class="muted" title="Aktion${esc(orderAktionScope(a))} · Ersparnis ${esc(money(a.ersparnis))}">🔥 ${esc(a.name)} −${esc(a.prozent)} %</small>`).join('')}</td>
-        <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${o.reklamation ? `<br><span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkStLabel(o.reklamation.status))} · ${esc(rkArtLabel(o.reklamation.art))}">↩️ Reklamation</span>` : ''}${orderWiderrufe(o).length ? `<br><span class="badge wr-${orderWrOffen(o) ? 'offen' : 'erledigt'}" title="Widerruf über „Vertrag widerrufen“ eingegangen${orderWrOffen(o) ? '' : ' — erledigt'}">↩️ Widerruf</span>` : ''}${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
+        <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${kasseOffenBadge(o)}${o.storno?.nr ? `<br><small class="muted" title="Stornorechnung zu ${esc(o.invoiceNo)}">↩ ${esc(o.storno.nr)}</small>` : ''}${o.reklamation ? `<br><span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkStLabel(o.reklamation.status))} · ${esc(rkArtLabel(o.reklamation.art))}">↩️ Reklamation</span>` : ''}${orderWiderrufe(o).length ? `<br><span class="badge wr-${orderWrOffen(o) ? 'offen' : 'erledigt'}" title="Widerruf über „Vertrag widerrufen“ eingegangen${orderWrOffen(o) ? '' : ' — erledigt'}">↩️ Widerruf</span>` : ''}${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
         <td data-l="Druck">${p.total ? `<span class="prog"><i style="--w:${Math.round(p.done / p.total * 100)}%"></i>${p.done}/${p.total}</span>` : '—'}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty">Keine Treffer.</td></tr>') + '</tbody>';
@@ -464,20 +480,24 @@ function renderDrawer() {
 
   // Fehlklick auf „bezahlt“ rückgängig: solange kein Druck läuft, in einem Schritt zurück auf „Neu“ + Zahlung offen (ohne Storno-Umweg)
   const undoable = s === 'bezahlt' && !(o.lines || []).some((l) => l.print?.status && l.print.status !== 'offen');
+  // Verwendungszweck wie auf Rechnung, Bestätigungsmail, AGB und Versandseite: die Bestellnummer. Altbestand (OV-…): dessen
+  // alte Rechnung verlangte die Rechnungsnummer — dort kann die Überweisung also auch die RE-Nummer tragen
+  const vzweck = `<code>${esc(o.orderId)}</code>${/^OV-/.test(o.orderId || '') && o.invoiceNo ? ` <small class="muted">oder <code style="white-space:nowrap">${esc(o.invoiceNo)}</code> (alte Rechnung)</small>` : ''}`;
   const payBlock = o.payment === 'paypal'
     ? `<dl class="kv"><dt>Zahlart</dt><dd>PayPal ${o.paymentStatus === 'bezahlt' ? '✅ bezahlt' : '⏳ offen'}</dd><dt>PayPal-ID</dt><dd><code>${esc(o.paypalOrderId || '—')}</code></dd>${o.paidAt ? `<dt>Bezahlt am</dt><dd>${fmtDT(o.paidAt)}</dd>` : ''}</dl>`
-    : `<dl class="kv"><dt>Zahlart</dt><dd>Vorkasse (Überweisung)</dd><dt>Betrag</dt><dd><b>${o.total != null ? money(o.total) : '—'}</b></dd><dt>Verwendungszweck</dt><dd><code>${esc(o.invoiceNo || o.orderId)}</code></dd>
+    : `<dl class="kv"><dt>Zahlart</dt><dd>Vorkasse (Überweisung)</dd><dt>Betrag</dt><dd><b>${o.total != null ? money(o.total) : '—'}</b></dd><dt>Verwendungszweck</dt><dd>${vzweck}</dd>
        <dt>Status</dt><dd>${o.paymentStatus === 'bezahlt' ? `✅ bezahlt${o.paidAt ? ' am ' + fmtDT(o.paidAt) : ''} ${undoable ? `<button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu (Zahlung offen)</button>` : `<button class="link mini" onclick="setPayment('${esc(o.orderId)}','offen')">zurücksetzen</button>`}` : `⏳ offen seit ${ageText(o.createdAt)} <button class="mini acc" style="margin-left:8px" onclick="markPaid('${esc(o.orderId)}')">✓ Zahlung eingegangen</button>${undoable ? ` <button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu</button>` : ''}`}</dd></dl>`;
 
   const account = o.userId ? '<span class="badge">👤 Kundenkonto</span>' : (USERS.some((u) => u.email === custEmail(o)) ? '<span class="badge">👤 hat Konto</span>' : '<span class="badge">Gast</span>');
   const tel = cu.phone ? `<br><a href="tel:${esc(cu.phone)}">${esc(cu.phone)}</a>` : '';
   $('#drawer-body').innerHTML = `${widerrufCard(o)}
     <div class="sect">
-      <h3>Status <span class="right">${fmtDT(o.createdAt)}${o.invoiceNo ? ` · <a href="/orders/${esc(o.orderId)}/rechnung.html" target="_blank">🧾 ${esc(o.invoiceNo)}</a>` : ''}</span></h3>
+      <h3>Status <span class="right">${fmtDT(o.createdAt)}${o.invoiceNo ? ` · <a href="${esc(docUrl(o, 'rechnung.html'))}" target="_blank">🧾 ${esc(o.invoiceNo)}</a>` : ''}${o.storno?.nr ? ` · <a href="${esc(docUrl(o, 'storno.html'))}" target="_blank" title="Stornorechnung">↩ ${esc(o.storno.nr)}</a>` : ''}</span></h3>
+      ${kasseAbgebrochen(o) ? `<p class="hint">${Date.now() - Date.parse(o.createdAt) > 30 * 60e3 ? '⚠️ Kasse abgebrochen: Die Bestellung wurde angelegt, aber nie abgeschlossen — keine Rechnung, keine Bestätigungsmail an die Kundschaft. Am besten stornieren (ein eingelöstes Guthaben wird dabei wieder frei).' : '⏳ Die Kundschaft ist gerade in der Kasse — die Druckdateien werden hochgeladen.'}</p>` : ''}
       <div class="stepper">${stepper}</div>
       <div class="row" style="margin-top:10px">
         <button class="ghost mini" onclick="openDruckzettel('${esc(o.orderId)}')">🖨️ Druckzettel</button>
-        ${o.invoiceNo ? `<button class="ghost mini" onclick="window.open('/orders/${esc(o.orderId)}/rechnung.html','_blank')">🧾 Rechnung</button>` : ''}
+        ${o.invoiceNo ? `<button class="ghost mini" onclick="window.open('${esc(docUrl(o, 'rechnung.html'))}','_blank')">🧾 Rechnung</button>` : ''}
         ${s !== 'storniert' && s !== 'abgeschlossen' ? `<button class="danger mini right" onclick="cancelOrder('${esc(o.orderId)}')">✕ Stornieren</button>` : ''}
       </div>
     </div>
@@ -717,7 +737,7 @@ function reklaCard(o) {
     ['Angelegt', fmtDT(r.createdAt) + (r.resolvedAt ? ` · ${r.status === 'abgelehnt' ? 'abgelehnt' : 'erledigt'} ${fmtDT(r.resolvedAt)}` : '')],
     r.art === 'ueberweisung' ? ['IBAN', r.iban ? `<code title="nur die letzten 4 Zeichen sichtbar">${esc(maskIban(r.iban))}</code>` : (open ? '<input id="rk-iban" placeholder="IBAN des Kunden — nötig zum Erledigen" autocomplete="off" style="min-width:260px">' : '—')] : null,
     r.gutscheinCode ? ['Gutschein-Code', `<span class="rk-code"><code>${esc(r.gutscheinCode)}</code><button class="ghost mini" data-copy="${esc(r.gutscheinCode)}">📋 Kopieren</button></span>`] : null,
-    r.gutschriftNo ? ['Gutschrift', `<a href="/orders/${id}/gutschrift.html" target="_blank">🧾 ${esc(r.gutschriftNo)}</a>`] : null,
+    r.gutschriftNo ? ['Gutschrift', `<a href="${esc(docUrl(o, 'gutschrift.html'))}" target="_blank">🧾 ${esc(r.gutschriftNo)}</a>`] : null,
     r.refundId ? ['PayPal-Erstattung', `<code>${esc(r.refundId)}</code>`] : null,
     r.note && r.status !== 'abgelehnt' ? ['Notiz', esc(r.note)] : null,
   ].filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -797,6 +817,8 @@ async function reklaErledigen(id) {
   if (!r) return;
   applyOrder(r.order);
   const rr = r.order.reklamation || {};
+  // Neuer Guthaben-Code in die Gutschein-Liste dieses Tabs — sonst fehlt er beim nächsten Speichern der Einstellungen
+  if (r.coupon?.code) couponUebernehmen(r.coupon, r.couponRest);
   toast(`${id} erledigt${rr.gutscheinCode ? ` · Gutschein ${rr.gutscheinCode}` : ''}${rr.gutschriftNo ? ` · Gutschrift ${rr.gutschriftNo}` : ''}${rr.refundId ? ' · PayPal erstattet' : ''}`, 'ok', 6000);
 }
 async function reklaAblehnen(id) {
@@ -982,7 +1004,8 @@ function renderPrint() {
     groups[k].items.push(it); groups[k].qty += it.l.qty; groups[k].minutes += e.minutes; groups[k].grams += e.grams;
   }
   const tot = Object.values(groups).reduce((a, g) => ({ qty: a.qty + g.qty, minutes: a.minutes + g.minutes, grams: a.grams + g.grams }), { qty: 0, minutes: 0, grams: 0 });
-  $('#pq-head').innerHTML = `<span><b>${tot.qty}</b> Stücke offen</span><span class="muted">·</span><span>≈ <b>${fmtDur(tot.minutes)}</b> Druckzeit</span><span class="muted">·</span><span>≈ <b>${Math.round(tot.grams)} g</b> Filament</span><span class="muted right">${items.length} Positionen aus ${new Set(items.map((i) => i.o.orderId)).size} Bestellungen</span>`;
+  const pqAnzahl = (n, eins, mehr) => `${n} ${n === 1 ? eins : mehr}`;   // „1 Position aus 1 Bestellung“
+  $('#pq-head').innerHTML = `<span><b>${tot.qty}</b> Stücke offen</span><span class="muted">·</span><span>≈ <b>${fmtDur(tot.minutes)}</b> Druckzeit</span><span class="muted">·</span><span>≈ <b>${Math.round(tot.grams)} g</b> Filament</span><span class="muted right">${pqAnzahl(items.length, 'Position', 'Positionen')} aus ${pqAnzahl(new Set(items.map((i) => i.o.orderId)).size, 'Bestellung', 'Bestellungen')}</span>`;
   const keys = Object.keys(groups).sort((a, b) => groups[b].qty - groups[a].qty);
   if (pqColor && !groups[pqColor]) pqColor = '';
   // Der Farbschlüssel kann aus Kundendaten stammen (Fallback in lineColor) → nur als data-Attribut, Klick per Delegation
@@ -1129,15 +1152,19 @@ function addTier(k) { tiers[k].push({ qty: 2, off: 10 }); setDirty(true); render
 function renderCoupons() {
   // Spalte „mit Aktion kombinierbar“ (coupons[i].mitAktion, Vertrag „Aktionen“): ohne Haken lehnt der Server den Code ab, solange eine Aktion läuft
   $('#coupons-table').innerHTML = `<thead><tr><th>Code</th><th>Art</th><th>Wert</th><th>Mindestbestellwert (€)</th><th>Aktiv</th><th title="Gilt der Gutschein auch, während eine Aktion läuft? Ohne Haken wird er dann abgelehnt.">mit Aktion kombinierbar</th><th></th></tr></thead><tbody>` +
-    coupons.map((c, i) => `<tr>
-      <td data-l="Code"><input type="text" value="${esc(c.code)}" onchange="coupons[${i}].code=this.value.toUpperCase()" style="width:140px;text-transform:uppercase"></td>
-      <td data-l="Art"><select onchange="coupons[${i}].type=this.value"><option value="percent" ${c.type === 'percent' ? 'selected' : ''}>% Rabatt</option><option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>€ Betrag</option></select></td>
-      <td data-l="Wert"><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value">${couponRestHTML(c)}</td>
+    coupons.map((c, i) => {
+      // Guthaben (Gutschrift aus einer Reklamation): Code, Art und Wert stehen so auf dem Beleg — nur aktiv/Mindestwert/Aktion änderbar
+      const fest = c.guthaben ? ` readonly title="Guthaben aus einer Gutschrift — Code, Art und Wert stehen so auf dem Beleg"` : '';
+      return `<tr>
+      <td data-l="Code"><input type="text" value="${esc(c.code)}" onchange="coupons[${i}].code=this.value.toUpperCase()" style="width:140px;text-transform:uppercase"${fest}></td>
+      <td data-l="Art"><select onchange="coupons[${i}].type=this.value"${c.guthaben ? ' disabled title="Guthaben: immer € Betrag"' : ''}><option value="percent" ${c.type === 'percent' ? 'selected' : ''}>% Rabatt</option><option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>€ Betrag</option></select></td>
+      <td data-l="Wert"><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value"${fest}>${couponRestHTML(c)}</td>
       <td data-l="Mindestwert"><input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value"></td>
       <td data-l="Aktiv" style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="coupons[${i}].active=this.checked"></td>
       <td data-l="mit Aktion" style="text-align:center"><input type="checkbox" ${c.mitAktion ? 'checked' : ''} onchange="coupons[${i}].mitAktion=this.checked" title="Mit laufender Aktion kombinierbar"></td>
-      <td><button class="ghost mini" onclick="coupons.splice(${i},1);setDirty(true);renderCoupons()">🗑</button></td>
-    </tr>`).join('') + (coupons.length ? '' : '<tr><td colspan="7" class="empty">Noch keine Gutscheine.</td></tr>') + '</tbody>';
+      <td><button class="ghost mini" onclick="delCoupon(${i})">🗑</button></td>
+    </tr>`;
+    }).join('') + (coupons.length ? '' : '<tr><td colspan="7" class="empty">Noch keine Gutscheine.</td></tr>') + '</tbody>';
 }
 /** Guthaben-Gutschein (Gutschrift aus einer Reklamation): Restwert laut Server (Wert − Einlösungen in nicht stornierten Bestellungen) */
 function couponRestHTML(c) {
@@ -1146,6 +1173,26 @@ function couponRestHTML(c) {
   return `<br><small class="muted" title="Gutschrift aus einer Reklamation: wird über mehrere Bestellungen aufgebraucht, gilt auch während einer Aktion">Guthaben · Rest ${rest != null ? money(rest) : '—'}</small>`;
 }
 function addCoupon() { coupons.push({ code: 'OSTERN10', type: 'percent', value: 10, minOrder: 0, active: true, mitAktion: false }); setDirty(true); renderCoupons(); }
+/** Gutschein entfernen; Guthaben nur nach Rückfrage und ausdrücklich (couponsLoeschen) — sonst behält der Server sie beim Speichern */
+function delCoupon(i) {
+  const c = coupons[i];
+  if (!c) return;
+  if (c.guthaben) {
+    if (!confirm(`Guthaben-Code ${c.code} löschen?\nDie Kundschaft kann das Guthaben dann nicht mehr einlösen — die Gutschrift bleibt bestehen.`)) return;
+    couponsLoeschen.push(String(c.code || '').trim().toUpperCase());
+  }
+  coupons.splice(i, 1); setDirty(true); renderCoupons();
+}
+/** Vom Server angelegten Guthaben-Code übernehmen (Reklamation erledigt), ohne ungespeicherte Gutschein-Änderungen zu verwerfen */
+function couponUebernehmen(c, rest) {
+  const k = String(c.code || '').trim().toUpperCase();
+  const neu = { ...c, mitAktion: !!c.mitAktion };
+  if (!coupons.some((x) => String(x?.code || '').trim().toUpperCase() === k)) coupons.push(structuredClone(neu));
+  const gespeichert = DATA.settings.coupons ||= [];
+  if (!gespeichert.some((x) => String(x?.code || '').trim().toUpperCase() === k)) gespeichert.push(structuredClone(neu));
+  if (rest != null) (DATA.couponRest ||= {})[k] = rest;
+  renderCoupons();
+}
 
 // ---------------------------------------------------------------------------
 // Aktionen (Vertrag „Aktionen“, Punkt 8): Karten mit Formular, Status-Chip + Countdown, Schnellwahl der Dauer, Banner-Vorschau.
@@ -1266,8 +1313,31 @@ function akCdText(a, now = akNow()) {
   if (stt === 'beendet') return `endete am ${fmtDT(a.ende)}`;
   return Number.isFinite(s) && Number.isFinite(e) ? `nicht im Shop · ${fmtDT(a.start)} – ${fmtDT(a.ende)}` : 'nicht im Shop';
 }
-/** Kurzform einer weiteren laufenden Aktion für den Desktop-Banner: „Winter −16 % auf alles“ */
-const akKurz = (a) => `${esc(String(a.name || '').trim() || 'Aktion')} <b>−${Math.round(Number(a.prozent) || 0)} %</b> ${esc(aktionScopeLabel(a))}`;
+// § 11 PAngV (30-Tage-Regel): Als Streichpreis zeigt der Shop den niedrigsten Preis der letzten 30 Tage vor dem Start einer Aktion
+// (pricing.js referenzpreis, aus der Preis-Historie des Servers); die Prozentzahl im Banner steht nur, wenn sie für den ganzen
+// Geltungsbereich stimmt. Der Admin warnt, wenn eine andere Aktion mit überschneidendem Geltungsbereich weniger als 30 Tage vor
+// dem Start endet(e) — aus der Liste (auch ungespeicherte Änderungen) und aus DATA.aktionenHistorie (auch gelöschte Aktionen).
+const AK_REF_TAGE = 30;
+const AK_PANGV_TEXT = 'Innerhalb von 30 Tagen nach einer Aktion zeigt der Shop als Streichpreis den Aktionspreis der Vor-Aktion; die Prozentzahl im Banner entfällt.';
+/** Vor-Aktion im 30-Tage-Fenster vor dem Start von a (überschneidender Geltungsbereich, Start vor a, Ende nach start − 30 Tage) — die zuletzt endende, sonst null */
+function akVorAktion(a, now = akNow()) {
+  const s = Date.parse(a?.start);
+  if (!Number.isFinite(s)) return null;
+  const von = s - AK_REF_TAGE * 864e5;
+  const liste = aktionen.filter((b) => b !== a && b.aktiv).concat(DATA?.aktionenHistorie || []);
+  let best = null;
+  for (const b of liste) {
+    const bs = Date.parse(b.start), be = Date.parse(b.ende);
+    if (!(bs < s) || !(be > von)) continue;
+    // dieselbe Aktion aus der Historie zählt nur, wenn sie mit früherem Start schon lief (z. B. Start nachträglich verschoben)
+    if (String(b.id) === String(a.id) && (b.start === a.start || !(bs < now))) continue;
+    if (!akOverlap(a, b)) continue;
+    if (!best || be > Date.parse(best.ende)) best = b;
+  }
+  return best;
+}
+/** Kurzform einer weiteren laufenden Aktion für den Desktop-Banner: „Winter −16 % auf alles“ (ohne gültige Zahl: „Aktionspreise auf alles“) */
+const akKurz = (a) => `${esc(String(a.name || '').trim() || 'Aktion')} ${akVorAktion(a) ? 'Aktionspreise' : `<b>−${Math.round(Number(a.prozent) || 0)} %</b>`} ${esc(aktionScopeLabel(a))}`;
 /**
  * Bannerzeile wie im Shop (Vertrag 6a / Oberflächen 7): „🔥 Sommer: −30 % auf Gehämmert · endet in 1 Tag 3 Std · Hinweis“ — als HTML
  * mit Fraunces-Zahlen. Läuft die Aktion als primäre und noch eine zweite, hängt der Desktop-Banner „ · außerdem: Winter −16 % auf alles“ an.
@@ -1275,10 +1345,13 @@ const akKurz = (a) => `${esc(String(a.name || '').trim() || 'Aktion')} <b>−${M
 function akBannerHTML(a, now = akNow(), list = aktionen) {
   const s = Date.parse(a.start), e = Date.parse(a.ende);
   const ref = Number.isFinite(s) ? Math.max(now, s) : now;   // geplant: Countdown ab dem Start gerechnet
-  const cd = Number.isFinite(e) ? inText('endet', e - ref) : 'endet —';
+  // beendet: „· beendet“ statt „endet gleich“ (inText kennt keine negative Restzeit)
+  const cd = !Number.isFinite(e) ? 'endet —' : e <= now ? 'beendet' : inText('endet', e - ref);
   const run = akLaufende(list, now);
   const zweite = run[0] === a ? run[1] : null;
-  return `🔥 <b>${esc(String(a.name || '').trim() || 'Aktion')}</b>: <b>−${Math.round(Number(a.prozent) || 0)} %</b> ${esc(aktionScopeLabel(a))} · ${cd}${String(a.hinweis || '').trim() ? ` · ${esc(String(a.hinweis).trim())}` : ''}${zweite ? ` · außerdem: ${akKurz(zweite)}` : ''}`;
+  // Vor-Aktion im 30-Tage-Fenster → der Shop nennt keine Prozentzahl, nur „Aktionspreise“ (§ 11 PAngV)
+  const angebot = akVorAktion(a, now) ? 'Aktionspreise' : `<b>−${Math.round(Number(a.prozent) || 0)} %</b>`;
+  return `🔥 <b>${esc(String(a.name || '').trim() || 'Aktion')}</b>: ${angebot} ${esc(aktionScopeLabel(a))} · ${cd}${String(a.hinweis || '').trim() ? ` · ${esc(String(a.hinweis).trim())}` : ''}${zweite ? ` · außerdem: ${akKurz(zweite)}` : ''}`;
 }
 /** Oberflächen-Block einer Karte: Schalter „Alle Oberflächen“ (muster []) + 9 Chips (Mehrfachauswahl); Chips gedämpft, solange „Alle“ gilt */
 function akMusterHTML(a, i) {
@@ -1312,6 +1385,7 @@ function akCardHTML(a, i) {
       <label class="inline" style="margin-top:12px"><input type="checkbox" ${a.mengenrabatt ? 'checked' : ''} onchange="akSet(${i},'mengenrabatt',this.checked)"> Mengenrabatt zusätzlich gewähren <small class="muted">— sonst entfällt die Mengenstaffel, solange die Aktion läuft</small></label>
       <div class="ak-banner-l">Vorschau der Bannerzeile im Shop</div>
       <div class="ak-banner" id="ak-banner-${i}"></div>
+      <div class="hint ak-pangv" id="ak-pangv-${i}" hidden></div>
       <div class="ak-err" id="ak-err-${i}"></div>
       <div class="ak-foot"><small class="muted">ID <code>${id}</code></small><button class="danger mini right" onclick="deleteAktion(${i})">🗑 Aktion löschen</button></div>
     </div>`;
@@ -1338,6 +1412,13 @@ function akRefresh(i) {
   banner.title = stt === 'laeuft'
     ? (rank > 0 ? 'Läuft gerade — im Shop steht diese Zeile als „außerdem: …“ hinter der primären Aktion (auf dem Handy nur die primäre)' : 'So erscheint die Leiste gerade im Shop')
     : `Erscheint im Shop, sobald die Aktion läuft (${AK_STATUS_LABEL[stt]})`;
+  // 30-Tage-Regel (§ 11 PAngV): Hinweis bei einer Vor-Aktion mit überschneidendem Geltungsbereich (nicht für beendete Aktionen)
+  const pangv = $(`#ak-pangv-${i}`), vor = stt !== 'beendet' ? akVorAktion(a, now) : null;
+  if (pangv) {
+    const txt = vor ? `⚖️ ${AK_PANGV_TEXT} Vor-Aktion: „${String(vor.name || '').trim() || 'Aktion'}“ −${Math.round(Number(vor.prozent) || 0)} % ${aktionScopeLabel(vor)}, ${Date.parse(vor.ende) > Date.parse(a.start) ? 'läuft beim Start noch' : `endet${Date.parse(vor.ende) <= now ? 'e' : ''} am ${fmtDT(vor.ende)}`}.` : '';
+    if (pangv.textContent !== txt) pangv.textContent = txt;
+    pangv.hidden = !vor;
+  }
   $(`#ak-err-${i}`).textContent = err;
 }
 /** Oberflächen-Chips und „Alle“-Schalter einer Karte mit dem Zustand abgleichen (nach Klick; nie beim Sekunden-Ticker) */
@@ -1651,9 +1732,15 @@ async function reloadCompany() {
   try {
     const d = await api('/api/admin/data');
     if (d.ok && d.settings) {
+      const prefixVorher = { invoicePrefix: DATA.settings.invoicePrefix, creditPrefix: DATA.settings.creditPrefix };
       for (const k of ['company', 'shop', 'legal', 'invoicePrefix', 'creditPrefix', 'nextInvoice', 'nextCredit']) if (d.settings[k] !== undefined) DATA.settings[k] = d.settings[k];
       DATA.hinweise = d.hinweise;
       if (!dirty) fillCompany();
+      else {
+        // Präfix-Felder, die niemand angefasst hat, auch bei ungespeicherten Änderungen auf den Server-Stand (Jahreswechsel)
+        if ($('#c-prefix').value === String(prefixVorher.invoicePrefix || '')) $('#c-prefix').value = DATA.settings.invoicePrefix || '';
+        if ($('#c-credit-prefix').value === String(prefixVorher.creditPrefix || '')) $('#c-credit-prefix').value = DATA.settings.creditPrefix || '';
+      }
     }
   } catch { /* 401 → Login; sonst bleibt der gesendete Stand */ }
   renderPflicht();
@@ -1680,6 +1767,7 @@ function fillSettings() {
   tiers.vase = structuredClone(s.pricing.vase.discounts || []);
   colors = structuredClone(s.colors || []);
   coupons = structuredClone(s.coupons || []);
+  couponsLoeschen = [];
   for (const c of coupons) c.mitAktion = !!c.mitAktion;   // Migration: fehlt → nicht mit Aktion kombinierbar
   aktionen = structuredClone(Array.isArray(s.aktionen) ? s.aktionen : []);
   for (const a of aktionen) a.muster = akMusterNorm(a.muster);   // Migration: fehlt/unbekannt → [] (= alle Oberflächen)
@@ -1773,11 +1861,15 @@ async function saveSettings() {
     paypal: { enabled: $('#pp-enabled').checked, sandbox: $('#pp-sandbox').checked, clientId: $('#pp-id').value, secret: $('#pp-secret').value },
     mail: mailForm(),
     printing: { minutesEgg: +$('#p-min-egg').value || 75, gramsEgg: +$('#p-g-egg').value || 22, minutesVase: +$('#p-min-vase').value || 210, gramsVase: +$('#p-g-vase').value || 110 },
-    invoicePrefix: $('#c-prefix').value,
-    creditPrefix: $('#c-credit-prefix').value,
+    // Nummernkreise nur mitschicken, wenn das Feld wirklich geändert wurde: Der Server stellt das Präfix beim ersten Beleg eines
+    // neuen Jahres selbst um — ein vorher geladener Tab trüge sonst beim nächsten Speichern das alte Jahr zurück (doppelte Nummern)
+    ...($('#c-prefix').value.trim() !== String(DATA.settings.invoicePrefix || '') ? { invoicePrefix: $('#c-prefix').value } : {}),
+    ...($('#c-credit-prefix').value.trim() !== String(DATA.settings.creditPrefix || '') ? { creditPrefix: $('#c-credit-prefix').value } : {}),
     // Produktschalter (Vasen sind immer an, der Server kennt nur eierbecher): Eierbecher-Preise oben gehen auch bei „aus“ unverändert mit
     produkte: { eierbecher: $('#s-prod-eierbecher').checked },
     colors, coupons, aktionen,
+    // Guthaben-Codes löscht der Server nur, wenn sie hier stehen (fehlen sie bloß in coupons, bleiben sie — z. B. aus einem älteren Tab)
+    ...(couponsLoeschen.length ? { couponsLoeschen: [...couponsLoeschen] } : {}),
   };
   const produktWechsel = patch.produkte.eierbecher !== produktAn('eierbecher');
   if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
@@ -1786,11 +1878,18 @@ async function saveSettings() {
     const r = await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
     if (!r.ok) throw new Error(r.error || 'Speichern fehlgeschlagen');
     if (patch.adminKey) { localStorage.setItem('ovju-admin-key', patch.adminKey); $('#s-adminkey').value = ''; }
+    // Gutscheine: gespeicherter Stand des Servers (enthält auch Guthaben-Codes, die dieser Tab noch nicht kannte)
+    if (Array.isArray(r.coupons)) { coupons = structuredClone(r.coupons); for (const c of coupons) c.mitAktion = !!c.mitAktion; }
+    if (r.couponRest && typeof r.couponRest === 'object') DATA.couponRest = r.couponRest;
+    couponsLoeschen = [];
     DATA.settings = { ...DATA.settings, ...patch, colors: structuredClone(colors), coupons: structuredClone(coupons), aktionen: structuredClone(aktionen) };
+    delete DATA.settings.couponsLoeschen;
+    renderCoupons();
     setDirty(false);
     const run = akLaufende(aktionen);
     toast(run.length > 1 ? `Einstellungen gespeichert — ${run.length} Aktionen laufen jetzt im Shop (${run.map((a) => `„${a.name}“ −${a.prozent} % ${aktionScopeLabel(a)}`).join(', ')})`
       : run.length ? `Einstellungen gespeichert — Aktion „${run[0].name}“ (−${run[0].prozent} % ${aktionScopeLabel(run[0])}) läuft jetzt im Shop` : 'Einstellungen gespeichert — wirken sofort im Shop', 'ok');
+    if (r.hinweis) toast(r.hinweis, 'info', 7000);   // z. B. Präfix aus einem Tab von vor dem Jahreswechsel nicht übernommen
     if (produktWechsel) toast(patch.produkte.eierbecher ? 'Eierbecher sind jetzt im Shop bestellbar.' : 'Eierbecher sind im Shop ausgeblendet — Bestellungen und Designs bleiben erhalten.', 'info', 5000);
     applyProduktSchalter();
     renderDashAktion();

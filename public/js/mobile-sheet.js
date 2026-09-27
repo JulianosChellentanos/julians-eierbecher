@@ -114,7 +114,7 @@ export function openSheet(o) {
   $('.m-sheet-cta', sheet).textContent = o.cta || 'Gestalten ↓'; // Sprung zum Konfigurator auf derselben Seite: Richtungspfeil
   $('.m-sheet-trust', sheet).innerHTML = val(o.trust);
   $('.m-sheet-note', sheet).textContent = o.note || '';
-  $('.m-sheet-foot', sheet).textContent = o.foot || (useSvg ? 'Kein Foto — im Konfigurator siehst du dein Muster live in 3D.' : o.preview ? '3D-Vorschau aus dem Konfigurator-Modell · Live-Vorschau im Konfigurator' : o.ki ? 'KI-Inszenierung auf Basis des 3D-Modells · Live-Vorschau im Konfigurator' : 'Live-Vorschau im Konfigurator');
+  $('.m-sheet-foot', sheet).textContent = o.foot || (useSvg ? 'Kein Foto – im Konfigurator siehst du dein Muster live in 3D.' : o.preview ? '3D-Vorschau aus dem Konfigurator-Modell · Live-Vorschau im Konfigurator' : o.ki ? 'KI-Inszenierung auf Basis des 3D-Modells · Live-Vorschau im Konfigurator' : 'Live-Vorschau im Konfigurator');
   [...$('.m-sheet-scroll', sheet).children].forEach((el, i) => el.style.setProperty('--i', i));
   $('.m-sheet-scroll', sheet).scrollTop = 0;
   if (!open) { try { history.pushState({ mSheet: 1 }, ''); } catch { /* egal */ } }

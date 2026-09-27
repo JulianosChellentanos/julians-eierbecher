@@ -5,7 +5,7 @@
 // produkte { vase: true, eierbecher: bool } (Admin → System → „Eierbecher als Produkt anbieten“).
 // Solange die Preise nicht geladen sind oder das Feld fehlt, gilt: nur Vasen.
 
-export const EIERBECHER_HINWEIS = 'Eierbecher sind derzeit nicht bestellbar — vielleicht bald wieder.';
+export const EIERBECHER_HINWEIS = 'Eierbecher sind derzeit nicht bestellbar – vielleicht bald wieder.';
 
 /** Ist das Produkt gerade bestellbar? Vasen immer; alles andere nur mit ausdrücklichem true aus /api/pricing. */
 export function produktAktiv(id, pricing) {

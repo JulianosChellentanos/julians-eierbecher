@@ -22,7 +22,7 @@ import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } fro
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
 import { activateTab, initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
-import { aktionFor, aktionMuster, musterListLabel, aktionText, aktionTextKurz, onAktionEnde } from './pricing.js';
+import { aktionFor, aktionMuster, musterListLabel, aktionText, aktionTextKurz, onAktionEnde, referenzpreis, referenzText, aktionProzentGueltig, versandHTML, ustText } from './pricing.js';
 import { initAktionBar } from './aktion.js';
 
 // ---------------------------------------------------------------------------
@@ -134,14 +134,28 @@ function applyProduktSchalter() {
   }
 }
 
+/** HTML-sichere Attribut-Werte */
+const escAttr = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** Streichpreis nach § 11 PAngV: niedrigster Preis der letzten 30 Tage, gekennzeichnet per title/aria-label (enge Stellen) */
+function refStrikeHTML(ref, cls = 'uvp') {
+  const t = escAttr(referenzText(ref.tiefst));
+  return `<s class="${cls}" title="${t}" aria-label="${t}">${fmt(ref.tiefst)}</s>`;
+}
 /** „ab 24,90 €“ = günstigste Konfiguration (Muster „glatt“, keine Aufpreise) — gilt dafür eine Aktion: Aktionspreis in
- *  Akzentfarbe + durchgestrichener UVP (gleiche Rechnung wie pricing.js); eine Aktion nur auf Gehämmert ändert das „ab“ nicht */
-function abPriceHTML(product) {
+ *  Akzentfarbe; ohne Bezugspreis nur der Aktionspreis. Eine Aktion nur auf Gehämmert ändert das „ab“ nicht.
+ *  zeile = true (Produktkarten): dazu der durchgestrichene 30-Tage-Tiefstpreis (referenzpreis in pricing.js) mit SICHTBARER
+ *  Kennzeichnung als kleine Zeile darunter und der Versandhinweis. Ohne zeile (Hero-Hinweis, Produkt-Tabs) kein Streichpreis:
+ *  dort wäre er nur per title gekennzeichnet — auf Touch-Geräten unsichtbar (§ 11 PAngV) */
+function abPriceHTML(product, zeile = false) {
   const single = getPricing()?.products?.[product]?.single;
   if (single == null) return '';
-  const a = aktionFor(product, 'glatt');
-  if (!a) return `ab ${fmt(single)}`;
-  return `ab <span class="aktion-price">${fmt(unitPrice({ product, config: { pattern: 'glatt' } }))}</span> <s class="uvp">${fmt(single)}</s>`;
+  const item = { product, config: { pattern: 'glatt' } };
+  const ship = zeile ? `<small class="ship-zeile">${versandHTML({ kurz: true })}</small>` : '';
+  if (!aktionFor(product, 'glatt')) return `ab ${fmt(single)}${ship}`;
+  const ref = referenzpreis(item);
+  if (!ref) return `ab ${fmt(unitPrice(item))}${ship}`;
+  if (!zeile) return `ab <span class="aktion-price">${fmt(unitPrice(item))}</span>`;
+  return `ab <span class="aktion-price">${fmt(unitPrice(item))}</span> ${refStrikeHTML(ref)}<small class="ref-zeile">${referenzText(ref.tiefst)}</small>${ship}`;
 }
 /**
  * Bessere Aktion mit einem anderen Muster dieses Produkts (Punkt 8c): aktuelle Konfiguration nicht (oder geringer)
@@ -164,7 +178,8 @@ function renderHeroHint() {
   try {
     const parts = [`Vasen ${abPriceHTML('vase')}`];
     if (eierbecherAktiv()) parts.push(`Eierbecher ${abPriceHTML('eierbecher')}`); // nur, wenn der Server das Produkt anbietet
-    el.innerHTML = `<span>${parts.join(' · ')}<span class="hh-stl"> · STL-Download für deinen eigenen Drucker inklusive</span></span>`;
+    // Versandhinweis direkt hinter den ab-Preisen (§ 6 PAngV); mobil spiegelt mobile-home.js nur die Preise (ohne .hh-versand/.hh-stl)
+    el.innerHTML = `<span>${parts.join(' · ')}<span class="hh-versand"> ${versandHTML({ kurz: true })}</span><span class="hh-stl"> · STL-Download für deinen eigenen Drucker inklusive</span></span>`;
   } catch { /* Preise noch nicht geladen */ }
 }
 // Live-Preis der gezeigten Form („wie gezeigt 29,88 €“) im Knopf der Formenwelt – nur auf dem Handy sichtbar (CSS); gleiche Rechnung wie Warenkorb/Server.
@@ -184,7 +199,7 @@ function renderHeroUsePrice() {
 function renderProductPrices() {
   if (!getPricing()) return;
   $$('.product-tab[data-product] small').forEach((el) => { el.innerHTML = abPriceHTML(el.closest('.product-tab').dataset.product); });
-  $$('.showcase-price[data-product]').forEach((el) => { el.innerHTML = abPriceHTML(el.dataset.product); });
+  $$('.showcase-price[data-product]').forEach((el) => { el.innerHTML = abPriceHTML(el.dataset.product, true); });
 }
 function renderPrices() {
   renderHeroHint();
@@ -195,9 +210,11 @@ function renderPrices() {
   // currentConfig() leert den Text, wenn die Gravur per Regel deaktiviert ist → dann auch kein Gravur-Aufpreis.
   const item = { product: state.product, saucer: state.saucer, config: currentConfig(), color: state.color, colorName: state.colorName };
   const q = unitParts(item);
-  const total = q.unit; // = unitPrice(item): während einer Aktion der reduzierte Stückpreis, q.uvp = Preis ohne Aktion
-  // Aktion je Konfiguration (Produkt + Muster): Streichpreis/Badge nur, wenn genau diese Konfiguration rabattiert ist
+  const total = q.unit; // = unitPrice(item): während einer Aktion der reduzierte Stückpreis
+  // Aktion je Konfiguration (Produkt + Muster): Streichpreis/Badge nur, wenn genau diese Konfiguration rabattiert ist — und nur
+  // gegenüber dem niedrigsten Preis der letzten 30 Tage (§ 11 PAngV, referenzpreis); ohne Bezugspreis nur der aktuelle Preis
   const aktion = q.aktionProzent > 0 ? aktionFor(state.product, state.pattern) : null;
+  const ref = aktion ? referenzpreis(item) : null;
   const labels = [
     q.muster > 0 ? `${fmt(q.muster)} ${PATTERNS[state.pattern] || 'Muster'}` : '',
     q.gravur > 0 ? `${fmt(q.gravur)} Gravur` : '',
@@ -208,26 +225,41 @@ function renderPrices() {
   ].filter(Boolean);
   animateMoney($('#price'), total, fmt);
   animateMoney($('#mb-price'), total, fmt);
-  // Aktion: Aktionspreis in Akzentfarbe, UVP durchgestrichen daneben, Badge „−16 %“, Zeile „Aktionspreis · endet in …“
-  $('#price').classList.toggle('aktion', !!aktion);
-  $('#mb-price').classList.toggle('aktion', !!aktion);
-  const uvpEl = $('#price-uvp'), pBadge = $('#price-badge'), aLine = $('#price-aktion'), mbUvp = $('#mb-uvp');
-  if (aktion) {
-    uvpEl.textContent = fmt(q.uvp);
-    mbUvp.textContent = fmt(q.uvp);
-    pBadge.textContent = `−${aktion.prozent} %`;
+  // Versand (und bei Kleinunternehmern die USt.) direkt am Preis, vor „In den Warenkorb“ (§ 6 PAngV) — lang im Konfigurator,
+  // kurz „zzgl. Versand“ in der Handy-Leiste (der Link führt zu den Beträgen)
+  const shipEl = $('#price-ship'), mbShip = $('#mb-ship'), ust = ustText();
+  const shipHTML = [ust, versandHTML()].filter(Boolean).join(' · ');
+  if (shipEl && shipEl.innerHTML !== shipHTML) shipEl.innerHTML = shipHTML;
+  const mbShipHTML = versandHTML({ kurz: true });
+  if (mbShip && mbShip.innerHTML !== mbShipHTML) mbShip.innerHTML = mbShipHTML;
+  // Aktion mit Bezugspreis: Aktionspreis in Akzentfarbe, 30-Tage-Tiefstpreis durchgestrichen daneben, Badge „−16 %“ (bezogen
+  // auf den Tiefstpreis), Zeile „Aktionspreis · endet in …“ und darunter die Kennzeichnung „Niedrigster Preis der letzten 30 Tage: …“
+  $('#price').classList.toggle('aktion', !!ref);
+  $('#mb-price').classList.toggle('aktion', !!ref);
+  const uvpEl = $('#price-uvp'), pBadge = $('#price-badge'), aLine = $('#price-aktion'), mbUvp = $('#mb-uvp'), refEl = $('#price-ref'), mbRef = $('#mb-ref');
+  if (ref) {
+    const t = referenzText(ref.tiefst);
+    for (const el of [uvpEl, mbUvp]) { el.textContent = fmt(ref.tiefst); el.title = t; el.setAttribute('aria-label', t); }
+    pBadge.textContent = `−${ref.prozent}\u00a0%`;
+    pBadge.title = `−${ref.prozent} % gegenüber dem niedrigsten Preis der letzten 30 Tage`;
     aLine.innerHTML = `🔥 Aktionspreis · <span class="aktion-countdown" data-aktion-id="${aktion.id}">${aktionText(aktion)}</span>`;
+    for (const el of [refEl, mbRef]) if (el) el.textContent = t;   // Konfigurator-Preisbereich (Desktop) und Mobile-Leiste
   }
-  uvpEl.hidden = pBadge.hidden = aLine.hidden = mbUvp.hidden = !aktion;
+  uvpEl.hidden = pBadge.hidden = aLine.hidden = mbUvp.hidden = !ref;
+  for (const el of [refEl, mbRef]) if (el) el.hidden = !ref;
   // Hinweis-Knopf „🔥 −30 % auf Gehämmert · endet in 2 Tage“: eine laufende Aktion greift (besser) mit einem anderen
-  // Muster dieses Produkts — Klick schaltet das Muster um (pattern-btn-Klick: Standardtiefe, Rebuild, Preis)
-  const alt = aktionAlternative(state.product, state.pattern, aktion ? aktion.prozent : 0);
+  // Muster dieses Produkts — Klick schaltet das Muster um (pattern-btn-Klick: Standardtiefe, Rebuild, Preis).
+  // Die Prozentzahl bezieht sich auf den 30-Tage-Tiefstpreis genau dieser Konfiguration mit dem anderen Muster; hat sie keinen
+  // Bezugspreis (Preis nicht unter dem Tiefstpreis), entfällt der Hinweis.
+  let alt = aktionAlternative(state.product, state.pattern, aktion ? aktion.prozent : 0);
+  const altRef = alt ? referenzpreis({ ...item, config: { ...item.config, pattern: alt.pattern } }) : null;
+  if (!altRef || (ref && altRef.prozent <= ref.prozent)) alt = null;
   const hint = $('#price-aktion-hint');
   if (hint) {
     if (alt) {
       hint.dataset.pattern = alt.pattern;
-      hint.innerHTML = `🔥 −${alt.aktion.prozent} % auf ${musterListLabel(alt.keys, 'oder')} · <span class="aktion-countdown" data-aktion-id="${alt.aktion.id}">${aktionText(alt.aktion)}</span>`;
-      hint.title = `${alt.aktion.name}: auf ${PATTERNS[alt.pattern]} umschalten`;
+      hint.innerHTML = `🔥 −${altRef.prozent}\u00a0% auf ${musterListLabel(alt.keys, 'oder')} · <span class="aktion-countdown" data-aktion-id="${alt.aktion.id}">${aktionText(alt.aktion)}</span>`;
+      hint.title = `${alt.aktion.name}: auf ${PATTERNS[alt.pattern]} umschalten – ${referenzText(altRef.tiefst)}`;
     }
     hint.hidden = !alt;
   }
@@ -237,8 +269,8 @@ function renderPrices() {
   // Ohne Aktion, aber mit besserer Aktion für ein anderes Muster: kurzer Hinweis „🔥 −30 % auf Gehämmert“ (Tipp schaltet um).
   const surSum = Math.round((q.muster + q.gravur + q.farbschrift + q.farbe + q.untersetzer + q.groesse) * 100) / 100;
   const narrow = window.innerWidth <= 430 && labels.length > 1;
-  if (aktion) $('#mb-sub').innerHTML = `<span class="aktion-badge">−${aktion.prozent} %</span> <span class="aktion-countdown" data-kurz data-aktion-id="${aktion.id}">${aktionTextKurz(aktion)}</span>`;
-  else if (alt) $('#mb-sub').innerHTML = `<button type="button" class="mb-aktion-hint" data-pattern="${alt.pattern}">🔥 −${alt.aktion.prozent} % auf ${musterListLabel(alt.keys, 'oder')}</button>`;
+  if (ref) $('#mb-sub').innerHTML = `<span class="aktion-badge" title="${escAttr(referenzText(ref.tiefst))}">−${ref.prozent}\u00a0%</span> <span class="aktion-countdown" data-kurz data-aktion-id="${aktion.id}">${aktionTextKurz(aktion)}</span>`;
+  else if (alt) $('#mb-sub').innerHTML = `<button type="button" class="mb-aktion-hint" data-pattern="${alt.pattern}" title="${escAttr(referenzText(altRef.tiefst))}">🔥 −${altRef.prozent}\u00a0% auf ${musterListLabel(alt.keys, 'oder')}</button>`;
   else setMobilePrice(undefined, labels.length ? (narrow ? `inkl. ${fmt(surSum)} Aufpreise` : `inkl. ${labels.join(' · ')}`) : 'pro Stück');
   // Mengenrabatt-Teaser — entfällt während einer Aktion ohne „Mengenrabatt zusätzlich“
   $('#price-hint').textContent = aktion && !aktion.mengenrabatt ? 'Während der Aktion kein zusätzlicher Mengenrabatt' : discountTeaser(state.product);
@@ -256,7 +288,7 @@ function setColor({ id, hex, name, finish }) {
   const sur = colorSurcharge(id, name);
   const surTxt = sur > 0 ? ` · ${fmtPlus(sur)}` : '';
   $('#color-name').textContent = (f === 'matt' ? name : `${name} · ${FINISH_LABEL[f]}`) + surTxt;
-  const fn = $('#farbe-name'); if (fn) fn.textContent = `— ${name} · ${FINISH_LABEL[f]}${surTxt}`;
+  const fn = $('#farbe-name'); if (fn) fn.textContent = `– ${name} · ${FINISH_LABEL[f]}${surTxt}`;
   material.color.set(hex);
   Object.assign(material, FINISH_PROPS[f] || FINISH_PROPS.matt);
   material.needsUpdate = true;
@@ -270,7 +302,7 @@ function setTextColor(id, silent = false) {
   if (!c) return;
   state.textColor = c.id;
   $$('#text-swatches .swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === c.id));
-  $('#text-color-name').textContent = `— ${c.name}`;
+  $('#text-color-name').textContent = `– ${c.name}`;
   inlayMaterial.color.set(c.hex);
   Object.assign(inlayMaterial, FINISH_PROPS[c.finish || 'matt'] || FINISH_PROPS.matt);
   inlayMaterial.needsUpdate = true;
@@ -555,29 +587,29 @@ function updatePrintBadge(geometry, info) {
   const { worst, frac55 } = overhangStats(geometry);
   let cls, txt, tip;
   if (sil > 62) {
-    cls = 'p-bad'; txt = '🔶 Form kragt stark aus — Silhouette flacher ziehen';
-    tip = `Die Grundform hängt bis ${sil.toFixed(0)}° über — im Formen-Editor sanftere Übergänge wählen.`;
+    cls = 'p-bad'; txt = '🔶 Form kragt stark aus – Silhouette flacher ziehen';
+    tip = `Die Grundform hängt bis ${sil.toFixed(0)}° über – im Formen-Editor sanftere Übergänge wählen.`;
   } else if (info.openCells) {
-    cls = 'p-warn'; txt = 'ℹ️ Offene Zellen — Brücken im Slicer prüfen';
+    cls = 'p-warn'; txt = 'ℹ️ Offene Zellen – Brücken im Slicer prüfen';
     tip = 'Voronoi hat echte Durchbrüche. Brücken und Stützen vor dem Druck im Slicer prüfen. Für Trockenblumen oder mit passendem Einsatz.';
   } else if (sil > 50) {
-    cls = 'p-warn'; txt = '⚠️ Ausladende Form — ich drucke mit extra Kühlung';
-    tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung — druckt mit feinen Schichten sauber.`;
+    cls = 'p-warn'; txt = '⚠️ Ausladende Form – ich drucke mit extra Kühlung';
+    tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung – druckt mit feinen Schichten sauber.`;
   } else if (state.depth > 2.5 && worst > 65 && frac55 > 0.08) {
-    cls = 'p-bad'; txt = '🔶 Tiefe Struktur zu schräg — Drall reduzieren';
+    cls = 'p-bad'; txt = '🔶 Tiefe Struktur zu schräg – Drall reduzieren';
     tip = `Bei ${state.depth.toFixed(1)} mm Mustertiefe sind ${worst.toFixed(0)}°-Flanken echte Überhänge.`;
   } else if (worst > 75 && frac55 > 0.15) {
-    cls = 'p-warn'; txt = '⚠️ Markante Struktur — druckt mit extra Kühlung';
-    tip = 'Steile Muster-Flanken (selbsttragende Mikro-Struktur) — feine Schichten empfohlen.';
+    cls = 'p-warn'; txt = '⚠️ Markante Struktur – druckt mit extra Kühlung';
+    tip = 'Steile Muster-Flanken (selbsttragende Mikro-Struktur) – feine Schichten empfohlen.';
   } else {
     cls = 'p-ok'; txt = '✅ Druckbar ohne Stützen';
-    tip = `Silhouette max. ${sil.toFixed(0)}° — problemlos.`;
+    tip = `Silhouette max. ${sil.toFixed(0)}° – problemlos.`;
   }
   el.className = 'stage-print ' + cls;
   // Mobile: Kurzform, Langtext als Tooltip
   const short = { 'p-ok': '✅ Druckbar', 'p-warn': '⚠️ Steil', 'p-bad': '🔶 Zu steil' }[cls];
   el.textContent = IS_SMALL ? (info.openCells && cls === 'p-warn' ? 'ℹ️ Offene Zellen' : short) : txt;
-  el.title = IS_SMALL ? `${txt} — ${tip}` : tip;
+  el.title = IS_SMALL ? `${txt} – ${tip}` : tip;
 }
 
 let saucerMesh = null;
@@ -683,7 +715,7 @@ async function rebuildText() {
   // Download-Button: Farbschrift liefert ein 3MF mit zwei Teilen statt STL
   const is3mf = !!txt && !ti.disabled && exportExt(currentConfig()) === '3mf';
   $('#btn-download').textContent = is3mf ? '⬇ 3MF' : '⬇ STL';
-  $('#btn-download').title = is3mf ? '3MF mit zwei Teilen (Körper + Schrift) — Bambu Studio ordnet die Filamente automatisch zu' : 'STL-Datei herunterladen — druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer & Co.';
+  $('#btn-download').title = is3mf ? '3MF mit zwei Teilen (Körper + Schrift) – Bambu Studio ordnet die Filamente automatisch zu' : 'STL-Datei herunterladen – druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer & Co.';
   // Preis immer nachziehen: Gravur/Farbschrift/Muster/Untersetzer hängen am (Neu-)Aufbau — auch wenn der Text gerade gelöscht wurde
   renderPrices();
   if (!txt || !currentInfo) return;
@@ -712,7 +744,7 @@ function updateTextMeta() {
   const count = $('#text-count');
   const ti = (currentInfo && currentInfo.text) || {};
   const over = !!state.text.trim() && !!ti.disabled && !!ti.maxChars;
-  count.textContent = over ? `${n}/${max} — zu lang, hier max. ca. ${ti.maxChars}` : `${n}/${max}`;
+  count.textContent = over ? `${n}/${max} – zu lang, hier max. ca. ${ti.maxChars}` : `${n}/${max}`;
   count.classList.toggle('over', over);
   count.classList.toggle('near', !over && n >= max - 4);
   const wraps = !!state.text.trim() && !ti.disabled && (ti.arcDeg || 0) > (FRONT_TEXT_ARC * 180) / Math.PI + 0.5;
@@ -968,7 +1000,8 @@ function renderStyleRow() {
 
 /** Muster-Aufpreise als kleine Badges an den Musterknöpfen (Beträge aus /api/pricing, erst nach dem Laden) — dazu links
  *  oben ein Aktions-Badge „−30 %“ für jede Oberfläche, die eine laufende Aktion NUR für bestimmte Muster erfasst
- *  (gilt sie für alle Oberflächen, reicht das Banner). Hängt vom Produkt ab → auch nach setProduct() aufrufen. */
+ *  (gilt sie für alle Oberflächen, reicht das Banner). Die Zahl steht nur, wenn sie für den ganzen Geltungsbereich gegenüber
+ *  dem 30-Tage-Tiefstpreis stimmt (aktionProzentGueltig, § 11 PAngV). Hängt vom Produkt ab → auch nach setProduct() aufrufen. */
 function renderPatternBadges() {
   $$('.pattern-btn[data-pattern]').forEach((b) => {
     b.querySelector('.sur')?.remove();
@@ -976,9 +1009,9 @@ function renderPatternBadges() {
     const sur = patternSurcharge(b.dataset.pattern);
     if (sur > 0) { const s = document.createElement('span'); s.className = 'sur'; s.textContent = fmtPlus(sur); b.appendChild(s); }
     const a = aktionFor(state.product, b.dataset.pattern);
-    if (a && aktionMuster(a).length) {
-      const s = document.createElement('span'); s.className = 'aktion-sur'; s.textContent = `−${a.prozent} %`;
-      s.title = `${a.name}: −${a.prozent} % auf ${PATTERNS[b.dataset.pattern]}`;
+    if (a && aktionMuster(a).length && aktionProzentGueltig(a)) {
+      const s = document.createElement('span'); s.className = 'aktion-sur'; s.textContent = `−${a.prozent}\u00a0%`;
+      s.title = `${a.name}: −${a.prozent} % auf ${PATTERNS[b.dataset.pattern]} gegenüber dem niedrigsten Preis der letzten 30 Tage`;
       b.appendChild(s);
     }
   });
@@ -988,7 +1021,7 @@ function switchToAktionPattern(pattern) {
   const btn = $(`.pattern-btn[data-pattern="${pattern}"]`);
   if (!btn || state.pattern === pattern) return;
   btn.click(); // setzt Muster, Standardtiefe, Rebuild und Preis wie ein Klick im Muster-Tab
-  if (IS_MOBILE) showToast(`${PATTERNS[pattern]} gewählt — Aktionspreis aktiv`);
+  if (IS_MOBILE) showToast(`${PATTERNS[pattern]} gewählt – Aktionspreis aktiv`);
 }
 
 function initControls() {
@@ -1074,7 +1107,7 @@ function initControls() {
     const cfg = currentConfig();
     const ex = await makeExport(cfg);
     downloadSTL(ex.buffer, stlFilename(ex.ext), ex.mime);
-    if (ex.ext === '3mf') showToast('🎨 3MF mit zwei Teilen — in Bambu Studio öffnen, Filamente sind zugeordnet');
+    if (ex.ext === '3mf') showToast('🎨 3MF mit zwei Teilen – in Bambu Studio öffnen, Filamente sind zugeordnet');
   });
 
   // In den Warenkorb (mit Live-Vorschaubild)
@@ -1089,7 +1122,7 @@ function initControls() {
       thumb: captureThumb(),
     });
     bumpCart();
-    if (IS_MOBILE) showToast('✓ Im Warenkorb — weiter gestalten oder zur Kasse');
+    if (IS_MOBILE) showToast('✓ Im Warenkorb – weiter gestalten oder zur Kasse');
   });
 
   // Szenen-Chips + Foto-Shooting
@@ -1101,7 +1134,7 @@ function initControls() {
   $('#foto-close').addEventListener('click', () => $('#foto-modal').close());
 
   // Gravur als aktivierbares Extra (Preis kommt aus dem Admin)
-  $('#gravur-price').textContent = `+ ${fmt(getPricing().gravur ?? 3)}`;
+  $('#gravur-price').textContent = fmtPlus(getPricing().gravur ?? 3);
   $('#c-gravur').addEventListener('change', (e) => {
     $('#gravur-options').hidden = !e.target.checked;
     if (!e.target.checked) {
@@ -1114,7 +1147,7 @@ function initControls() {
   });
 
   // Untersetzer
-  $('#saucer-price').textContent = `+ ${fmt(getPricing().products.eierbecher?.untersetzer ?? 0)}`;
+  $('#saucer-price').textContent = fmtPlus(getPricing().products.eierbecher?.untersetzer ?? 0);
   $('#c-saucer').addEventListener('change', (e) => {
     state.saucer = e.target.checked;
     userInteracted = false; // neu einrahmen (Untersetzer ist breiter)
@@ -1393,11 +1426,12 @@ async function renderShowcase() {
       <div class="showcase-body">
         <h3>${d.c.title}</h3>
         <p>${d.c.text}</p>
-        <div class="showcase-cta"><span class="showcase-price" data-product="${d.id}">${abPriceHTML(d.id)}</span>
+        <div class="showcase-cta"><span class="showcase-price" data-product="${d.id}">${abPriceHTML(d.id, true)}</span>
         <button class="btn btn-primary">${d.c.cta}</button></div>
       </div>
     </div>`).join('');
-  $$('.showcase-card').forEach((card) => card.addEventListener('click', () => {
+  $$('.showcase-card').forEach((card) => card.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;   // Link „Versand“ in der Preiszeile öffnet nur die Versandseite
     setProduct(card.dataset.product);
     $('#konfigurator').scrollIntoView({ behavior: 'smooth' });
   }));

@@ -6,7 +6,7 @@
 // #hero-hint (Preisfeed), #mb-price (Live-Preis), Body-Klassen has-mbar / no-scroll der App-Shell (mobile.js).
 import { STUDIO_DESIGNS, designConfig, designImage } from './studio-designs.js';
 import { buzz } from './mobile.js';
-import { unitPrice, unitUvp, aktionFor, onAktionEnde, getPricing, fmt, colorByRef, aktionenActive, aktionTextKurz } from './pricing.js';
+import { unitPrice, aktionFor, onAktionEnde, getPricing, fmt, colorByRef, aktionenActive, aktionTextKurz, referenzpreis, referenzText, aktionProzentGueltig, euroKurz, versandText, versandHTML, ustText } from './pricing.js';
 import { openSheet, isSheetOpen, sheetElement } from './mobile-sheet.js';
 import { MOBILE_PATTERNS, patternConfig, patternByKey } from './mobile-patterns.js';
 import { renderPreviewsOffscreen } from './mobile-preview.js';
@@ -24,7 +24,7 @@ const FORM_TEXT = {
   twist: 'Die klassische Flasche, um die sich 64 feine Rippen drehen. Ruhig von vorn, lebendig beim Drehen.',
   orbit: 'Eine runde Kugel mit sanften Wellen. Klein, freundlich, überall zuhause.',
   flow: 'Geschwungene Silhouette mit tiefen Lamellen. Licht und Schatten machen den Rest.',
-  drop: 'Unten weit, oben schmal — der Tropfen mit spiralig gedrehten Rippen.',
+  drop: 'Unten weit, oben schmal – der Tropfen mit spiralig gedrehten Rippen.',
   column: 'Ein gerader Zylinder mit scharfen Facetten. Architektonisch und klar.',
   own: 'Zieh deine eigene Linie: Im Konfigurator setzt du jeden Punkt der Silhouette selbst.',
 };
@@ -33,7 +33,7 @@ const FORM_TEXT = {
 const LZ = '<span data-lieferzeit>5–8 Werktage</span>';
 const KURZ = {
   // Die Vertrauenskarte (#usps) entfällt mobil — sie wiederholte die Trust-Zeile des Heros; „matt bis metallic“ lebt jetzt in Schritt 1
-  steps: ['Form, Struktur und Farbe von matt bis metallic — live in 3D, auf Wunsch mit Gravur.', 'Speichern oder direkt in den Warenkorb.', `Schicht für Schicht gedruckt. Lieferzeit: ${LZ}. Transportschaden? Ich drucke gratis neu.`], // Material steht schon im Hero; das Neudruck-Versprechen (FAQ) steht hier sichtbar statt nur im zugeklappten FAQ
+  steps: ['Form, Struktur und Farbe von matt bis metallic – live in 3D, auf Wunsch mit Gravur.', 'Speichern oder direkt in den Warenkorb.', `Schicht für Schicht gedruckt. Lieferzeit: ${LZ}. Transportschaden? Ich drucke gratis neu.`], // Material steht schon im Hero; das Neudruck-Versprechen (FAQ) steht hier sichtbar statt nur im zugeklappten FAQ
   galerie: 'Unikate aus dem Konfigurator, zuhause in Szene gesetzt.',
   subKurz: 'Deine Vase selbst gestalten – Form, Muster, Farbe und Gravur. In 3D gedruckt, zu dir geliefert.', // kurze Displays: ein Satz, nie abgeschnitten
 };
@@ -42,6 +42,9 @@ const KURZ = {
 const SVG = (d) => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${d}</svg>`;
 const ICON = {
   leaf: SVG('<path d="M5 19c0-8.5 5-13.5 14-14-.5 9-5.5 14-14 14z"/><path d="M5 19c3.5-4.5 6.5-7.5 10-9.5"/>'),
+  // Druckschichten (Material-Angabe, neutral — kein Blatt/Keimling, das läse sich als Umweltaussage)
+  layers: SVG('<path d="M4 7.5 12 4l8 3.5-8 3.5z"/><path d="m4 12 8 3.5 8-3.5"/><path d="m4 16.5 8 3.5 8-3.5"/>'),
+  temp: SVG('<path d="M10 13.6V5.5a2 2 0 0 1 4 0v8.1a4 4 0 1 1-4 0z"/><path d="M12 9v7.2"/>'),
   printer: SVG('<path d="M7 9V4h10v5"/><rect x="3.5" y="9" width="17" height="8" rx="1.5"/><path d="M7 14h10v6H7z"/><path d="M17 12h.5"/>'),
   box: SVG('<path d="M3.5 8 12 4l8.5 4L12 12z"/><path d="M3.5 8v8l8.5 4 8.5-4V8"/><path d="M12 12v8"/>'),
   sliders: SVG('<path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="15.5" cy="7" r="2.2"/><circle cx="9.5" cy="17" r="2.2"/>'),
@@ -65,7 +68,7 @@ const ICON = {
 };
 /** Emoji (inkl. Variationszeichen) am Textanfang — wird durch ein Linien-Icon ersetzt */
 const EMOJI_START = /^\s*(?:\p{Extended_Pictographic}|[✓✔])\uFE0F?\s*/u;
-const EMOJI_ICON = { '✅': 'check', '✓': 'check', '✔': 'check', '⚠': 'alert', '🔶': 'alert', 'ℹ': 'info', '☝': 'rotate', '🌙': 'moon', '☀': 'sun', '👤': 'user', '📋': 'list', '🛒': 'cart', '🔥': 'tag', '🌱': 'leaf', '🌾': 'drop', '⚖': 'info', '🔖': 'bookmark', '⬇': 'download',
+const EMOJI_ICON = { '✅': 'check', '✓': 'check', '✔': 'check', '⚠': 'alert', '🔶': 'alert', 'ℹ': 'info', '☝': 'rotate', '🌙': 'moon', '☀': 'sun', '👤': 'user', '📋': 'list', '🛒': 'cart', '🔥': 'tag', '🌱': 'leaf', '🧵': 'layers', '🌡': 'temp', '🌾': 'drop', '⚖': 'info', '🔖': 'bookmark', '⬇': 'download',
   '🗑': 'trash', '🎨': 'pen', '🔨': 'pen', '🪙': 'pen', '✒': 'pen', '🎟': 'tag', '🍽': 'box' };
 const iconFor = (emoji) => ICON[EMOJI_ICON[emoji.replace(/\uFE0F/g, '').trim()]] || null;
 /**
@@ -85,7 +88,9 @@ function iconize(el, fallback = null, force = null) {
   };
   run(); new MutationObserver(run).observe(el, { childList: true, characterData: true, subtree: true });
 }
-const TRUST = [[ICON.leaf, 'Pflanzen-PLA'], [ICON.printer, 'Aus Deutschland'], [ICON.box, LZ]];
+// Vertrauensband: reine Materialangabe mit neutralem Symbol (kein Blatt: „Pflanzen-PLA“ mit Keimling wäre eine Umweltaussage ohne
+// Erläuterung — RL (EU) 2024/825, UWG Anhang Nr. 4a); was PLA ist, steht im FAQ „Woraus bestehen die Vasen …“
+const TRUST = [[ICON.layers, 'Material: PLA'], [ICON.printer, 'Aus Deutschland'], [ICON.box, LZ]];
 // Reihenfolge der Bühne: Start = Hammerschlag (Signatur, grobe Geometrie → kein Moiré im allerersten Bild; Nachbarn Freiform und Voronoi,
 // nicht Fjordwelle), dann Orbit, Twist erst an Position 3, danach Formen und Muster im Wechsel. Erster Wechsel nach 5 s, danach alle 8 s.
 const ORDER = [6, 1, 0, 7, 2, 8, 3, 4, 5];
@@ -169,32 +174,35 @@ function crossfade(imgA, imgB, src, alt) {
 // Preise (exakt wie app.js renderHeroUsePrice: unitPrice({product:'vase',saucer:false,config,color}))
 // ---------------------------------------------------------------------------
 const colorLabel = (id) => { try { const c = colorByRef(id); if (c && c.name) return c.name; } catch { /* Farben noch nicht geladen */ } return id ? id[0].toUpperCase() + id.slice(1) : ''; };
-/** „ab 21,17 €“ ohne Streichpreis (Pille, Inline-CTA): der Streichpreis steht nur in der Hero-Preiszeile */
+/** „ab 21,17 €“ ohne Streichpreis (Pille, Inline-CTA) */
 const heroFromHTML = () => heroPriceHTML.replace(/\s*<s\b[^>]*>.*?<\/s>/g, '').trim();
-/** Preis der gezeigten Variante (genau der, den der Sheet-CTA übernimmt) — null, solange die Preise fehlen */
+/** Versandhinweis in Knöpfen (Pille, Inline-CTA): reiner Text — ein Link im <button> wäre ungültig; der Betrag steht in den Sheets,
+ *  in der Hero-Preiszeile ist „Versand“ verlinkt */
+const CTA_VERSAND = () => (getPricing() ? ` <small class="m-cta-ship">${esc(versandText().startsWith('zzgl.') ? 'zzgl. Versand' : versandText())}</small>` : '');
+/**
+ * Preis der gezeigten Variante (genau der, den der Sheet-CTA übernimmt) — null, solange die Preise fehlen.
+ * ref = Bezugspreis nach § 11 PAngV ({ tiefst, prozent } = niedrigster Preis der letzten 30 Tage) oder null → kein Streichpreis
+ */
 function shownPrice(cfg) {
   if (!getPricing()) return null;
   try {
     const item = { product: 'vase', saucer: false, config: cfg, color: cfg.color };
     const unit = unitPrice(item); if (!unit) return null;
-    const uvp = unitUvp(item), a = aktionFor('vase', cfg.pattern);
-    return { unit, uvp, a: a && uvp > unit + .004 ? a : null };
+    return { unit, ref: aktionFor('vase', cfg.pattern) ? referenzpreis(item) : null };
   } catch { return null; }
 }
-/** EINE Preiszeile im Sheet: „So wie gezeigt  25,40 €  29,88 €  −15 %“ (Größe/Farbe stehen einmal in der Meta-Zeile darüber) */
+/** Durchgestrichener 30-Tage-Tiefstpreis mit title/aria-label — nur neben der sichtbaren Kennzeichnung (.m-ref im Sheet) */
+const refStrike = (ref) => { const t = esc(referenzText(ref.tiefst)); return `<s title="${t}" aria-label="${t}">${fmt(ref.tiefst)}</s>`; };
+/** EINE Preiszeile im Sheet: „So wie gezeigt  25,40 €  29,88 €  −15 %“ (Größe/Farbe stehen einmal in der Meta-Zeile darüber),
+ *  bei Streichpreis darunter klein „Niedrigster Preis der letzten 30 Tage: 29,88 €“ */
 function priceHTML(cfg) {
   const p = shownPrice(cfg); if (!p) return '';
-  return `<small>So wie gezeigt</small> <b${p.a ? ' class="aktion-price"' : ''}>${fmt(p.unit)}</b>${p.a ? ` <s>${fmt(p.uvp)}</s> <span class="m-badge">−${p.a.prozent} %</span>` : ''}`;
+  return `<small>So wie gezeigt</small> <b${p.ref ? ' class="aktion-price"' : ''}>${fmt(p.unit)}</b>` +
+    (p.ref ? ` ${refStrike(p.ref)} <span class="m-badge">−${p.ref.prozent}\u00a0%</span><span class="m-ref">${esc(referenzText(p.ref.tiefst))}</span>` : '');
 }
-/** Euro kurz: ganze Beträge ohne Nachkommastellen („ab 39 € versandfrei“), sonst wie überall („4,90 €“) */
-const euro = (v) => (Number.isInteger(+v) ? `${+v}\u00a0€` : fmt(v)); // geschütztes Leerzeichen wie fmt()
-/** Versandzeile aus settings.pricing.shipping (nur gelesen): „zzgl. 4,90 € Versand · ab 39 € versandfrei“ — PAngV: Preis zzgl. Versand */
-function shippingText() {
-  const sh = getPricing()?.shipping; if (!sh || !(+sh.flat > 0)) return getPricing() ? 'Versandkostenfrei' : '';
-  return `zzgl. ${euro(sh.flat)} Versand${+sh.freeFrom > 0 ? ` · ab ${euro(sh.freeFrom)} versandfrei` : ''}`;
-}
-/** Graue Mikrozeile unter dem Preis: Versandkosten (statt des Fachbegriffs „STL-Download“, der steht jetzt im FAQ) */
-function factsText() { return shippingText(); }
+/** Graue Mikrozeile unter dem Preis: Versandkosten (PAngV: Preis zzgl. Versand, gleicher Wortlaut wie im Konfigurator — pricing.js
+ *  versandText) und bei Kleinunternehmern der USt.-Hinweis; statt des Fachbegriffs „STL-Download“, der steht jetzt im FAQ */
+function factsText() { return [ustText(), versandText()].filter(Boolean).join(' · '); }
 /**
  * Mengenrabatt aus settings.pricing.vase.discounts: „2 Vasen −10 % · 3 Vasen −15 %“ — nur, wenn er für die gezeigte Vase auch gilt
  * (eine laufende Aktion ohne „Mengenrabatt zusätzlich“ ersetzt ihn im Warenkorb, linePrice in pricing.js; dann keine Zeile)
@@ -202,7 +210,7 @@ function factsText() { return shippingText(); }
 function dealText(cfg) {
   const tiers = getPricing()?.products?.vase?.discounts || []; if (!tiers.length) return '';
   try { const a = aktionFor('vase', cfg?.pattern); if (a && !a.mengenrabatt) return ''; } catch { /* egal */ }
-  return tiers.filter((t) => +t.off > 0).map((t) => `${t.qty} Vasen −${t.off} %`).join(' · ');
+  return tiers.filter((t) => +t.off > 0).map((t) => `${t.qty} Vasen −${t.off}\u00a0%`).join(' · ');
 }
 /** Absicherung am Kaufpunkt (unter dem Sheet-Knopf, Linien-Icon): Neudruck + Herkunft; PayPal nur, wenn es in settings.paypal aktiv ist */
 function trustHTML() {
@@ -218,9 +226,10 @@ function renderPatternPrices() {
   try {
     const a = aktionFor('vase', 'gehaemmert');
     const global = aktionenActive().find((x) => !x.muster.length && (x.produkte === 'alle' || x.produkte === 'vase'));
-    const show = !!a && a.muster.length > 0 && a.prozent > (global?.prozent || 0);
+    // Zahl nur, wenn sie für den ganzen Geltungsbereich gegenüber dem 30-Tage-Tiefstpreis stimmt (§ 11 PAngV)
+    const show = !!a && a.muster.length > 0 && a.prozent > (global?.prozent || 0) && aktionProzentGueltig(a);
     const badge = $('.m-lead-badge');
-    if (badge) { if (show) { badge.textContent = `−${a.prozent} %`; badge.hidden = false; } else badge.hidden = true; }
+    if (badge) { if (show) { badge.textContent = `−${a.prozent}\u00a0%`; badge.hidden = false; } else badge.hidden = true; }
     for (const el of $$('.m-swatch')) { const p = patternByKey(el.dataset.key), sub = $('.m-sw-sub', el); if (p && sub) sub.textContent = swatchSub(p); }
   } catch { /* Preise noch nicht vollständig */ }
 }
@@ -259,7 +268,7 @@ function patternSheet(key, source, chipIndex = leadChip) {
 /** Muster-Aufpreis aus settings.pricing.muster (nur gelesen) — „+ 3 €“ bzw. '' ohne Aufpreis; vor dem Laden der Preise der Datenwert */
 function surchargeLabel(p) {
   const m = getPricing()?.muster; if (!m) return p.extra || '';
-  const v = +m[p.key] || 0; return v > 0 ? `+ ${euro(v)}` : '';
+  const v = +m[p.key] || 0; return v > 0 ? `+${euroKurz(v)}` : '';   // „+3 €“ wie am Desktop (fmtPlus)
 }
 
 /** Kür: Kachelbild fliegt ins Sheet (Klon, nur transform/opacity, 380 ms) */
@@ -305,7 +314,9 @@ const HERO_CTA = 'Diese Vase gestalten';
 function paintHeroPrice() {
   if (!heroPriceEl) return;
   const d = STUDIO_DESIGNS[shownIndex] || STUDIO_DESIGNS[0], p = shownPrice(designConfig(d));
-  heroPriceEl.innerHTML = `<span class="mhp-name">${esc(d.name)}</span>` + (p ? ` <b${p.a ? ' class="aktion-price"' : ''}>${fmt(p.unit)}</b>${p.a ? ` <s>${fmt(p.uvp)}</s>` : ''} <small>zzgl. Versand</small>` : '');
+  // Kein Streichpreis in dieser engen Zeile: seine Kennzeichnung stünde nur im title (auf dem Handy unsichtbar, § 11 PAngV) — der
+  // Aktionspreis in Akzentfarbe genügt, Streichpreis samt „Niedrigster Preis der letzten 30 Tage“ zeigt das Sheet
+  heroPriceEl.innerHTML = `<span class="mhp-name">${esc(d.name)}</span>` + (p ? ` <b${p.ref ? ' class="aktion-price"' : ''}>${fmt(p.unit)}</b> <small>${versandHTML({ kurz: true })}</small>` : '');
 }
 /**
  * EIN Schreibvorgang für alles, was die gezeigte Vase benennt: Punkte, Kapsel-Typ („Form“/„Oberfläche“), Knopf-Ziel (aria-label) und
@@ -674,8 +685,8 @@ function quietBand(H) {
 function paintCta() {
   if (!ctaWrap) return;
   ctaLabel.textContent = `Vase gestalten ${below ? '↑' : '↓'}`;
-  ctaPrice.innerHTML = heroFromHTML();
-  const inl = $('.m-inline-cta-primary b'); if (inl) inl.innerHTML = heroFromHTML();
+  ctaPrice.innerHTML = heroFromHTML() + CTA_VERSAND();
+  const inl = $('.m-inline-cta-primary b'); if (inl) inl.innerHTML = heroFromHTML() + CTA_VERSAND();
 }
 function scrollToStudio() { buzz(12); $('#konfigurator').scrollIntoView({ behavior: reduced.matches ? 'instant' : 'smooth' }); }
 function initCta() {
@@ -688,7 +699,7 @@ function initCta() {
   const mirror = () => {
     const span = hint.querySelector(':scope > span'); if (!span) return;
     const t = span.firstChild; if (t && t.nodeType === 3) t.textContent = t.textContent.replace(/^Vasen\s+/, '');
-    const clone = span.cloneNode(true); clone.querySelector('.hh-stl')?.remove();
+    const clone = span.cloneNode(true); clone.querySelector('.hh-stl')?.remove(); clone.querySelector('.hh-versand')?.remove();
     const html = clone.innerHTML.trim(); if (html) heroPriceHTML = html;
     paintCta(); paintHeroPrice(); idle(renderPatternPrices);
   };
@@ -775,7 +786,7 @@ function initRest() {
       btn.addEventListener('click', () => { list.classList.add('m-all'); btn.remove(); buzz(); });
     }
     // Einziger Inline-Bestellknopf der Seite: nach der FAQ, vollbreit mit Preis (Rückweg am Ende des Funnels); die Pille weicht, solange er im Bild ist
-    const b = document.createElement('button'); b.type = 'button'; b.className = 'm-inline-cta m-inline-cta-primary'; b.innerHTML = `Vase gestalten ↑ <b>${heroFromHTML()}</b>`; // Konfigurator liegt darüber
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'm-inline-cta m-inline-cta-primary'; b.innerHTML = `Vase gestalten ↑ <b>${heroFromHTML()}${CTA_VERSAND()}</b>`; // Konfigurator liegt darüber
     b.addEventListener('click', scrollToStudio); anchor.after(b);
   });
   // Aktionsleiste: Kurz-Countdown („noch 1 Tag 11 Std“) statt abgeschnittenem Langtext — aktion.js frischt Stellen mit data-kurz selbst so auf;
@@ -795,7 +806,7 @@ function initRest() {
       if (name && !('tidy' in name.dataset)) {
         name.dataset.tidy = '';
         const clean = name.textContent.replace(/\s*!{2,}/g, '').trim();
-        const scope = [...txt.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' ');
+        const scope = [...txt.childNodes].filter((n) => n.nodeType === 3 || n.classList?.contains('ab-scope')).map((n) => n.textContent).join(' ');
         if (!clean || norm(scope).includes(norm(clean))) { const sep = name.nextSibling; if (sep && sep.nodeType === 3) sep.textContent = sep.textContent.replace(/^:\s*/, ''); name.remove(); }
         else name.textContent = clean;
       }
@@ -837,12 +848,12 @@ function initIcons() {
   // Kopfzeile „Listen“: Lesezeichen statt Listen-Symbol (das las sich wie ein Hamburger-Menü), Name „Merkliste“
   const lists = $('.topbar .lists-btn');
   if (lists) { iconize(lists, null, ICON.bookmark); lists.setAttribute('aria-label', 'Merkliste'); lists.title = 'Merkliste'; }
-  // Footer „Gut zu wissen“: nur die rechtlichen Hinweise (Trockenblumen/Voronoi, Standfestigkeit) — „Pflanzenbasiertes PLA“ steht schon im Hero
-  // (keine Dopplung)
+  // Footer „Gut zu wissen“: nur die rechtlichen Hinweise (Trockenblumen/Voronoi, Pflege/Hitze, Standfestigkeit) — die Materialzeile
+  // (p[data-material]) steht schon im Hero-Vertrauensband (keine Dopplung)
   const col = $$('footer .footer-col').find((c) => /Gut zu wissen/.test($('h4', c)?.textContent || ''));
   if (col) {
     col.classList.add('m-facts');
-    $$('p', col).forEach((p) => { if (/Pflanzenbasiertes PLA/.test(p.textContent)) p.classList.add('m-dup'); else iconize(p); });
+    $$('p', col).forEach((p) => { if (p.hasAttribute('data-material')) p.classList.add('m-dup'); else iconize(p); });
   }
 }
 

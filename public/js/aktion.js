@@ -3,7 +3,9 @@
 // Hält alle Countdown-Stellen (.aktion-countdown, optional data-aktion-id für eine bestimmte Aktion) aktuell und beendet
 // jede Aktion clientseitig einzeln, sobald ihre Restzeit abgelaufen ist (pricing.js → expireAktion(id) → Preise neu
 // rendern); die restlichen laufen weiter. Der Server bleibt beim Checkout die Wahrheit — hier geht es nur um die Anzeige.
-import { aktionenActive, aktionNextEnde, aktionScopeLabel, aktionText, aktionTextKurz, expireAktion, notifyAktionChange, onAktionEnde, setPricing } from './pricing.js';
+// § 11 PAngV: „−15 %“ steht nur, wenn die Zahl für den ganzen Geltungsbereich gegenüber dem niedrigsten Preis der letzten
+// 30 Tage stimmt (aktionProzentGueltig in pricing.js) — sonst „Name: Aktionspreise auf … · endet in …“ ohne Prozentzahl.
+import { aktionenActive, aktionNextEnde, aktionScopeLabel, aktionText, aktionTextKurz, expireAktion, notifyAktionChange, onAktionEnde, setPricing, aktionProzentGueltig } from './pricing.js';
 
 const $ = (s) => document.querySelector(s);
 const H = 3600e3;
@@ -16,6 +18,13 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 /** „auf alles“ / „auf Vasen“ / „auf Gehämmert“ / „auf Vasen mit Rippen oder Wellen“ (Kompatibilität — Logik in pricing.js) */
 export function aktionScope(a) { return aktionScopeLabel(a); }
 
+/** „−15 % auf alles“ bzw. ohne gültige Prozentzahl „Aktionspreise auf alles“ (Zahl in .ab-num wie bisher; der Geltungsbereich
+ *  nach „Aktionspreise“ in .ab-scope — fitBar() nimmt ihn heraus, wenn die einzeilige Handy-Leiste sonst den Countdown abschneidet) */
+function angebotHTML(a) {
+  return aktionProzentGueltig(a)
+    ? `<span class="ab-num">−${a.prozent}\u00a0%</span> ${aktionScopeLabel(a)}`
+    : `Aktionspreise<span class="ab-scope"> ${aktionScopeLabel(a)}</span>`;
+}
 /** Leiste über dem Header rendern (oder ausblenden, wenn keine Aktion läuft) */
 function renderBar() {
   const bar = $('#aktion-bar');
@@ -31,14 +40,26 @@ function renderBar() {
   }
   const more = list.slice(1);
   bar.innerHTML = `<span class="ab-fire" aria-hidden="true">🔥</span>` +
-    `<span class="ab-text"><b>${esc(a.name)}</b>: <span class="ab-num">−${a.prozent} %</span> ${aktionScopeLabel(a)}</span>` +
+    `<span class="ab-text"><b>${esc(a.name)}</b>: ${angebotHTML(a)}</span>` +
     `<span class="ab-sep" aria-hidden="true">·</span><span class="ab-count aktion-countdown" data-aktion-id="${esc(a.id)}">${aktionText(a)}</span>` +
     (a.hinweis ? `<span class="ab-hint">${esc(a.hinweis)}</span>` : '') +
     // weitere laufende Aktionen nur auf dem Desktop (CSS blendet .ab-more auf Mobile aus)
-    (more.length ? `<span class="ab-more">außerdem: ${more.map((m) => `<b>${esc(m.name)}</b> −${m.prozent} % ${aktionScopeLabel(m)}`).join(' · ')}</span>` : '');
+    (more.length ? `<span class="ab-more">außerdem: ${more.map((m) => `<b>${esc(m.name)}</b> ${aktionProzentGueltig(m) ? `−${m.prozent}\u00a0% ${aktionScopeLabel(m)}` : `Aktionspreise ${aktionScopeLabel(m)}`}`).join(' · ')}</span>` : '');
   bar.hidden = false;
   if (ann) ann.hidden = true;
   document.body.classList.add('has-aktion');
+  requestAnimationFrame(fitBar);   // nach dem Aufräumen der Handy-Leiste (mobile-home.js) messen
+}
+/**
+ * Einzeilige Leiste (≤ 980 px, Ellipse): passt „Name: Aktionspreise auf … · noch 2 Tage 4 Std“ nicht in die Breite, entfällt der
+ * Geltungsbereich (.ab-eng blendet .ab-scope aus), damit der Countdown sichtbar bleibt. Neben einer Prozentzahl gibt es kein
+ * .ab-scope — „−15 %“ ohne „auf Gehämmert“ läse sich wie „auf alles“.
+ */
+function fitBar() {
+  const bar = $('#aktion-bar');
+  if (!bar || bar.hidden) return;
+  bar.classList.remove('ab-eng');
+  if (bar.querySelector('.ab-scope') && bar.scrollWidth > bar.clientWidth + 1) bar.classList.add('ab-eng');
 }
 
 /** Alle Countdown-Stellen auffrischen: data-aktion-id → Restzeit dieser Aktion, sonst der primären;
@@ -52,6 +73,7 @@ function paintCountdown() {
     const t = 'kurz' in el.dataset ? aktionTextKurz(a) : aktionText(a);
     if (el.textContent !== t) el.textContent = t;
   });
+  fitBar();   // der Countdown ändert seine Länge („noch 2 Tage 4 Std“ → „noch 23 Std 59 Min“)
 }
 
 function stop() { clearTimeout(timer); timer = null; }
@@ -79,12 +101,15 @@ function tick() {
 async function refresh() {
   try {
     const fresh = await (await fetch('/api/pricing', { cache: 'no-store' })).json();
-    if (!fresh || !fresh.products) return;
+    if (!fresh || !fresh.products) return false;
     setPricing(fresh);
     start();
     notifyAktionChange();
-  } catch { /* offline — die Seite rechnet mit dem bekannten Stand weiter */ }
+    return true;
+  } catch { return false; /* offline — die Seite rechnet mit dem bekannten Stand weiter */ }
 }
+/** Für die Kasse (Server meldet „Preis hat sich geändert“): Preise neu laden, Leiste und alle Preise neu zeichnen → true bei Erfolg */
+export const reloadPricing = () => refresh();
 
 function start() {
   known = aktionenActive().map((a) => a.id);
@@ -97,6 +122,7 @@ export function initAktionBar() {
   if (started) { start(); return; }
   started = true;
   onAktionEnde(renderBar);
+  window.addEventListener('resize', () => requestAnimationFrame(fitBar), { passive: true });
   // Hintergrund-Tabs drosseln Timer — beim Zurückkehren sofort nachziehen
   document.addEventListener('visibilitychange', () => { if (!document.hidden && known.length) tick(); });
   start();

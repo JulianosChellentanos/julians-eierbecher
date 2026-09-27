@@ -226,7 +226,7 @@
  .m-sheet-meta{font-size:12px;color:var(--ink-soft);margin:0}
  .m-sheet-text{font-size:13px;line-height:1.5;margin:10px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
  .m-chips{display:flex;gap:8px;margin-top:12px}.m-chips:empty{display:none}.m-chip{height:40px;padding:0 14px 0 10px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 12px var(--sans);display:inline-flex;align-items:center;gap:8px;cursor:pointer}.m-chip i{width:16px;height:16px;border-radius:50%;background:var(--hex);border:1px solid #0002}.m-chip[aria-pressed=true]{border-color:var(--ink);background:var(--bg)}
- .m-sheet-price{margin:16px 0 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.m-sheet-price small{font:600 10px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);margin-right:2px}.m-sheet-price b{font:450 24px/1 var(--serif);letter-spacing:-.5px;color:var(--ink)}.m-sheet-price b.aktion-price{color:var(--accent-dark)}.m-sheet-price s{font:400 13px var(--serif);color:var(--ink-soft)}.m-sheet-price .m-badge{align-self:center}.m-sheet-price:empty{display:none}
+ .m-sheet-price{margin:16px 0 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.m-sheet-price small{font:600 10px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft);margin-right:2px}.m-sheet-price b{font:450 24px/1 var(--serif);letter-spacing:-.5px;color:var(--ink)}.m-sheet-price b.aktion-price{color:var(--accent-dark)}.m-sheet-price s{font:400 13px var(--serif);color:var(--ink-soft)}.m-sheet-price .m-badge{align-self:center}.m-sheet-price .m-ref{flex-basis:100%;font:400 11px/1.4 var(--sans);color:var(--ink-soft);letter-spacing:0;text-transform:none}.m-sheet-price:empty{display:none}
  .m-badge{font:500 11px var(--sans);background:var(--accent);color:#fff;border-radius:999px;padding:3px 8px;font-style:normal}.dark .m-badge{color:#17130f}
  .m-sheet-facts{font:400 12px/1.4 var(--sans);color:var(--ink-soft);margin:6px 0 0}.m-sheet-facts:empty{display:none} /* „zzgl. 4,90 € Versand · ab 39 € versandfrei“ (settings.pricing.shipping) */
  .m-sheet-deal{font:600 12px/1.4 var(--sans);color:var(--accent-dark);margin:4px 0 0}.m-sheet-deal:empty{display:none} /* Mengenrabatt „2 Vasen −10 % · 3 Vasen −15 %“, nur wenn er für diese Vase gilt */
@@ -366,4 +366,7 @@
  footer .footer-links{gap:0 18px;justify-content:flex-start}
  footer .footer-links a{display:inline-block;padding:12px 0;margin:-2px 0;font-size:12px}
  footer a.footer-withdraw{justify-content:center;min-height:44px;font-size:13px}
+ /* Versandhinweis am Preis (§ 6 PAngV): Pille und Inline-Knopf als leiser Zusatz, Hero-Preiszeile mit Link zur Versandseite */
+ .m-cta-price .m-cta-ship,.m-inline-cta .m-cta-ship{font:400 10px var(--sans);opacity:.75;margin-left:5px;letter-spacing:0}
+ .m-hero-price small a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 }

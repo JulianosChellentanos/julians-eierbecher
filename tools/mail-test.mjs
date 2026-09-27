@@ -38,9 +38,11 @@ function sampleSettings() {
     mail: { enabled: false, publicUrl: 'https://formsam.de/' },
   };
 }
+// Zugriffsschlüssel der Beispielbestellung (Links auf Rechnung/Gutschrift tragen ihn als ?k=)
+const SAMPLE_KEY = 'q3Xv9bT0cLmN4pR7sW2y-_';
 function sampleOrder(over = {}) {
   return {
-    orderId: 'FS-260910-A1B2C3', userId: 'u-1', createdAt: '2026-09-10T09:12:00.000Z', status: 'neu',
+    orderId: 'FS-260910-A1B2C3', accessKey: SAMPLE_KEY, userId: 'u-1', createdAt: '2026-09-10T09:12:00.000Z', status: 'neu',
     payment: 'vorkasse', paymentStatus: 'offen',
     customer: { name: 'Mia <script>alert(1)</script> Müller', email: 'mia@example.com', street: 'Wellenweg 3 & 4', zip: '22222', city: 'Flussdorf', note: 'Bitte als Geschenk verpacken :)' },
     lines: [
@@ -560,6 +562,10 @@ async function smoke() {
       widerruf: T.widerrufEingang({ widerruf: sampleWiderruf(), settings, baseUrl }),
       widerrufOhne: T.widerrufEingang({ widerruf: sampleWiderruf({ orderId: '', nachricht: '', orderMatched: false }), settings, baseUrl }),
       adminWiderruf: T.adminWiderruf({ widerruf: sampleWiderruf(), settings, baseUrl }),
+      bestaetigungGast: T.orderConfirmation({ order: sampleOrder({ userId: null }), settings, baseUrl }),
+      willkommenBestaetigen: T.welcome({ user: { name: 'Mia Müller', email: 'mia@example.com' }, settings, baseUrl, verifyLink: `${baseUrl}/?verify=vtok123` }),
+      emailBestaetigung: T.emailBestaetigung({ user: { name: 'Mia Müller', email: 'mia@example.com' }, link: `${baseUrl}/?verify=vtok456`, settings, baseUrl }),
+      adminPaypal: T.adminPaypalKasse({ p: { id: '5O190127TN364715T', amount: '29.80', currency: 'EUR', capturedAt: '2026-09-27T10:00:00Z', grund: 'Betrag weicht ab', erstattet: true, customer: { name: 'Mia', email: 'mia@example.com' } }, settings, baseUrl }),
     };
     for (const st of Object.keys(T.STATUS_MAIL)) {
       all[`status-${st}`] = T.orderStatus({ order: sampleOrder({ status: st, trackingNo: st === 'versendet' ? '00340434161094000000' : '', carrier: 'dhl', paymentStatus: st === 'storniert' ? 'bezahlt' : 'offen', payment: st === 'storniert' ? 'paypal' : 'vorkasse' }), status: st, settings, baseUrl });
@@ -601,14 +607,33 @@ async function smoke() {
     const b = all.bestaetigung;
     check(/Hallo Mia,/.test(b.text) && /DE00 0000 0000 0000 0000 00/.test(b.text) && /Verwendungszweck: FS-260910-A1B2C3/.test(b.text) && /Zahlungseingang|Zahlung eingegangen/.test(b.text), 'Bestätigung (Vorkasse): Anrede, IBAN, Verwendungszweck, Hinweis');
     check(/Gravur „Für Oma ❤“ \(Farbschrift, Schrift Kalligrafie, Schriftfarbe Perlmutt\)/.test(b.text) && /mit Untersetzer/.test(b.text) && /Mengenrabatt −50 %/.test(b.text) && /Gutschein OSTERN10: −5,75 €/.test(nb(b.text)) && /Versand: kostenlos/.test(b.text) && /Gesamt: 51,75 €/.test(nb(b.text)), 'Bestätigung: Positionen (Gravur/Farbschrift, Untersetzer, Rabatt), Gutschein, Versand, Gesamt');
-    check(b.html.includes('https://formsam.de/orders/FS-260910-A1B2C3/rechnung.html') && b.html.includes('Mein Konto'), 'Bestätigung: Rechnungslink + Konto-Hinweis');
-    check(b.subject === 'Deine Bestellung FS-260910-A1B2C3 bei formsam — danke!' && all.willkommen.subject === 'Willkommen bei formsam, Mia!' && all.passwort.subject === 'Dein neues Passwort für formsam' && all.nachricht.subject === 'Kurze Rückfrage <zur Farbe>', 'Betreffzeilen mit formsam (Bestellung, Willkommen, Passwort)', [b.subject, all.willkommen.subject, all.passwort.subject]);
-    check(b.text.includes('Gedruckt wird erst, wenn du bestellst — deine Stücke entstehen für dich, sobald deine Zahlung da ist.') && b.text.includes('Lieferzeit: ca. 3–5 Werktage ab Zahlungseingang.') && b.html.includes('Lieferzeit: ca. 3–5 Werktage ab Zahlungseingang.'), 'Bestätigung (Vorkasse): „Gedruckt wird erst, wenn du bestellst“ + Lieferzeit aus settings.shop');
+    check(b.html.includes(`href="https://formsam.de/orders/FS-260910-A1B2C3/rechnung.html?k=${SAMPLE_KEY}"`) && b.text.includes(`Rechnung: https://formsam.de/orders/FS-260910-A1B2C3/rechnung.html?k=${SAMPLE_KEY}\n`) && b.html.includes('Mein Konto'), 'Bestätigung: Rechnungslink mit Zugriffsschlüssel (?k=) + Konto-Hinweis');
+    const altB = T.orderConfirmation({ order: sampleOrder({ accessKey: undefined }), settings, baseUrl });
+    check(altB.text.includes('Rechnung: https://formsam.de/orders/FS-260910-A1B2C3/rechnung.html\n') && !altB.html.includes('?k='), 'Bestätigung einer Bestellung ohne Schlüssel (Altbestand): Rechnungslink wie bisher ohne ?k=');
+    const mitKey = Object.entries(all).filter(([, v]) => `${v.text}${v.html}`.includes(SAMPLE_KEY)).map(([k]) => k).sort();
+    check(mitKey.join() === ['bestaetigung', 'bestaetigungGast', 'bestaetigungPaypal', 'reklamation-erledigt-gutschein', 'reklamation-erledigt-paypal', 'reklamation-erledigt-ueberweisung'].join(), 'Schlüssel nur in Mails mit Beleg-Link (Bestätigung, Gutschrift) — nicht in Status-, Admin-, Freitext-Mails', mitKey);
+    check(b.subject === 'Deine Bestellung FS-260910-A1B2C3 bei formsam – danke!' && all.willkommen.subject === 'Willkommen bei formsam, Mia!' && all.passwort.subject === 'Dein neues Passwort für formsam' && all.nachricht.subject === 'Kurze Rückfrage <zur Farbe>', 'Betreffzeilen mit formsam (Bestellung, Willkommen, Passwort)', [b.subject, all.willkommen.subject, all.passwort.subject]);
+    check(b.text.includes('Gedruckt wird erst, wenn du bestellst – deine Stücke entstehen für dich, sobald deine Zahlung da ist.') && b.text.includes('Lieferzeit: 3–5 Werktage. Die Frist beginnt am Tag nach deinem Überweisungsauftrag an deine Bank.') && b.html.includes('Lieferzeit: 3–5 Werktage. Die Frist beginnt am Tag nach deinem Überweisungsauftrag an deine Bank.') && !/ca\. 3|ab Zahlungseingang/.test(b.text + b.html), 'Bestätigung (Vorkasse): „Gedruckt wird erst, wenn du bestellst“ + Lieferzeit aus settings.shop, Fristbeginn wie AGB § 7 (ohne „ca.“)');
     const nurVase = T.orderConfirmation({ order: sampleOrder({ payment: 'paypal', paymentStatus: 'bezahlt', lines: [sampleOrder().lines[0]] }), settings, baseUrl });
-    check(nurVase.text.includes('Gedruckt wird erst, wenn du bestellst — deine Vase entsteht jetzt für dich.') && nurVase.text.includes('Lieferzeit: ca. 3–5 Werktage.'), 'Bestätigung (PayPal, eine Vase): „deine Vase entsteht jetzt für dich“, Lieferzeit ohne Zahlungseingang');
+    check(nurVase.text.includes('Gedruckt wird erst, wenn du bestellst – deine Vase entsteht jetzt für dich.') && nurVase.text.includes('Lieferzeit: 3–5 Werktage. Die Frist beginnt am Tag nach Vertragsschluss, also am Tag nach deiner Bestellung.'), 'Bestätigung (PayPal, eine Vase): „deine Vase entsteht jetzt für dich“, Fristbeginn wie AGB § 7');
     const mitAnh = T.orderConfirmation({ order: sampleOrder(), settings, baseUrl, anhaenge: ['formsam-AGB.html', 'formsam-Widerrufsbelehrung.html'] });
-    check(mitAnh.text.includes('Die AGB und die Widerrufsbelehrung (mit Muster-Widerrufsformular) hängen an dieser E-Mail — zum Aufbewahren: formsam-AGB.html, formsam-Widerrufsbelehrung.html.') && mitAnh.html.includes('formsam-Widerrufsbelehrung.html') && !b.text.includes('hängen an dieser E-Mail'), 'Bestätigung mit Rechtstexten im Anhang: Hinweis nur, wenn Anhänge dabei sind');
-    check(T.lieferzeitText({}) === 'ca. 5–8 Werktage' && T.lieferzeitText({ shop: { lieferzeit: 'eine Woche' } }) === 'eine Woche', 'lieferzeitText(): Standard und freier Text');
+    check(mitAnh.text.includes('Die AGB und die Widerrufsbelehrung (mit Muster-Widerrufsformular) hängen an dieser E-Mail – zum Aufbewahren: formsam-AGB.html, formsam-Widerrufsbelehrung.html.') && mitAnh.html.includes('formsam-Widerrufsbelehrung.html') && !b.text.includes('hängen an dieser E-Mail'), 'Bestätigung mit Rechtstexten im Anhang: Hinweis nur, wenn Anhänge dabei sind');
+    check(T.lieferzeitText({}) === '5–8 Werktage' && T.lieferzeitText({ shop: { lieferzeit: 'eine Woche' } }) === 'eine Woche', 'lieferzeitText(): Standard und freier Text, ohne „ca.“');
+    // Rechnung im Konto nur mit Konto: Gastbestellung verweist auf den Knopf in der Mail, Konto-Bestellung aufs Konto
+    const g = all.bestaetigungGast;
+    check(b.html.includes('dort liegt auch die Rechnung') && !g.html.includes('dort liegt auch die Rechnung') && g.html.includes('Bewahre diese E-Mail gut auf') && g.text.includes('(Link bitte aufbewahren') && /bestätigst die Adresse/.test(g.text), 'Bestätigung: „dort liegt auch die Rechnung“ nur mit Konto — Gast: Mail aufbewahren, Konto erst nach Bestätigung der Adresse');
+    const w = all.willkommen, wvb = all.willkommenBestaetigen;
+    check(!/deine Rechnungen/.test(w.text + w.html) && /Rechnungen zu Bestellungen, die du angemeldet aufgibst/.test(w.text) && !/Rechnungen/.test(w.html.match(/display:none[^>]*>([^<]*)/)?.[1] || ''), 'Willkommen: Rechnungen nur für angemeldete Bestellungen, Preheader ohne „Rechnungen“');
+    check(wvb.html.includes('href="https://formsam.de/?verify=vtok123"') && wvb.text.includes('https://formsam.de/?verify=vtok123') && /nicht angelegt/.test(wvb.text) && !w.text.includes('verify='), 'Willkommen mit Bestätigungslink (+ Hinweis für Fremd-Registrierungen), ohne Link keiner');
+    const eb = all.emailBestaetigung;
+    check(eb.html.includes('href="https://formsam.de/?verify=vtok456"') && /7 Tage/.test(eb.text) && /bestätige/.test(eb.subject), 'E-Mail bestätigen: Link, Gültigkeit, Betreff');
+    const sto = all['status-storniert'];
+    check(sto.html.includes('Zurück zum Konfigurator') && sto.text.includes('Zurück zum Konfigurator: https://formsam.de/') && !sto.text.includes('Bestellung im Konto ansehen'), 'Status storniert: Text wie HTML-Knopf („Zurück zum Konfigurator“)');
+    const stoB = T.orderStatus({ order: sampleOrder({ status: 'storniert', storno: { nr: 'GS-2026-0007', at: '2026-09-27T10:00:00Z' } }), status: 'storniert', settings, baseUrl });
+    check(stoB.html.includes(`storno.html?k=${SAMPLE_KEY}`) && stoB.text.includes('Stornobeleg GS-2026-0007') && /RE-2026-0042 ist damit aufgehoben/.test(stoB.text), 'Status storniert mit Stornorechnung: Link mit Schlüssel');
+    const gut = T.orderConfirmation({ order: sampleOrder({ coupon: { code: 'GS-AB12-CD34', off: 5.75, guthaben: true } }), settings, baseUrl });
+    check(/Guthaben GS-AB12-CD34: −5,75 €/.test(nb(gut.text)) && !/Gutschein GS-AB12-CD34/.test(gut.text), 'Bestätigung mit Guthaben: „Guthaben“ statt „Gutschein“');
+    check(/automatisch erstattet|erstattet/.test(all.adminPaypal.text) && all.adminPaypal.text.includes('5O190127TN364715T') && T.adminPaypalKasse({ p: { id: 'X', erstattet: false, fehler: 'Auth' }, settings, baseUrl }).subject.startsWith('⚠️'), 'Admin-Meldung PayPal ohne Bestellung (erstattet / bitte handeln)');
     check(/bezahlt via PayPal/.test(all.bestaetigungPaypal.text) && !/IBAN/.test(all.bestaetigungPaypal.text), 'Bestätigung (PayPal): kein Bankblock');
     const v = all['status-versendet'];
     check(v.html.includes('https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=00340434161094000000') && /Sendungsnummer \(DHL\): 00340434161094000000/.test(v.text), 'Status versendet: Sendungsnummer + DHL-Link');
@@ -628,7 +653,7 @@ async function smoke() {
     check(/nichts zurückschicken/.test(ro.text) && /IBAN/.test(ro.text) && !/Musterstraße 1\n/.test(ro.text), 'Reklamation angelegt ohne Rücksendung: kein Adressblock, IBAN-Bitte bei Überweisung');
     check(/Rücksendung eingegangen/.test(all['reklamation-eingegangen'].subject) && /Gutschein-Code/.test(all['reklamation-eingegangen'].text) && /deutlich zu sehen/.test(all['reklamation-eingegangen'].text), 'Reklamation eingegangen: nächster Schritt + Notiz');
     const rg = all['reklamation-erledigt-gutschein'];
-    check(/Gutschein-Code/.test(rg.subject) && rg.html.includes('font-size:26px') && rg.html.includes('GS-AB12-CD34') && /GUTSCHEIN-CODE \(51,75 €\): GS-AB12-CD34/.test(nb(rg.text)) && /Checkout/.test(rg.text) && rg.text.includes(`${baseUrl}/orders/FS-260910-A1B2C3/gutschrift.html`) && rg.html.includes('gutschrift.html'), 'Reklamation erledigt (Gutschein): Code groß, Checkout-Hinweis, Gutschrift-Link');
+    check(/Gutschein-Code/.test(rg.subject) && rg.html.includes('font-size:26px') && rg.html.includes('GS-AB12-CD34') && /GUTSCHEIN-CODE \(51,75 €\): GS-AB12-CD34/.test(nb(rg.text)) && /in der Kasse im Feld „Gutscheincode“/.test(rg.text) && !/Checkout/.test(rg.text) && rg.text.includes(`${baseUrl}/orders/FS-260910-A1B2C3/gutschrift.html?k=${SAMPLE_KEY}`) && rg.html.includes(`gutschrift.html?k=${SAMPLE_KEY}`), 'Reklamation erledigt (Gutschein): Code groß, Hinweis „in der Kasse im Feld Gutscheincode“, Gutschrift-Link mit Schlüssel');
     const ru = all['reklamation-erledigt-ueberweisung'];
     check(/5 Werktagen/.test(ru.text) && /…3000/.test(ru.text) && !/DE89 3704/.test(ru.text) && !/DE89 3704/.test(ru.html) && ru.text.includes('gutschrift.html'), 'Reklamation erledigt (Überweisung): 5 Werktage, IBAN nur maskiert');
     check(/1–3 Tagen/.test(all['reklamation-erledigt-paypal'].text) && /1AB23456CD789012E/.test(all['reklamation-erledigt-paypal'].text), 'Reklamation erledigt (PayPal): 1–3 Tage, Referenz');
@@ -696,6 +721,12 @@ function render() {
     nachricht: T.customMessage({ order, subject: 'Kurze Rückfrage zur Farbe', text: 'welche Farbe soll der Untersetzer haben?\nSalbei oder Kupfer?\n\nDanke & liebe Grüße\nJulian', settings, baseUrl }),
     'widerruf-eingang': T.widerrufEingang({ widerruf: sampleWiderruf(), settings, baseUrl }),
     'admin-widerruf': T.adminWiderruf({ widerruf: sampleWiderruf(), settings, baseUrl }),
+    'bestaetigung-gast': T.orderConfirmation({ order: sampleOrder({ userId: null }), settings, baseUrl }),
+    'bestaetigung-guthaben': T.orderConfirmation({ order: sampleOrder({ coupon: { code: 'GS-AB12-CD34', off: 5.75, guthaben: true } }), settings, baseUrl }),
+    'willkommen-bestaetigen': T.welcome({ user: { name: 'Mia Müller', email: 'mia@example.com' }, settings, baseUrl, verifyLink: `${baseUrl}/?verify=abc123def456` }),
+    'email-bestaetigen': T.emailBestaetigung({ user: { name: 'Mia Müller', email: 'mia@example.com' }, link: `${baseUrl}/?verify=abc123def456`, settings, baseUrl }),
+    'admin-paypal-ohne-bestellung': T.adminPaypalKasse({ p: { id: '5O190127TN364715T', amount: '29.80', currency: 'EUR', capturedAt: '2026-09-27T10:00:00Z', grund: 'Zahlung nicht bestätigt (Betrag weicht von der Bestellung ab)', erstattet: false, fehler: 'PayPal-Zugangsdaten fehlen', customer: { name: 'Mia Müller', email: 'mia@example.com' } }, settings, baseUrl }),
+    'status-storniert-stornobeleg': T.orderStatus({ order: sampleOrder({ status: 'storniert', storno: { nr: 'GS-2026-0007', at: '2026-09-27T10:00:00Z' } }), status: 'storniert', settings, baseUrl }),
   };
   for (const st of Object.keys(T.STATUS_MAIL)) {
     out[`status-${st}`] = T.orderStatus({

@@ -130,7 +130,7 @@ export async function make3MF(objects, { application = 'formsam Konfigurator' } 
 <metadata name="Application">${esc(application)}</metadata>
 <metadata name="BambuStudio:3mfVersion">1</metadata>
 <metadata name="Title">${esc(objects[0]?.name || 'formsam')}</metadata>
-<metadata name="Copyright">Kundendesign — formsam</metadata>
+<metadata name="Copyright">Kundendesign – formsam</metadata>
 <resources>`);
   for (const obj of objects) {
     const partIds = [];
