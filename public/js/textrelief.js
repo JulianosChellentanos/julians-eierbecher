@@ -1,4 +1,4 @@
-// OVJU — Gravur-Engine: Schrift als exaktes Distanzfeld → Höhenfeld mit richtungsabhängiger Fase.
+// formsam — Gravur-Engine: Schrift als exaktes Distanzfeld → Höhenfeld mit richtungsabhängiger Fase.
 // Reines JS (Browser & Node). Ergebnis ist ein Höhenraster in mm, das buildModel() in die
 // Wand einrechnet (ein manifold Körper, keine aufgesetzte Schrift).
 //

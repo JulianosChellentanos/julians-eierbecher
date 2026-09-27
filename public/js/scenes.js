@@ -1,4 +1,4 @@
-// OVJU — prozedurale Szenen & Deko-Props (kein externes Bildmaterial nötig)
+// formsam — prozedurale Szenen & Deko-Props (kein externes Bildmaterial nötig)
 import * as THREE from 'three';
 
 function canvasTexture(w, h, draw) {

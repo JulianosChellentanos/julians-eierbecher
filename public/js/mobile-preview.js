@@ -1,4 +1,4 @@
-// OVJU Mobil — 3D-Vorschauen der sechs Swatch-Muster (Rippen … Glatt), gerendert aus dem echten Konfigurator-Modell:
+// formsam Mobil — 3D-Vorschauen der sechs Swatch-Muster (Rippen … Glatt), gerendert aus dem echten Konfigurator-Modell:
 // EINE Vasenform (Flasche 15 cm, mobile-patterns.js), je Muster eine eigene Markenfarbe, warmes Streiflicht von links, weicher
 // Kontaktschatten, warmer Elfenbein-Grund. Je Muster ZWEI Bilder aus EINEM Mesh:
 //  · full  — die ganze Vase im Hochformat 4:5 (Kachel und Sheet-Hauptbild): Kamera leicht von oben, Rahmen aus den echten Vertex-

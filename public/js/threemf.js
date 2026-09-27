@@ -1,4 +1,4 @@
-// OVJU — 3MF-Export (Mehrfarbdruck): ein Objekt mit mehreren Teilen, je Teil ein Filament/Extruder.
+// formsam — 3MF-Export (Mehrfarbdruck): ein Objekt mit mehreren Teilen, je Teil ein Filament/Extruder.
 // Bambu Studio / OrcaSlicer lesen die Teilezuordnung aus Metadata/model_settings.config.
 // Reines JS: ZIP-Writer (Deflate über CompressionStream im Browser, zlib in Node), XML-Mesh-Export.
 import * as THREE from 'three';
@@ -119,7 +119,7 @@ const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt
  * Baut eine 3MF-Datei (ArrayBuffer) aus Objekten mit Teilen.
  * objects = [{ name, parts: [{ name, mesh: THREE.Mesh, extruder: 1|2|… }] }]
  */
-export async function make3MF(objects, { application = 'OVJU Konfigurator' } = {}) {
+export async function make3MF(objects, { application = 'formsam Konfigurator' } = {}) {
   const enc = new TextEncoder();
   let nextId = 1;
   const modelChunks = [], buildItems = [], settings = [];
@@ -129,8 +129,8 @@ export async function make3MF(objects, { application = 'OVJU Konfigurator' } = {
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">
 <metadata name="Application">${esc(application)}</metadata>
 <metadata name="BambuStudio:3mfVersion">1</metadata>
-<metadata name="Title">${esc(objects[0]?.name || 'OVJU')}</metadata>
-<metadata name="Copyright">Kundendesign — OVJU</metadata>
+<metadata name="Title">${esc(objects[0]?.name || 'formsam')}</metadata>
+<metadata name="Copyright">Kundendesign — formsam</metadata>
 <resources>`);
   for (const obj of objects) {
     const partIds = [];

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// check-stl.mjs — Validierung binärer STL-Dateien (Eierbecher-Konfigurator)
+// check-stl.mjs — Validierung binärer STL-Dateien (formsam-Konfigurator: Vasen, Eierbecher)
 // Aufruf: node tools/check-stl.mjs <datei.stl>
 // Exit-Code 0, wenn alle harten Checks bestehen, sonst 1.
 
@@ -173,9 +173,10 @@ if (hasBounds) {
     `(${dims.map((d) => fmt(d, 1)).join(" × ")} mm)`;
   const minDim = Math.min(...dims);
   const maxDim = Math.max(...dims);
-  if (minDim < 20 || maxDim > 200) {
+  // Vasen bis 220 mm hoch (plus Musterzugabe), Eierbecher ab ca. 35 mm
+  if (minDim < 20 || maxDim > 250) {
     warnings.push(
-      `Maße unplausibel für einen Eierbecher (kleinste Ausdehnung ${fmt(minDim, 1)} mm, größte ${fmt(maxDim, 1)} mm; erwartet 20–200 mm).`
+      `Maße unplausibel für Vase oder Eierbecher (kleinste Ausdehnung ${fmt(minDim, 1)} mm, größte ${fmt(maxDim, 1)} mm; erwartet 20–250 mm).`
     );
   }
 }

@@ -1,4 +1,4 @@
-// OVJU Mobil — Katalog „Oberflächen“: die neun Muster als Kacheln (Signatur Hammerschlag, Voronoi/Fjordwelle neu, sechs Swatches).
+// formsam Mobil — Katalog „Oberflächen“: die neun Muster als Kacheln (Signatur Hammerschlag, Voronoi/Fjordwelle neu, sechs Swatches).
 // Reine Daten + Konfig-Helfer; legt nichts an. Sheet-Texte leben hier (kein content.json-Schlüssel nötig):
 // view = Überschreibungen der Vorschau-Ansicht (mobile-preview.js SWATCH_VIEW: Makro breiter bzw. ohne Makro)
 // form/size/colorName = Spezifikation des gezeigten Stücks (Sheet-Zeile „Flasche · 15 cm · Salbei“, genau einmal), extra = Muster-Aufpreis, text = Charakter/Nutzen.

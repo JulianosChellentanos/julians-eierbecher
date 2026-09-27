@@ -1,5 +1,5 @@
-// OVJU — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal
-// Start: node server.js   →   http://<host>:4488   (Admin: /admin, Standard-Passwort: ovju-admin)
+// formsam — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal + Rechtsseiten + Widerruf
+// Start: node server.js   →   http://<host>:4488   (Admin: /admin, Standard-Passwort bei Neuinstallation: formsam-admin)
 import http from 'node:http';
 import { createGzip, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync } from 'node:fs';
@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
-  aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS } from './lib/mail-templates.js';
+  aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
+  widerrufEingang, adminWiderruf, lieferzeitText } from './lib/mail-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -30,6 +31,7 @@ export const hooks = {
   statusChanged: async (order, prevStatus, opts) => {},
   reklamation: async (order, phase, opts) => {},
   userRegistered: async (user) => {},
+  widerruf: async (widerruf) => {},
 };
 async function runHook(name, ...args) {
   try { await hooks[name]?.(...args); } catch (err) { console.error(`Hook ${name} fehlgeschlagen:`, err?.message || err); }
@@ -183,7 +185,7 @@ function produktSperre(items) {
 }
 
 const DEFAULT_SETTINGS = {
-  adminKey: 'ovju-admin',
+  adminKey: 'formsam-admin',
   invoicePrefix: 'RE-2026-',
   nextInvoice: 1,
   // Gutschriften (Reklamation): eigener Nummernkreis, vierstellig
@@ -212,12 +214,16 @@ const DEFAULT_SETTINGS = {
     volumen: { prozent: 60, euro: 0 },
   },
   company: {
-    name: 'OVJU — Julians Eierbecher', owner: 'Julian Sendlhofer',
-    street: 'Musterstraße 1', zip: '00000', city: 'Musterstadt',
+    name: 'formsam', owner: 'Julian Sendlhofer',
+    street: 'Musterstraße 1', zip: '00000', city: 'Musterstadt', country: 'Deutschland',
     email: 'jsendlhofer.js@gmail.com', phone: '',
-    ustId: '', kleinunternehmer: true,
+    ustId: '', steuerNr: '', kleinunternehmer: true,
     iban: 'DE00 0000 0000 0000 0000 00', bic: '', bank: '',
   },
+  // Shop-Angaben für Kasse, Mails und Rechnung (Lieferzeit steht u. a. in der Bestellbestätigung)
+  shop: { lieferzeit: '5–8 Werktage', liefergebiet: 'Deutschland' },
+  // Angaben für die Rechtsseiten (lib/legal.js): Hoster und Serverstandort (Datenschutzerklärung)
+  legal: { hoster: 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur', serverOrt: 'Berlin (Deutschland)' },
   paypal: { enabled: false, sandbox: true, clientId: '', secret: '' },
   colors: null,   // wird beim ersten Start aus content.json übernommen
   coupons: [],    // [{ code, type: 'percent'|'fixed', value, minOrder, active, note?, mitAktion }] — mitAktion: mit laufender Aktion kombinierbar
@@ -229,10 +235,72 @@ const DEFAULT_SETTINGS = {
   // E-Mail-Versand (SMTP) — wird von der E-Mail-Integration (Phase 2) genutzt
   mail: {
     enabled: false, host: '', port: 465, secure: 'ssl', user: '', pass: '',
-    from: '', fromName: 'OVJU', replyTo: '', adminTo: '', adminCopy: true,
+    from: '', fromName: 'formsam', replyTo: '', adminTo: '', adminCopy: true,
     autoStatusMails: true, publicUrl: '',
   },
 };
+
+// ---------------------------------------------------------------------------
+// Firma, Shop-Angaben und Rechtsangaben (settings.company / .shop / .legal): nur bekannte Felder,
+// Texte ohne Steuerzeichen, getrimmt und gekürzt. Beim Laden werden fehlende Felder nur aufgefüllt (Live-Daten
+// bleiben unverändert); ein Admin-Patch wird streng geprüft (400 mit lesbarer Meldung).
+// ---------------------------------------------------------------------------
+const COMPANY_TEXT = { name: 60, owner: 120, street: 120, zip: 10, city: 80, country: 60, email: 254, phone: 40, ustId: 20, steuerNr: 20, iban: 42, bic: 11, bank: 80 };
+const SHOP_TEXT = { lieferzeit: 60, liefergebiet: 80 };
+const LEGAL_TEXT = { hoster: 200, serverOrt: 120 };
+const plainObj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+/** Einzeiliger Text: alle Leerraum-Folgen (auch Zeilenumbrüche) → ein Leerzeichen, dann wie clipText */
+const oneLine = (v, n) => clipText(String(v ?? '').replace(/\s+/g, ' '), n);
+/** Nur bekannte Textfelder (Key → Maximallänge); fehlende/leere Felder → Standardwert (leer bleibt leer, wenn der Standard leer ist) */
+function pickText(src, fields, defaults) {
+  const out = {};
+  for (const [k, max] of Object.entries(fields)) {
+    const v = src[k] === undefined || src[k] === null ? '' : oneLine(src[k], max);
+    out[k] = v || String(defaults[k] ?? '');
+  }
+  return out;
+}
+/**
+ * Firmendaten aus einem Admin-Patch prüfen: Name/Land fallen auf „formsam“/„Deutschland“ zurück, E-Mail (wenn gesetzt) gültig,
+ * USt-IdNr. „DE123456789“-Form, Steuernummer 10–13 Ziffern (mit / - Leerzeichen), IBAN über cleanIban (Vierergruppen).
+ * Wirft httpError(400); liefert das vollständige company-Objekt.
+ */
+function sanitizeCompany(raw) {
+  const src = plainObj(raw);
+  const co = pickText(src, COMPANY_TEXT, { name: DEFAULT_SETTINGS.company.name, country: DEFAULT_SETTINGS.company.country });
+  co.kleinunternehmer = src.kleinunternehmer === undefined ? true : !!src.kleinunternehmer;
+  co.email = co.email.toLowerCase();
+  if (co.email && !isEmail(co.email)) throw httpError(400, 'Firma: E-Mail-Adresse ungültig');
+  co.ustId = co.ustId.toUpperCase().replace(/\s+/g, '');
+  if (co.ustId && !/^[A-Z]{2}[0-9A-Z+*.]{2,12}$/.test(co.ustId)) throw httpError(400, 'Firma: USt-IdNr. ungültig (z. B. DE123456789)');
+  const stDigits = co.steuerNr.replace(/\D/g, '').length;
+  if (co.steuerNr && (!/^[0-9 /-]+$/.test(co.steuerNr) || stDigits < 10 || stDigits > 13)) throw httpError(400, 'Firma: Steuernummer ungültig (z. B. 12/345/67890)');
+  const iban = cleanIban(co.iban);
+  if (iban === null) throw httpError(400, 'Firma: IBAN ungültig — nur Buchstaben und Ziffern, 15–34 Zeichen, beginnt mit Länderkennung');
+  co.iban = iban;
+  co.bic = co.bic.toUpperCase().replace(/\s+/g, '');
+  return co;
+}
+/** Shop-Angaben: Lieferzeit/Liefergebiet als Text, leer → Standard */
+const sanitizeShop = (raw) => pickText(plainObj(raw), SHOP_TEXT, DEFAULT_SETTINGS.shop);
+/** Rechtsangaben (Hoster, Serverstandort): Text, leer → Standard */
+const sanitizeLegal = (raw) => pickText(plainObj(raw), LEGAL_TEXT, DEFAULT_SETTINGS.legal);
+/**
+ * Hinweise für den Admin (Übersicht): fehlende Pflichtangaben für Rechnungen mit Umsatzsteuer und — wenn lib/legal.js
+ * geladen ist — dessen legalWarnings() (Impressum-Pflichtangaben, Platzhalter-Adresse, Telefon …)
+ */
+function settingsHinweise() {
+  const co = settings.company || {};
+  const out = [];
+  if (!co.kleinunternehmer && !String(co.steuerNr || '').trim() && !String(co.ustId || '').trim()) {
+    out.push('Rechnungen mit Umsatzsteuer brauchen eine Steuernummer oder USt-IdNr. — bitte unter Firma eintragen.');
+  }
+  let legal = null;
+  try { legal = typeof legalMod?.legalWarnings === 'function' ? legalMod.legalWarnings(settings) : null; } catch { legal = null; }
+  if (Array.isArray(legal)) out.push(...legal.map(String));
+  else if (!String(co.owner || '').trim()) out.push('Firma: Inhaber (voller Name) fehlt — er gehört auf Rechnungen und ins Impressum.');
+  return out;
+}
 
 let settings;
 function loadSettings() {
@@ -253,6 +321,13 @@ function loadSettings() {
   // Gutscheine: nur Objekte; mitAktion (mit laufender Aktion kombinierbar) fehlt bei älteren Einträgen → false
   settings.coupons = settings.coupons.filter((c) => c && typeof c === 'object');
   for (const c of settings.coupons) c.mitAktion = !!c.mitAktion;
+  // Migration: Gutschrift-Codes aus Reklamationen („GS-XXXX-XXXX“, Notiz „Gutschrift … zu <Bestellung>“) sind Guthaben —
+  // einmal pro Betrag einlösbar (Rest bleibt) und auch während einer Aktion gültig
+  for (const c of settings.coupons) {
+    if (c.guthaben === undefined && c.type === 'fixed' && /^GS-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(String(c.code || '')) && /^Gutschrift\b/.test(String(c.note || ''))) {
+      c.guthaben = true; c.mitAktion = true;
+    }
+  }
   // Aktionen: Array erzwingen, kaputte Einträge verwerfen (Meldung im Log)
   settings.aktionen = sanitizeAktionen(settings.aktionen, { lenient: true });
   // Ein leeres/ungültiges Admin-Passwort würde den Admin entweder für alle öffnen oder dauerhaft aussperren
@@ -290,11 +365,38 @@ function loadSettings() {
   }
   // Migration: Farbaufpreis je Körperfarbe (€/Stück, Standard 0)
   for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
-  saveSettings();
+  // Migration Marke (formsam): alter Firmenname „OVJU — …“ → „formsam“, Absendername „OVJU“ → „formsam“.
+  // Neue Felder (Land, Steuernummer, Shop- und Rechtsangaben) mit Standardwerten auffüllen — Adresse, IBAN usw. bleiben, wie sie sind.
+  const co = { ...plainObj(settings.company) };
+  if (/ovju/i.test(String(co.name || ''))) co.name = DEFAULT_SETTINGS.company.name;
+  for (const [k, v] of Object.entries(DEFAULT_SETTINGS.company)) if (co[k] === undefined || co[k] === null) co[k] = v;
+  settings.company = co;
+  if (/ovju/i.test(String(settings.mail.fromName || ''))) settings.mail.fromName = DEFAULT_SETTINGS.mail.fromName;
+  settings.shop = sanitizeShop(settings.shop);
+  settings.legal = sanitizeLegal(settings.legal);
+  for (const h of settingsHinweise()) console.warn(`⚠️  ${h}`);
+  saveSettings().catch((err) => console.error('Einstellungen konnten nicht gespeichert werden:', err?.message || err));
 }
-async function saveSettings() {
-  await mkdir(DATA, { recursive: true });
-  await writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+// Atomar (Temp-Datei + rename) und nacheinander: ein Absturz mitten im Schreiben hinterlässt nie eine halbe settings.json,
+// und zwei schnelle Speichervorgänge überholen sich nicht (der spätere Stand gewinnt)
+let settingsWrite = Promise.resolve();
+function saveSettings() {
+  const json = JSON.stringify(settings, null, 2);   // Stand zum Aufrufzeitpunkt
+  settingsWrite = settingsWrite.catch(() => {}).then(() => writeFileAtomic(SETTINGS_FILE, json));
+  return settingsWrite;
+}
+let atomicSeq = 0;
+/** Datei atomar schreiben (Temp-Datei im selben Ordner + rename) */
+async function writeFileAtomic(file, data) {
+  await mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}${(++atomicSeq).toString(36)}.tmp`;
+  try {
+    await writeFile(tmp, data);
+    await rename(tmp, file);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,9 +410,10 @@ function loadUsers() {
   try { users = JSON.parse(readFileSync(USERS_FILE, 'utf8')).users || []; } catch { users = []; }
   try { sessions = JSON.parse(readFileSync(SESS_FILE, 'utf8')); } catch { sessions = {}; }
   // alte Sessions (> 90 Tage) aufräumen
-  const cutoff = Date.now() - 90 * 864e5;
+  const cutoff = Date.now() - SESSION_TTL;
   for (const [t, s] of Object.entries(sessions)) if (s.createdAt < cutoff) delete sessions[t];
 }
+const SESSION_TTL = 90 * 864e5;   // Anmeldung gilt 90 Tage — danach wird sie beim nächsten Zugriff bzw. Serverstart entfernt
 const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2));
 
 // ---------------------------------------------------------------------------
@@ -404,8 +507,16 @@ function createSession(userId) {
   return token;
 }
 function userFromReq(req) {
-  const s = sessions[req.headers['x-auth'] || ''];
-  return s ? users.find((u) => u.id === s.userId) : null;
+  const t = String(req.headers['x-auth'] || '');
+  const s = t && Object.hasOwn(sessions, t) ? sessions[t] : null;
+  if (!s) return null;
+  // Abgelaufene Anmeldung (> 90 Tage) auch im laufenden Betrieb entfernen (so steht es in der Datenschutzerklärung)
+  if (!(s.createdAt >= Date.now() - SESSION_TTL)) {
+    delete sessions[t];
+    saveSessions().catch(() => {});
+    return null;
+  }
+  return users.find((u) => u.id === s.userId) || null;
 }
 const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address || null });
 
@@ -505,8 +616,27 @@ async function noteQueued(order, key, subject, to, q) {
   if (q.status === 'wartet' || q.status === 'gesendet') return noteMailSent(order, key, subject, to);
   return noteMailSkipped(order, `E-Mail „${subject}“ an ${to} nicht gesendet: ${q.error || q.status} — liegt im Versandprotokoll`);
 }
-/** Mail zu einer Bestellung rendern (Admin: Vorschau & Versand). kind: bestaetigung | status | freitext | reklamation (+ phase) */
-function renderOrderMail(order, { kind, status, phase, subject, text } = {}) {
+/**
+ * AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) als HTML-Anhänge der Bestellbestätigung — so hat die Kundschaft
+ * die Vertragsbedingungen auf einem dauerhaften Datenträger (§ 312f Abs. 2 BGB). Ohne lib/legal.js: keine Anhänge.
+ */
+async function legalAttachments() {
+  const mod = await legalModule();
+  if (!mod) return [];
+  const out = [];
+  for (const [slug, filename] of [['agb', 'formsam-AGB.html'], ['widerruf', 'formsam-Widerrufsbelehrung.html']]) {
+    try {
+      const html = await mod.renderLegalPage(slug, { settings, baseUrl: baseUrlFor(settings), forMail: true });
+      if (typeof html === 'string') out.push({ filename, content: html, contentType: 'text/html; charset=utf-8' });
+    } catch (err) { console.error(`Anhang ${filename} fehlgeschlagen:`, err?.message || err); }
+  }
+  return out;
+}
+/**
+ * Mail zu einer Bestellung rendern (Admin: Vorschau & Versand). kind: bestaetigung | status | freitext | reklamation (+ phase)
+ * anhaenge: Dateinamen der Rechtstexte, die mit der Bestätigung verschickt werden (nur Hinweistext in der Mail)
+ */
+function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge = [] } = {}) {
   const baseUrl = baseUrlFor(settings);
   switch (kind) {
     case 'reklamation': {
@@ -521,7 +651,7 @@ function renderOrderMail(order, { kind, status, phase, subject, text } = {}) {
       return { key: `reklamation:${ph}`, kind: `reklamation:${ph}`, ...reklamationMail({ order, phase: ph, settings, baseUrl }) };
     }
     case 'bestaetigung':
-      return { key: 'bestaetigung', kind, ...orderConfirmation({ order, settings, baseUrl }) };
+      return { key: 'bestaetigung', kind, ...orderConfirmation({ order, settings, baseUrl, anhaenge }) };
     case 'status': {
       const st = String(status || order.status || '');
       if (!STATUSES.includes(st)) throw httpError(400, 'Ungültiger Status');
@@ -547,8 +677,9 @@ hooks.orderCompleted = async (order) => {
   const cust = customerAddress(order);
   let customerMail = null;   // { subject, q } — nur wenn eine Kundenadresse vorliegt
   if (isEmail(cust.email)) {
-    const m = orderConfirmation({ order, settings, baseUrl });
-    const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, kind: 'bestaetigung', ref: order.orderId });
+    const attachments = await legalAttachments();   // AGB + Widerrufsbelehrung zum Aufbewahren
+    const m = orderConfirmation({ order, settings, baseUrl, anhaenge: attachments.map((a) => a.filename) });
+    const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: 'bestaetigung', ref: order.orderId });
     customerMail = { subject: m.subject, q };
   }
   const adminTo = mc.adminTo || String(settings.company?.email || '').trim();
@@ -579,6 +710,20 @@ hooks.reklamation = async (order, phase, { notify = true } = {}) => {
   const m = reklamationMail({ order, phase, settings, baseUrl: baseUrlFor(settings) });
   const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, kind: key, ref: order.orderId });
   await noteQueued(order, key, m.subject, cust.email, q);
+};
+// Widerruf eingegangen → Eingangsbestätigung an die angegebene Adresse (sofort, mit Inhalt, Datum/Uhrzeit, Referenz) und
+// Meldung an den Shop (adminTo, sonst Firmen-Adresse) — die Meldung geht unabhängig von „Kopie an den Shop“ raus,
+// ein Widerruf darf nicht untergehen. Zugeordnete Bestellung: Mail-Vermerk in der Historie.
+hooks.widerruf = async (w) => {
+  const baseUrl = baseUrlFor(settings);
+  const m = widerrufEingang({ widerruf: w, settings, baseUrl });
+  const q = await mailer.queue({ to: { name: w.name, email: w.email }, subject: m.subject, text: m.text, html: m.html, kind: 'widerruf', ref: w.ref });
+  const adminTo = mailSettings(settings.mail).adminTo || String(settings.company?.email || '').trim();
+  if (isEmail(adminTo)) {
+    const a = adminWiderruf({ widerruf: w, settings, baseUrl });
+    await mailer.queue({ to: adminTo, subject: a.subject, text: a.text, html: a.html, kind: 'admin-widerruf', ref: w.ref });
+  }
+  if (w.orderMatched) await noteQueued({ orderId: w.orderId }, `widerruf:${w.ref}`, m.subject, w.email, q);
 };
 // Neues Kundenkonto → Willkommensmail
 hooks.userRegistered = async (user) => {
@@ -701,10 +846,14 @@ function computeTotals(items, couponCode) {
   if (couponCode) {
     const c = settings.coupons.find((x) => x.active && String(x.code || '').trim().toLowerCase() === String(couponCode).trim().toLowerCase());
     if (c && subtotal >= (c.minOrder || 0)) {
-      if (aktion && !c.mitAktion) {
+      // Guthaben-Gutschein (Gutschrift): höchstens der noch offene Restwert
+      const rest = isGuthaben(c) ? couponRest(c) : null;
+      if (rest !== null && rest <= 0) {
+        couponError = `Gutschein „${c.code}“ ist bereits vollständig eingelöst.`;
+      } else if (aktion && !c.mitAktion) {
         couponError = `Gutschein „${c.code}“ ist nicht mit der Aktion „${aktion.name}“ kombinierbar.`;
       } else {
-        const off = c.type === 'fixed' ? Math.min(c.value, subtotal) : subtotal * c.value / 100;
+        const off = c.type === 'fixed' ? Math.min(rest ?? c.value, c.value, subtotal) : subtotal * c.value / 100;
         coupon = { code: c.code, type: c.type, value: c.value, off: Math.round(off * 100) / 100 };
         afterCoupon = Math.round((subtotal - coupon.off) * 100) / 100;
       }
@@ -740,9 +889,43 @@ function readBody(req, limit = MAX_JSON) {
     req.on('error', reject);
   });
 }
+/** Datumsstempel YYMMDD (UTC) für Bestell- und Widerrufsnummern */
+const stampYYMMDD = (d = new Date()) => d.toISOString().slice(2, 10).replace(/-/g, '');
+// Bestellnummern: neu „FS-YYMMDD-XXXXXX“; ältere Bestellungen tragen „OV-…“ und bleiben gültig (Routen/Prüfungen akzeptieren beide)
+const ORDER_ID_RE = /^(OV|FS)-\d{6}-[A-F0-9]{4,6}$/;
 function newOrderId() {
-  const stamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-  return `OV-${stamp}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+  return `FS-${stampYYMMDD()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Belegnummern (Rechnung RE-…, Gutschrift GS-…) mit automatischem Jahreswechsel
+// ---------------------------------------------------------------------------
+/** Kalenderjahr in deutscher Zeit — Belegdatum und Nummernkreis richten sich danach, nicht nach der Server-Zeitzone */
+const berlinYear = (d = new Date()) => Number(new Intl.DateTimeFormat('de-DE', { timeZone: 'Europe/Berlin', year: 'numeric' }).format(d));
+/**
+ * Jahreswechsel im Nummernkreis: steht im Präfix eine Jahreszahl vor dem aktuellen Jahr („RE-2026-“ im Jahr 2027),
+ * wird sie auf das aktuelle Jahr gesetzt und der Zähler beginnt wieder bei 1. Präfixe ohne Jahreszahl oder mit
+ * aktuellem/künftigem Jahr bleiben unverändert. Reine Funktion (Datum injizierbar) — vergebene Nummern ändern sich nie.
+ * → { prefix, next, gewechselt }
+ */
+function belegJahreswechsel(prefix, next, now = new Date()) {
+  const year = berlinYear(now);
+  const p = String(prefix ?? '');
+  const n = Math.max(1, Math.round(Number(next)) || 1);
+  const m = p.match(/(?<!\d)(?:19|20)\d{2}(?!\d)/);
+  if (m && Number(m[0]) < year) return { prefix: p.slice(0, m.index) + year + p.slice(m.index + 4), next: 1, gewechselt: true };
+  return { prefix: p, next: n, gewechselt: false };
+}
+/**
+ * Nächste Belegnummer aus settings[prefixKey] + settings[nextKey] ziehen (vierstellig, mit Jahreswechsel) und den Zähler
+ * weiterzählen — der Aufrufer speichert die Einstellungen. Synchron, damit parallele Anfragen nie dieselbe Nummer bekommen.
+ */
+function nextBelegNr(prefixKey, nextKey, fallbackPrefix, now = new Date()) {
+  const j = belegJahreswechsel(settings[prefixKey] || fallbackPrefix, settings[nextKey], now);
+  if (j.gewechselt) console.log(`🗓️  Nummernkreis ${prefixKey}: Jahreswechsel „${settings[prefixKey]}“ → „${j.prefix}“, Zähler beginnt bei 1`);
+  settings[prefixKey] = j.prefix;
+  settings[nextKey] = j.next + 1;
+  return j.prefix + String(j.next).padStart(4, '0');
 }
 /** Vergleich mit dem Admin-Passwort in konstanter Zeit; ein leeres/ungültiges Passwort passt nie. */
 function adminKeyMatches(k) {
@@ -801,6 +984,7 @@ function normalizeOrder(order) {
   if (order.completedAt === undefined) order.completedAt = null;   // Zeitpunkt des (ersten) /complete
   if (!order.mailsSent || typeof order.mailsSent !== 'object') order.mailsSent = {};   // { bestaetigung|Status|reklamation:<Phase>: ISO }
   if (!order.reklamation || typeof order.reklamation !== 'object') order.reklamation = null;   // Reklamation/Rückversand/Gutschrift
+  if (!Array.isArray(order.widerrufe)) order.widerrufe = [];   // [{ ref, at }] — Widerrufe über die Widerrufsfunktion, deren E-Mail zur Bestellung passte
   if (!order.aktion || typeof order.aktion !== 'object') order.aktion = null;   // { id, name, prozent, ersparnis } — Bestellungen vor den Aktionen: null
   if (!Array.isArray(order.aktionen)) order.aktionen = [];   // alle betroffenen Aktionen (Format wie aktion + produkte/muster) — ältere Bestellungen: [] (orderAktionen() fällt auf aktion zurück)
   if (!Array.isArray(order.history)) {
@@ -840,24 +1024,55 @@ async function writeOrder(order) {
   const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
   await writeFile(tmp, JSON.stringify(order, null, 2));
   await rename(tmp, file);
+  trackCouponUse(order);
+}
+
+// ---------------------------------------------------------------------------
+// Guthaben-Gutscheine (Gutschrift aus einer Reklamation: coupon.guthaben = true, Typ „fixed“): ein Betrag, der über
+// mehrere Bestellungen aufgebraucht wird — ohne das wäre ein Erstattungs-Code beliebig oft einlösbar. Eingelöst ist, was
+// nicht stornierte Bestellungen mit diesem Code abgezogen haben; die Zahl kommt aus den Bestelldateien (beim Start
+// eingelesen, bei jedem writeOrder aktualisiert) — ein veralteter Admin-Stand kann den Gutschein so nicht „auffüllen“.
+// Normale Rabattcodes (OSTERN10 …) bleiben unbegrenzt einlösbar.
+// ---------------------------------------------------------------------------
+const couponUse = new Map();   // CODE (groß) → Map(orderId → abgezogener Betrag)
+function trackCouponUse(order) {
+  const id = order?.orderId;
+  if (!id) return;
+  for (const m of couponUse.values()) m.delete(id);
+  const code = String(order.coupon?.code || '').trim().toUpperCase();
+  if (!code || order.status === 'storniert') return;
+  if (!couponUse.has(code)) couponUse.set(code, new Map());
+  couponUse.get(code).set(id, Number(order.coupon.off) || 0);
+}
+const isGuthaben = (c) => !!c?.guthaben && c.type === 'fixed';
+/** Restwert eines Guthaben-Gutscheins: Wert − Summe der Einlösungen (auf Cent, nie negativ) */
+function couponRest(c) {
+  const used = [...(couponUse.get(String(c?.code || '').trim().toUpperCase())?.values() || [])].reduce((a, v) => a + v, 0);
+  return Math.max(0, Math.round(((Number(c?.value) || 0) - used) * 100) / 100);
+}
+async function loadCouponUse() {
+  for (const o of await listOrders()) trackCouponUse(o);
 }
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-/** Bezeichnung einer Position (Rechnung, CSV); mitAktion: „Aktion „Name“ −16 % (UVP 24,90 €)“ anhängen — die Rechnung zeigt das als eigene Zeile */
-function itemLabel(it, { mitAktion = false } = {}) {
+/**
+ * Bezeichnung einer Position (Rechnung, CSV); mitAktion: „Aktion „Name“ −16 % (Normalpreis 24,90 €)“ anhängen — die Rechnung zeigt das als eigene Zeile.
+ * mitAufpreis = false: „· Aufpreis Farbe/…“ weglassen — die Rechnung nennt die Aufpreise mit Beträgen in der Hinweiszeile darunter.
+ */
+function itemLabel(it, { mitAktion = false, mitAufpreis = true } = {}) {
   const c = it.config || {};
   const sur = surchargeList(it).filter((x) => x.key !== 'gravur').map((x) => x.label);
   const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen', lamellen: 'Lamellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' }[c.pattern] || c.pattern;
-  return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${c.preset === 'eigene' ? 'Eigene Form' : (c.preset || '')}“ · ${patt}` +
+  return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${PRESET_LABELS[c.preset] || c.preset || ''}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
     (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} — 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
     (c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${RIM_LABELS[c.rim]}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
     (it.code ? ` · Design-Code ${it.code}` : '') +
     // Aufpreise (Muster/Farbschrift/Farbe) nur wenn > 0 — Gravur/Untersetzer stehen schon im Label
-    (sur.length ? ` · Aufpreis ${sur.join('/')}` : '') +
-    (mitAktion && it.aktionProzent > 0 ? ` · Aktion${it.aktionName ? ` „${it.aktionName}“` : ''} −${it.aktionProzent} % (UVP ${money(it.uvp)})` : '');
+    (mitAufpreis && sur.length ? ` · Aufpreis ${sur.join('/')}` : '') +
+    (mitAktion && it.aktionProzent > 0 ? ` · Aktion${it.aktionName ? ` „${it.aktionName}“` : ''} −${it.aktionProzent} % (Normalpreis ${money(it.uvp)})` : '');
 }
 
 // Anzeigenamen für Druckzettel & Admin (Spiegel der Client-Labels)
@@ -874,11 +1089,150 @@ function colorByRef(id, name) {
 const safeHex = (h) => (/^#[0-9a-f]{3,8}$/i.test(String(h || '')) ? h : '#cccccc');
 
 // ---------------------------------------------------------------------------
+// Belege im formsam-Look (Rechnung, Gutschrift, Druckzettel): gemeinsamer Kopf (Wort-Bild-Marke + Absender),
+// Fußzeile und Druck-CSS (A4, @page-Rand 14 mm). Schriften kommen vom eigenen Server (/fonts), sonst Georgia bzw.
+// system-ui — keine externen Ressourcen. Rechnung und Gutschrift sind statische Dateien in orders/<ID>/ und werden
+// nach dem Ausstellen nie neu geschrieben (ältere Belege behalten ihr altes Aussehen).
+// ---------------------------------------------------------------------------
+const BRAND = 'formsam';
+const TZ = 'Europe/Berlin';
+/** Datum in deutscher Zeit („27.9.2026“) — Belege zeigen das Datum, an dem sie in Deutschland ausgestellt wurden */
+const dateDE = (iso) => new Date(iso || Date.now()).toLocaleDateString('de-DE', { timeZone: TZ });
+/**
+ * Wort-Bild-Marke aus public/img/brand/formsam-logo.svg (Vektor aus Julians Entwurf: Terrakotta-Zeichen + Schriftzug in Tinte,
+ * fill-rule evenodd) — einmal beim Start gelesen und als Inline-SVG eingebettet; fehlt die Datei, steht die Wortmarke als Text.
+ */
+const LOGO_SVG = (() => {
+  try {
+    const raw = readFileSync(path.join(PUBLIC, 'img', 'brand', 'formsam-logo.svg'), 'utf8');
+    const vb = raw.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
+    const paths = [...raw.matchAll(/<path\b[^>]*\/>/g)].map((m) => m[0]);
+    return vb && paths.length ? { w: Number(vb[1]), h: Number(vb[2]), paths: paths.join('') } : null;
+  } catch { return null; }
+})();
+function logoHTML(height = 34) {
+  if (!LOGO_SVG) return `<span class="wortmarke">${BRAND}</span>`;
+  const w = Math.round((LOGO_SVG.w / LOGO_SVG.h) * height * 10) / 10;
+  return `<svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${LOGO_SVG.w} ${LOGO_SVG.h}" width="${w}" height="${height}" role="img" aria-label="${BRAND}"><title>${BRAND}</title>${LOGO_SVG.paths}</svg>`;
+}
+/** Öffentlicher Host für Fußzeilen: aus mail.publicUrl (wenn gesetzt), sonst formsam.de */
+function publicHost() {
+  const u = String(settings.mail?.publicUrl || '').trim();
+  try { if (/^https?:\/\//i.test(u)) return new URL(u).host.replace(/^www\./, ''); } catch { /* ungültig → Standard */ }
+  return 'formsam.de';
+}
+/** „00000 Musterstadt“ + Land (nur außerhalb Deutschlands) */
+function companyOrt(co) {
+  const land = String(co.country || '').trim();
+  return [[co.zip, co.city].filter(Boolean).join(' '), land && land !== 'Deutschland' ? land : ''].filter(Boolean).join(', ');
+}
+/** Absenderblock rechts im Kopf (zweispaltig, damit der Kopf flach bleibt): Marke, Inhaber (voller Name), Anschrift | Kontakt, Steuernummer/USt-IdNr. */
+function belegAbsender(co) {
+  const adresse = [`<b>${esc(co.name || BRAND)}</b>`, esc(co.owner), esc(co.street), esc(companyOrt(co))].filter(Boolean);
+  const kontakt = [
+    co.email ? esc(co.email) : '', co.phone ? `Tel. ${esc(co.phone)}` : '',
+    co.steuerNr ? `Steuernummer ${esc(co.steuerNr)}` : '', co.ustId ? `USt-IdNr. ${esc(co.ustId)}` : '',
+  ].filter(Boolean);
+  return `<div class="absender"><div>${adresse.join('<br>')}</div>${kontakt.length ? `<div class="kontakt">${kontakt.join('<br>')}</div>` : ''}</div>`;
+}
+/** Rücksendezeile über der Empfängeranschrift (klein) */
+const belegRuecksende = (co) => [co.name || BRAND, co.owner, co.street, companyOrt(co)].map((x) => String(x || '').trim()).filter(Boolean).map(esc).join(' · ');
+/** Fußzeile: formsam · Inhaber · Anschrift · E-Mail · Web-Adresse */
+function belegFuss(co) {
+  const parts = [co.name || BRAND, co.owner, [co.street, companyOrt(co)].filter(Boolean).join(', '), co.email, publicHost()];
+  return `<footer class="fuss">${parts.map((x) => String(x || '').trim()).filter(Boolean).map(esc).join(' · ')}</footer>`;
+}
+const BELEG_CSS = `
+    @font-face{font-family:'Fraunces';src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:400 700;font-display:swap}
+    @font-face{font-family:'Inter';src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
+    @page{size:A4;margin:14mm}
+    *{box-sizing:border-box}
+    html{background:#f4efe7}
+    body{margin:0;padding:22px 16px 40px;font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#211d18;font-size:13px;line-height:1.45;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .blatt{background:#fff;max-width:210mm;margin:0 auto;padding:15mm 15mm 11mm;border-radius:4px;box-shadow:0 1px 3px rgba(33,29,24,.08),0 14px 36px rgba(33,29,24,.08)}
+    .leiste{max-width:210mm;margin:0 auto 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+    .leiste button{font:inherit;font-weight:600;padding:10px 22px;border-radius:999px;border:none;background:#211d18;color:#f4efe7;cursor:pointer}
+    .leiste a{color:#9e4f2c}
+    .kopf{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:12px;border-bottom:1px solid #e6ddd0}
+    .logo{display:block;height:34px;width:auto;margin-top:2px}
+    .wortmarke{font-family:Fraunces,Georgia,serif;font-size:30px;line-height:1}
+    .absender{display:flex;gap:22px;font-size:11px;line-height:1.5;color:#4a433b}
+    .absender b{font-family:Fraunces,Georgia,serif;font-weight:600;font-size:12.5px;color:#211d18}
+    .absender .kontakt{padding-top:1px}
+    .anschrift{display:flex;justify-content:space-between;align-items:flex-start;gap:28px;margin:18px 0 14px}
+    .empfaenger{min-width:0;font-size:13px}
+    .ruecksende{font-size:9px;color:#6b6257;border-bottom:1px solid #e6ddd0;padding-bottom:2px;margin-bottom:7px;white-space:nowrap}
+    table.meta{border-collapse:collapse;font-size:12px}
+    .meta th{text-align:left;font-weight:400;color:#6b6257;padding:1px 16px 1px 0;white-space:nowrap;vertical-align:top}
+    .meta td{text-align:right;padding:1px 0;font-weight:600;white-space:nowrap}
+    .meta td small{display:block;font-weight:400;color:#6b6257;font-size:10px}
+    h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:24px;line-height:1.15;margin:0;letter-spacing:-.01em}
+    .muted{color:#6b6257}
+    table.pos{width:100%;border-collapse:collapse;margin:10px 0 4px}
+    .pos th,.pos td{padding:4px 7px;border-bottom:1px solid #e6ddd0;text-align:left;vertical-align:top;line-height:1.38}
+    .pos th{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#6b6257;border-bottom:1.5px solid #211d18}
+    .pos td{font-size:12px}
+    .pos td small{font-size:10.5px}
+    .r{text-align:right;white-space:nowrap}
+    table.summen{width:100%;max-width:470px;margin:0 0 0 auto;border-collapse:collapse}
+    .summen td{padding:2px 7px;font-size:12.5px}
+    .summen .grand td{font-weight:700;font-size:14.5px;border-top:1.5px solid #211d18;padding-top:6px}
+    .summen .fein td{font-size:11px;color:#6b6257;padding-top:1px;padding-bottom:1px}
+    .steuer{margin:10px 0 0;font-size:11.5px;color:#4a433b}
+    .zahlung{margin-top:10px;padding:9px 14px;background:#f4efe7;border-left:3px solid #c86f4a;border-radius:0 8px 8px 0;font-size:12px}
+    .zahlung table{border-collapse:collapse;margin-top:4px}
+    .zahlung th{font-weight:400;color:#6b6257;text-align:left;padding:0 12px 0 0;white-space:nowrap}
+    .zahlung td{font-weight:600;padding:0 28px 0 0}
+    .dank{margin:12px 0 0;font-size:12.5px}
+    .akzent{color:#9e4f2c}
+    .nm{text-transform:none;letter-spacing:0}
+    .klein{font-size:10px;line-height:1.4;color:#6b6257;margin:6px 0 0}
+    .fuss{margin-top:14px;padding-top:6px;border-top:1px solid #e6ddd0;font-size:9.5px;color:#6b6257;text-align:center}
+    @media print{html{background:none}body{padding:0;font-size:12px}.blatt{max-width:none;padding:0;box-shadow:none;border-radius:0}.leiste{display:none}
+      h1{font-size:22px}.empfaenger{font-size:12.5px}.pos td{font-size:11.5px}.pos td small{font-size:10px}.summen td{font-size:12px}.summen .grand td{font-size:14px}.dank{font-size:12px}}
+    @media (max-width:640px){.blatt{padding:18px}.kopf,.anschrift,.absender{flex-direction:column}.absender{gap:6px}.ruecksende{white-space:normal}.zahlung tr{display:flex;flex-wrap:wrap}}`;
+/** Komplettes Beleg-Dokument: Knopfleiste (nur Bildschirm) + Blatt mit Kopf, Inhalt und Fußzeile */
+function belegSeite({ title, co, body, css = '', leiste = '<button type="button" onclick="print()">Drucken / als PDF speichern</button>', logoHeight = 34 }) {
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+  <style>${BELEG_CSS}${css}</style></head><body>
+  <div class="leiste noprint">${leiste}</div>
+  <main class="blatt">
+  <header class="kopf"><div class="marke">${logoHTML(logoHeight)}</div>${belegAbsender(co)}</header>
+  ${body}
+  ${belegFuss(co)}
+  </main>
+  </body></html>`;
+}
+/** Brutto → { netto, ust } bei 19 % Umsatzsteuer, auf Cent gerundet — netto + ust ergibt exakt den Bruttobetrag */
+function ustAus(brutto, satz = 19) {
+  const c = Math.round((Number(brutto) || 0) * 100);
+  const n = Math.round(c / (1 + satz / 100));
+  return { netto: n / 100, ust: (c - n) / 100 };
+}
+/**
+ * Leistungszeitpunkt als Kalendermonat (§ 31 Abs. 4 UStDV): Rechnungsdatum + längste Lieferzeit aus settings.shop.lieferzeit
+ * („5–8 Werktage“ → 8 Werktage Mo–Fr, „2 Wochen“, „10 Tage“) → „Oktober 2026“. Ohne Zahl: Monat des Rechnungsdatums.
+ */
+function lieferMonat(fromIso, lieferzeit) {
+  const d = new Date(fromIso || Date.now());
+  const lz = String(lieferzeit || '');
+  const nums = lz.match(/\d+/g);
+  const n = nums ? Math.max(...nums.map(Number)) : 0;
+  if (n > 0 && n <= 366) {
+    if (/woche/i.test(lz)) d.setUTCDate(d.getUTCDate() + n * 7);
+    else if (/werktag|arbeitstag/i.test(lz)) {
+      for (let k = n; k > 0;) { d.setUTCDate(d.getUTCDate() + 1); const wd = d.getUTCDay(); if (wd !== 0 && wd !== 6) k--; }
+    } else d.setUTCDate(d.getUTCDate() + n);
+  }
+  return d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric', timeZone: TZ });
+}
+
+// ---------------------------------------------------------------------------
 // Druckzettel (A4, schwarz/weiß-tauglich) — GET /admin/druckzettel/<ID>?k=<adminKey>
 // ---------------------------------------------------------------------------
 function druckzettelHTML(order) {
   const cu = order.customer || {};
-  const dt = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+  const dt = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short', timeZone: TZ }) : '—');
   const rows = order.lines.map((l, i) => {
     const c = l.config || {};
     const body = colorByRef(c.color, l.colorName);
@@ -909,17 +1263,17 @@ function druckzettelHTML(order) {
   const pay = order.payment === 'paypal' ? `PayPal${order.paypalOrderId ? ` (${esc(order.paypalOrderId)})` : ''}` : 'Vorkasse';
   const payState = order.paymentStatus === 'bezahlt' ? `bezahlt${order.paidAt ? ' am ' + dt(order.paidAt) : ''}` : 'OFFEN';
   const pieces = order.lines.reduce((s, l) => s + (l.qty || 0), 0);
-  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Druckzettel ${esc(order.orderId)}</title>
-  <style>
+  const css = `
     @page{size:A4;margin:12mm}
-    body{font-family:system-ui,sans-serif;color:#111;max-width:190mm;margin:14px auto;padding:0 10px;font-size:12.5px;line-height:1.4}
-    .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:12px;gap:16px}
-    h1{font-size:30px;margin:0;letter-spacing:.02em} .muted{color:#555}
-    .meta{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;margin:10px 0 14px}
-    .meta b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#555;margin-bottom:2px}
-    table{width:100%;border-collapse:collapse;margin:8px 0}
-    th,td{border:1px solid #333;padding:6px 7px;text-align:left;vertical-align:top}
-    th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;background:#eee}
+    .blatt{font-size:12.5px;line-height:1.4}
+    .zettel-kopf{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:14px 0 10px;padding-bottom:8px;border-bottom:2px solid #211d18}
+    .zettel-kopf h1{font-family:Inter,system-ui,sans-serif;font-weight:700;font-size:28px;letter-spacing:.02em}
+    .zettel-kopf .etikett{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#6b6257}
+    .zmeta{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;margin:10px 0 14px}
+    .zmeta b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#555;margin-bottom:2px}
+    table.zettel{width:100%;border-collapse:collapse;margin:8px 0}
+    .zettel th,.zettel td{border:1px solid #333;padding:6px 7px;text-align:left;vertical-align:top}
+    .zettel th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;background:#eee}
     td.c{text-align:center} td.big{font-size:18px;font-weight:700;white-space:nowrap}
     td.file{font-family:ui-monospace,monospace;font-size:11px;word-break:break-all;max-width:120px}
     td.note{min-width:70px}
@@ -928,91 +1282,99 @@ function druckzettelHTML(order) {
     .sw{display:inline-block;width:14px;height:14px;border:1px solid #333;border-radius:3px;vertical-align:-2px;margin-right:3px}
     .notes{border:1px solid #333;border-radius:6px;min-height:70px;padding:6px 8px;margin-top:10px}
     .notes b{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:#555}
-    .foot{display:flex;justify-content:space-between;gap:16px;border-top:1px solid #333;margin-top:12px;padding-top:6px;font-size:11.5px}
-    .noprint{margin:16px 0}.noprint button{padding:9px 20px;border-radius:999px;border:none;background:#111;color:#fff;font-weight:600;cursor:pointer;font-size:14px}
-    @media print{.noprint{display:none}body{margin:0}}
-  </style></head><body>
-  <div class="noprint"><button onclick="print()">🖨️ Druckzettel drucken</button> <a href="/admin" style="margin-left:12px">← zurück zum Admin</a></div>
-  <div class="head">
-    <div><div class="muted">OVJU · Druckzettel</div><h1>${esc(order.orderId)}</h1></div>
+    .zfoot{display:flex;justify-content:space-between;gap:16px;border-top:1px solid #333;margin-top:12px;padding-top:6px;font-size:11.5px}
+    .absender{font-size:10px}`;
+  const body = `
+  <div class="zettel-kopf">
+    <div><div class="etikett"><span class="nm">${BRAND}</span> · Druckzettel</div><h1>${esc(order.orderId)}</h1></div>
     <div style="text-align:right">Bestellt am<br><b>${dt(order.createdAt)}</b>${order.invoiceNo ? `<br><small>Rechnung ${esc(order.invoiceNo)}</small>` : ''}</div>
   </div>
-  <div class="meta">
+  <div class="zmeta">
     <div><b>Kunde &amp; Lieferadresse</b>${esc(cu.name)}<br>${esc(cu.street)}<br>${esc(cu.zip)} ${esc(cu.city)}<br><span class="muted">${esc(cu.email)}</span></div>
     <div><b>Auftrag</b>${order.lines.length} Position(en) · ${pieces} Stück${cu.note ? `<br><b style="margin-top:6px">Kundenhinweis</b>${esc(cu.note)}` : ''}${order.adminNote ? `<br><b style="margin-top:6px">Interne Notiz</b>${esc(order.adminNote)}` : ''}</div>
   </div>
-  <table><tr><th>gedruckt</th><th>Menge</th><th>Produkt / Form</th><th>Muster · Höhe</th><th>Farbe</th><th>Gravur</th><th>Datei</th><th>Notiz</th></tr>${rows}</table>
+  <table class="zettel"><tr><th>gedruckt</th><th>Menge</th><th>Produkt / Form</th><th>Muster · Höhe</th><th>Farbe</th><th>Gravur</th><th>Datei</th><th>Notiz</th></tr>${rows}</table>
   <div class="notes"><b>Notizen</b></div>
-  <div class="foot">
+  <div class="zfoot">
     <span>Status: <b>${esc(STATUS_LABELS[order.status] || order.status)}</b></span>
     <span>Zahlung: ${pay} · <b>${payState}</b></span>
     <span>Gesamt: <b>${order.total != null ? money(order.total) : '—'}</b></span>
-  </div>
-  </body></html>`;
+  </div>`;
+  return belegSeite({
+    title: `Druckzettel ${order.orderId} · ${BRAND}`, co: settings.company || {}, body, css, logoHeight: 26,
+    leiste: '<button type="button" onclick="print()">Druckzettel drucken</button> <a href="/admin">← zurück zum Admin</a>',
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Rechnung (HTML, druckbar → PDF über Browser-Druck)
+// Rechnung (HTML, druckbar → PDF über Browser-Druck; ein typischer Auftrag passt auf eine A4-Seite)
+//   Pflichtangaben: voller Name + Anschrift des Unternehmers und der Kundschaft, Rechnungsnummer, Ausstellungsdatum,
+//   Menge/Art, Entgelt; Kleinunternehmer: Hinweis auf § 19 UStG (§ 34a UStDV); sonst Netto/USt/Brutto,
+//   Leistungszeitpunkt als Kalendermonat und Steuernummer bzw. USt-IdNr. (Hinweis im Admin, wenn beides fehlt).
+//   Rechenwerte (Zeilen, Summen) kommen unverändert aus der Bestellung.
 // ---------------------------------------------------------------------------
 function invoiceHTML(order) {
-  const co = settings.company;
-  const vatNote = co.kleinunternehmer
-    ? 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.'
-    : `Im Gesamtbetrag enthaltene USt (19 %): ${money(order.total - order.total / 1.19)}`;
-  const payNote = order.payment === 'paypal'
-    ? `Bezahlt per PayPal am ${new Date(order.createdAt).toLocaleDateString('de-DE')}.`
-    : `Bitte überweise den Gesamtbetrag innerhalb von 14 Tagen unter Angabe der Rechnungsnummer:<br>
-       <b>${esc(co.iban)}</b>${co.bic ? ` · BIC: ${esc(co.bic)}` : ''}${co.bank ? ` · ${esc(co.bank)}` : ''}`;
-  // Aufpreis-Zeile (aus l.parts; ältere Bestellungen ohne parts zeigen keine) — Untersetzer/Größe stecken wie bisher im Einzelpreis;
-  // Aktionszeile „UVP 24,90 € · Aktion −16 % (Name)“ (Einzelpreis = reduzierter Preis) nur bei Zeilen mit aktionProzent > 0
-  const rows = order.lines.map((l) => {
-    const sur = surchargeText(l, settings);
-    const ak = aktionText(l, settings);
-    const notes = [ak, sur].filter(Boolean).map((t) => `<br><small class="muted">${esc(t)}</small>`).join('');
+  const co = settings.company || {};
+  const ku = !!co.kleinunternehmer;
+  const vorkasse = order.payment !== 'paypal';
+  const ausgestellt = order.completedAt || order.createdAt;
+  // Hinweiszeile je Position: Aktion „Normalpreis 24,90 € · Aktion −16 % (Name)“ (Einzelpreis = reduzierter Preis, nur bei aktionProzent > 0)
+  // und Aufpreise „inkl. Aufpreise: …“ (aus l.parts; ältere Bestellungen ohne parts zeigen keine) — Untersetzer/Größe stecken wie bisher im Einzelpreis
+  const rows = order.lines.map((l, i) => {
+    const note = [aktionText(l, settings), surchargeText(l, settings)].filter(Boolean).join(' · ');
     return `
-    <tr><td>${esc(itemLabel(l))}${notes}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
+    <tr><td class="muted">${i + 1}</td><td>${esc(itemLabel(l, { mitAufpreis: false }))}${note ? `<br><small class="muted">${esc(note)}</small>` : ''}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
     <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`;
   }).join('');
   // Ersparnis je betroffener Aktion („Aktion „Name“ −30 % auf Gehämmert: Ersparnis“) — informativ unter den Summen
   // (die Summen entstehen wie bisher aus den reduzierten Zeilen); ältere Bestellungen mit nur order.aktion: eine Zeile
   const aktionRow = aktionSummary(order, settings)
-    .map((a) => `<tr class="tot muted"><td>${esc(a.label)}</td><td class="r">${esc(a.value)}</td></tr>`).join('');
-  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Rechnung ${esc(order.invoiceNo)}</title>
-  <style>
-    body{font-family:system-ui;color:#1d1a16;max-width:800px;margin:40px auto;padding:0 24px;font-size:14px;line-height:1.5}
-    .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
-    h1{font-size:1.5rem;margin:0 0 4px} .muted{color:#6b6257} .sender{font-size:11px;color:#6b6257;margin-bottom:6px}
-    table{width:100%;border-collapse:collapse;margin:22px 0}
-    th,td{padding:9px 10px;border-bottom:1px solid #e5ddce;text-align:left;vertical-align:top}
-    th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b6257}
-    .r{text-align:right;white-space:nowrap} .tot td{border:none;padding:4px 10px}
-    .grand td{font-weight:700;font-size:1.05rem;border-top:2px solid #1d1a16}
-    .note{background:#faf6ee;border:1px solid #e5ddce;border-radius:10px;padding:14px 18px;margin-top:24px}
-    @media print{body{margin:10mm auto}.noprint{display:none}}
-    .noprint{margin-top:30px}.noprint button{padding:10px 22px;border-radius:999px;border:none;background:#1d1a16;color:#fff;font-weight:600;cursor:pointer}
-  </style></head><body>
-  <div class="head">
-    <div><h1>Rechnung</h1><div class="muted">Nr. ${esc(order.invoiceNo)} · ${new Date(order.createdAt).toLocaleDateString('de-DE')}<br>Bestellung ${esc(order.orderId)}</div></div>
-    <div style="text-align:right"><b>${esc(co.name)}</b><br>${esc(co.owner)}<br>${esc(co.street)}<br>${esc(co.zip)} ${esc(co.city)}<br>${esc(co.email)}${co.phone ? '<br>' + esc(co.phone) : ''}${co.ustId ? '<br>USt-IdNr. ' + esc(co.ustId) : ''}</div>
-  </div>
-  <div class="sender">${esc(co.name)} · ${esc(co.street)} · ${esc(co.zip)} ${esc(co.city)}</div>
-  <div><b>${esc(order.customer.name)}</b><br>${esc(order.customer.street)}<br>${esc(order.customer.zip)} ${esc(order.customer.city)}</div>
-  <table><tr><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
-  <table style="max-width:340px;margin-left:auto">
-    <tr class="tot"><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
-    ${order.coupon ? `<tr class="tot"><td>Gutschein „${esc(order.coupon.code)}“</td><td class="r">−${money(order.coupon.off)}</td></tr>` : ''}
-    <tr class="tot"><td>Versand</td><td class="r">${order.shipping === 0 ? 'kostenlos' : money(order.shipping)}</td></tr>
-    <tr class="tot grand"><td>Gesamtbetrag</td><td class="r">${money(order.total)}</td></tr>
+    .map((a) => `<tr class="fein"><td>${esc(a.label)}</td><td class="r">${esc(a.value)}</td></tr>`).join('');
+  const ust = ku ? null : ustAus(order.total);
+  const ustRows = ust
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer 19 %</td><td class="r">${money(ust.ust)}</td></tr>` : '';
+  // § 34a UStDV (seit 2025): Hinweis, dass die Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG gilt
+  const steuerNote = ku
+    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG — es wird keine Umsatzsteuer berechnet.'
+    : 'Alle Beträge in Euro inklusive 19 % Umsatzsteuer.';
+  const bank = [['Kontoinhaber', co.owner || co.name], ['IBAN', co.iban], ['BIC', co.bic], ['Bank', co.bank], ['Verwendungszweck', order.orderId], ['Betrag', money(order.total)]]
+    .filter(([, v]) => String(v || '').trim());
+  const bankRows = [];
+  for (let i = 0; i < bank.length; i += 2) bankRows.push(bank.slice(i, i + 2));
+  const payNote = vorkasse
+    ? `Bitte überweise den Gesamtbetrag innerhalb von 14 Tagen mit deiner Bestellnummer als Verwendungszweck:
+       <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`
+    : `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))} — danke!`;
+  const meta = [
+    ['Rechnungsnummer', esc(order.invoiceNo)],
+    ['Rechnungsdatum', esc(dateDE(ausgestellt))],
+    ['Bestellnummer', esc(order.orderId)],
+    ...(ku ? [] : [['Lieferdatum', `${esc(lieferMonat(ausgestellt, settings.shop?.lieferzeit))}<small>(Kalendermonat der Lieferung)</small>`]]),
+  ];
+  const cu = order.customer || {};
+  const body = `
+  <section class="anschrift">
+    <div class="empfaenger"><div class="ruecksende">${belegRuecksende(co)}</div>
+      <b>${esc(cu.name)}</b><br>${esc(cu.street)}<br>${esc(cu.zip)} ${esc(cu.city)}</div>
+    <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
+  </section>
+  <h1>Rechnung</h1>
+  <table class="pos"><tr><th>Pos.</th><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
+  <table class="summen">
+    <tr><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
+    ${order.coupon ? `<tr><td>Gutschein „${esc(order.coupon.code)}“</td><td class="r">−${money(order.coupon.off)}</td></tr>` : ''}
+    <tr><td>Versand</td><td class="r">${order.shipping === 0 ? 'kostenlos' : money(order.shipping)}</td></tr>
+    <tr class="grand"><td>Gesamtbetrag</td><td class="r">${money(order.total)}</td></tr>
+    ${ustRows}
     ${aktionRow}
   </table>
-  <p class="muted">${vatNote}</p>
-  <div class="note">${payNote}</div>
-  <p class="muted" style="margin-top:26px">Vielen Dank für deine Bestellung! Jedes Stück wird individuell für dich gedruckt — Lieferzeit ca. 5–8 Werktage.</p>
-  <p class="muted" style="font-size:11px">Produkthinweise: Alle Artikel bestehen aus pflanzenbasiertem PLA (nicht spülmaschinengeeignet, nicht dauerhaft über 50 °C aussetzen).
+  <p class="steuer">${steuerNote}</p>
+  <div class="zahlung">${payNote}</div>
+  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> — jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${esc(lieferzeitText(settings))}${vorkasse ? ' ab Zahlungseingang' : ''}.</p>
+  <p class="klein">Produkthinweise: Alle Artikel bestehen aus pflanzenbasiertem PLA (nicht spülmaschinengeeignet, nicht dauerhaft über 50 °C aussetzen).
   Vasen sind für Trockenblumen konzipiert; das Material wird imprägniert und ist in der Regel wasserfest — eine Garantie für Wasserdichtigkeit wird nicht übernommen.
-  Bei individuell gestalteten Formen (Formen-Editor) wird keine Garantie für die Standfestigkeit übernommen.</p>
-  <div class="noprint"><button onclick="print()">🖨️ Drucken / als PDF speichern</button></div>
-  </body></html>`;
+  Bei individuell gestalteten Formen (Formen-Editor) wird keine Garantie für die Standfestigkeit übernommen.</p>`;
+  return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body });
 }
 
 // ---------------------------------------------------------------------------
@@ -1022,49 +1384,42 @@ function invoiceHTML(order) {
 /** IBAN nur mit den letzten vier Zeichen — das Dokument liegt unter einer erratbaren Adresse */
 const maskIban = (iban) => { const c = String(iban || '').replace(/\s+/g, ''); return c.length >= 4 ? `${c.slice(0, 2)}•• •••• ${c.slice(-4)}` : ''; };
 function creditNoteHTML(order) {
-  const co = settings.company;
+  const co = settings.company || {};
   const r = order.reklamation || {};
   const betrag = euro(r.betrag);
-  const dateDE = (iso) => new Date(iso || Date.now()).toLocaleDateString('de-DE');
+  const ust = co.kleinunternehmer ? null : ustAus(betrag);
   const vatNote = co.kleinunternehmer
-    ? 'Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.'
-    : `Im Gutschriftbetrag enthaltene USt (19 %): ${money(betrag - betrag / 1.19)}`;
+    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG — es wird keine Umsatzsteuer berechnet.'
+    : `Im Gutschriftbetrag enthaltene USt (19 %): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
   const how = {
-    gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> — einlösbar im Checkout des Shops, ohne Mindestbestellwert.`,
+    gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> — einlösbar im Checkout des Shops, ohne Mindestbestellwert und auch während einer Aktion. Ist die Bestellung kleiner, bleibt der Rest auf dem Code.`,
     ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${esc(maskIban(r.iban))}` : ''} innerhalb von 5 Werktagen.`,
     paypal: `Erstattung über PayPal auf das Zahlungskonto der Bestellung${r.refundId ? ` (Referenz ${esc(r.refundId)})` : ''}.`,
   }[r.art] || esc(REKLA_ART[r.art] || '');
-  const ref = order.invoiceNo ? `Rechnung ${esc(order.invoiceNo)} vom ${esc(dateDE(order.createdAt))} · Bestellung ${esc(order.orderId)}` : `Bestellung ${esc(order.orderId)} vom ${esc(dateDE(order.createdAt))}`;
-  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Gutschrift ${esc(r.gutschriftNo || '')}</title>
-  <style>
-    body{font-family:system-ui;color:#1d1a16;max-width:800px;margin:40px auto;padding:0 24px;font-size:14px;line-height:1.5}
-    .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:36px}
-    h1{font-size:1.5rem;margin:0 0 4px} .muted{color:#6b6257} .sender{font-size:11px;color:#6b6257;margin-bottom:6px}
-    table{width:100%;border-collapse:collapse;margin:22px 0}
-    th,td{padding:9px 10px;border-bottom:1px solid #e5ddce;text-align:left;vertical-align:top}
-    th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b6257}
-    .r{text-align:right;white-space:nowrap} .tot td{border:none;padding:4px 10px}
-    .grand td{font-weight:700;font-size:1.05rem;border-top:2px solid #1d1a16}
-    .note{background:#faf6ee;border:1px solid #e5ddce;border-radius:10px;padding:14px 18px;margin-top:24px}
-    @media print{body{margin:10mm auto}.noprint{display:none}}
-    .noprint{margin-top:30px}.noprint button{padding:10px 22px;border-radius:999px;border:none;background:#1d1a16;color:#fff;font-weight:600;cursor:pointer}
-  </style></head><body>
-  <div class="head">
-    <div><h1>Gutschrift</h1><div class="muted">Nr. ${esc(r.gutschriftNo || '')} · ${esc(dateDE(r.resolvedAt || r.updatedAt))}<br>zu ${ref}</div></div>
-    <div style="text-align:right"><b>${esc(co.name)}</b><br>${esc(co.owner)}<br>${esc(co.street)}<br>${esc(co.zip)} ${esc(co.city)}<br>${esc(co.email)}${co.phone ? '<br>' + esc(co.phone) : ''}${co.ustId ? '<br>USt-IdNr. ' + esc(co.ustId) : ''}</div>
-  </div>
-  <div class="sender">${esc(co.name)} · ${esc(co.street)} · ${esc(co.zip)} ${esc(co.city)}</div>
-  <div><b>${esc(order.customer?.name)}</b><br>${esc(order.customer?.street)}<br>${esc(order.customer?.zip)} ${esc(order.customer?.city)}</div>
-  <table><tr><th>Position</th><th class="r">Betrag</th></tr>
+  const ref = order.invoiceNo ? `Rechnung ${esc(order.invoiceNo)} vom ${esc(dateDE(order.completedAt || order.createdAt))} · Bestellung ${esc(order.orderId)}` : `Bestellung ${esc(order.orderId)} vom ${esc(dateDE(order.createdAt))}`;
+  const meta = [
+    ['Gutschriftnummer', esc(r.gutschriftNo || '')],
+    ['Datum', esc(dateDE(r.resolvedAt || r.updatedAt))],
+    ...(order.invoiceNo ? [['zu Rechnung', esc(order.invoiceNo)]] : []),
+    ['Bestellnummer', esc(order.orderId)],
+  ];
+  const cu = order.customer || {};
+  const body = `
+  <section class="anschrift">
+    <div class="empfaenger"><div class="ruecksende">${belegRuecksende(co)}</div>
+      <b>${esc(cu.name)}</b><br>${esc(cu.street)}<br>${esc(cu.zip)} ${esc(cu.city)}</div>
+    <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
+  </section>
+  <h1>Gutschrift</h1>
+  <table class="pos"><tr><th>Position</th><th class="r">Betrag</th></tr>
     <tr><td>Gutschrift zu ${ref}<br><small class="muted">Grund: ${esc(r.grund || '—')}</small></td><td class="r">${money(betrag)}</td></tr></table>
-  <table style="max-width:340px;margin-left:auto">
-    <tr class="tot grand"><td>Gutschriftbetrag</td><td class="r">${money(betrag)}</td></tr>
+  <table class="summen">
+    <tr class="grand"><td>Gutschriftbetrag</td><td class="r">${money(betrag)}</td></tr>
   </table>
-  <p class="muted">${vatNote}</p>
-  <div class="note"><b>Art der Erstattung:</b> ${how}</div>
-  <p class="muted" style="margin-top:26px">Diese Gutschrift bezieht sich auf die oben genannte Rechnung bzw. Bestellung${order.invoiceNo ? ' und mindert deren Betrag entsprechend' : ''}. Bei Fragen antworte einfach auf unsere E-Mail.</p>
-  <div class="noprint"><button onclick="print()">🖨️ Drucken / als PDF speichern</button></div>
-  </body></html>`;
+  <p class="steuer">${vatNote}</p>
+  <div class="zahlung"><b>Art der Erstattung:</b> ${how}</div>
+  <p class="dank">Diese Gutschrift bezieht sich auf die oben genannte Rechnung bzw. Bestellung${order.invoiceNo ? ' und mindert deren Betrag entsprechend' : ''}. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
+  return belegSeite({ title: `Gutschrift ${r.gutschriftNo || ''} · ${BRAND}`, co, body });
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,6 +1490,7 @@ async function paypalRefund(order, amount) {
   if (!cap?.id) throw new Error('Zu dieser Zahlung liegt bei PayPal kein Zahlungseinzug (Capture) vor');
   const rr = await fetch(`${paypalBase()}/v2/payments/captures/${cap.id}/refund`, {
     method: 'POST',
+    // Interne Idempotenz-Kennung (nicht sichtbar) — Präfix bleibt, damit eine wiederholte Erstattung nicht doppelt ausgezahlt wird
     headers: { ...hdr, 'PayPal-Request-Id': `ovju-rekla-${order.orderId}-${Date.parse(order.reklamation?.createdAt) || 0}` },
     body: JSON.stringify({
       amount: { value: Number(amount).toFixed(2), currency_code: cap.amount?.currency_code || settings.pricing.currency },
@@ -1184,6 +1540,89 @@ const publicRekla = (r) => (r && typeof r === 'object' ? {
   status: r.status, art: r.art, betrag: euro(r.betrag), gutscheinCode: r.gutscheinCode || '', gutschriftNo: r.gutschriftNo || '',
   createdAt: r.createdAt || null, resolvedAt: r.resolvedAt || null,
 } : null);
+
+// ---------------------------------------------------------------------------
+// Widerruf (data/widerrufe.json) — elektronische Widerrufsfunktion „Vertrag widerrufen“ (Seite /widerruf#widerrufen)
+//   POST /api/widerruf { orderId?, name, email, nachricht? } → { ok, ref: 'WR-YYMMDD-XXXX', at }
+//   Jede Erklärung wird gespeichert, per Mail bestätigt (Inhalt, Datum + Uhrzeit des Eingangs, Referenz) und dem Shop
+//   gemeldet. Passen Bestellnummer und E-Mail zusammen, landet der Eingang zusätzlich in der Bestellung
+//   (order.widerrufe + Historie). Die Antwort ist immer gleich — sie verrät nichts über fremde Bestellungen.
+//   Admin: GET /api/admin/widerrufe (neueste zuerst) · POST /api/admin/widerruf-status { ref, status, notiz }
+//   Eintrag: { ref, at, orderId, name, email, nachricht, orderMatched, status: 'offen'|'erledigt', notiz }
+// ---------------------------------------------------------------------------
+const WIDERRUF_FILE = path.join(DATA, 'widerrufe.json');
+const WIDERRUF_STATUS = ['offen', 'erledigt'];
+const WIDERRUF_REF_RE = /^WR-\d{6}-[A-F0-9]{4}$/;
+const WIDERRUF_IP_MAX = 10;   // wie „Passwort vergessen“ je IP: 10 Erklärungen in 15 Minuten
+/** widerrufe.json lesen — fehlt die Datei: []; ist sie unlesbar, wird sie beiseitegelegt (nichts geht verloren) und neu begonnen */
+async function readWiderrufe() {
+  let raw;
+  try { raw = await readFile(WIDERRUF_FILE, 'utf8'); } catch (err) { if (err.code === 'ENOENT') return []; throw err; }
+  try {
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) throw new Error('keine Liste');
+    return list.filter((w) => w && typeof w === 'object');
+  } catch (err) {
+    const backup = `${WIDERRUF_FILE}.defekt-${Date.now()}`;
+    await rename(WIDERRUF_FILE, backup);
+    console.error(`⚠️  widerrufe.json unlesbar (${err.message}) — gesichert als ${path.basename(backup)}, neue Liste begonnen`);
+    return [];
+  }
+}
+// Zugriffe auf widerrufe.json nacheinander (wie lockOrder): fn(liste) → { result, changed } — bei changed wird atomar geschrieben
+let widerrufChain = Promise.resolve();
+function withWiderrufe(fn) {
+  const run = widerrufChain.then(async () => {
+    const list = await readWiderrufe();
+    const out = (await fn(list)) || {};
+    if (out.changed) await writeFileAtomic(WIDERRUF_FILE, JSON.stringify(list, null, 2));
+    return out.result;
+  });
+  widerrufChain = run.catch(() => {});
+  return run;
+}
+/** Neue Referenz WR-YYMMDD-XXXX (eindeutig in der Liste) */
+function newWiderrufRef(list) {
+  const taken = new Set(list.map((w) => w.ref));
+  for (;;) {
+    const ref = `WR-${stampYYMMDD()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    if (!taken.has(ref)) return ref;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rechtsseiten (lib/legal.js): /impressum /datenschutz /agb /widerruf /versand — HTML aus den Einstellungen gerendert.
+// Das Modul wird dynamisch geladen: fehlt es (oder ist es fehlerhaft), antworten die Routen mit 503 und einer
+// Notseite mit den Anbieterangaben, statt den Server zu stoppen.
+// ---------------------------------------------------------------------------
+const LEGAL_ROUTES = ['impressum', 'datenschutz', 'agb', 'widerruf', 'versand'];
+let legalMod = null;
+let legalWarned = false;
+async function legalModule() {
+  if (legalMod) return legalMod;
+  try {
+    const m = await import('./lib/legal.js');
+    if (typeof m.renderLegalPage !== 'function') throw new Error('renderLegalPage fehlt');
+    legalMod = m;
+    legalWarned = false;
+  } catch (err) {
+    if (!legalWarned) { legalWarned = true; console.warn(`⚠️  Rechtsseiten nicht verfügbar (lib/legal.js): ${err?.message || err}`); }
+    return null;
+  }
+  return legalMod;
+}
+/** Notseite (503), solange lib/legal.js fehlt: wenigstens Anbieter und Kontakt, bei /widerruf der Weg per E-Mail */
+function legalFallbackHTML(slug) {
+  const co = settings.company || {};
+  const titel = { impressum: 'Impressum', datenschutz: 'Datenschutz', agb: 'AGB', widerruf: 'Widerruf', versand: 'Versand & Zahlung' }[slug] || 'Rechtliches';
+  const anbieter = [co.name || BRAND, co.owner, co.street, companyOrt(co)].map((x) => String(x || '').trim()).filter(Boolean).map(esc).join('<br>');
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${titel} · ${BRAND}</title>
+  <style>body{font-family:system-ui,sans-serif;background:#f4efe7;color:#211d18;max-width:640px;margin:40px auto;padding:0 20px;line-height:1.6}h1{font-family:Georgia,serif;font-weight:normal}a{color:#9e4f2c}</style></head><body>
+  <h1>${titel}</h1><p>Diese Seite ist gleich wieder erreichbar — bitte versuch es in ein paar Minuten noch einmal.</p>
+  <p><b>Anbieter</b><br>${anbieter}${co.email ? `<br>E-Mail: ${esc(co.email)}` : ''}</p>
+  ${slug === 'widerruf' && co.email ? `<p>Du möchtest einen Vertrag widerrufen? Schreib mir einfach eine E-Mail an ${esc(co.email)}.</p>` : ''}
+  <p><a href="/">Zurück zum Shop</a></p></body></html>`;
+}
 
 // ---------------------------------------------------------------------------
 // Bestellungen
@@ -1237,7 +1676,14 @@ async function handleCheckout(req, res) {
       return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt (Betrag weicht von der Bestellung ab)' });
     }
   }
+  // Guthaben-Gutschein: zwei gleichzeitige Bestellungen dürfen den Restwert nicht doppelt ausgeben — Prüfung und
+  // Reservierung passieren ohne await dazwischen (PayPal ist schon bezahlt → dann nicht mehr abbrechen)
+  const gc = totals.coupon ? settings.coupons.find((x) => String(x.code || '').trim().toUpperCase() === String(totals.coupon.code).trim().toUpperCase()) : null;
+  if (gc && isGuthaben(gc) && !paypalCap && couponRest(gc) + 0.005 < totals.coupon.off) {
+    return send(res, 400, { ok: false, error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst — bitte prüf den Betrag in der Kasse.` });
+  }
   const orderId = newOrderId();
+  if (totals.coupon) trackCouponUse({ orderId, coupon: totals.coupon, status: 'neu' });
   if (paypalCap) { paypalCap.usedBy = orderId; await saveCaptures(); }
   await mkdir(path.join(ORDERS, orderId), { recursive: true });
   const account = userFromReq(req);
@@ -1261,6 +1707,8 @@ async function handleCheckout(req, res) {
       stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
     subtotal: totals.subtotal, coupon: totals.coupon, shipping: totals.shipping, total: totals.total,
+    // Gesonderte Bestätigung in der Kasse (Wasser/Standfestigkeit, § 476 Abs. 1 Satz 2 BGB): Zeitpunkt als Nachweis
+    beschaffenheitBestaetigt: data.beschaffenheit === true ? new Date().toISOString() : null,
     aktionen: totals.aktionen,   // [{ id, name, prozent, ersparnis, produkte, muster }] je betroffener Aktion (nach Ersparnis absteigend)
     aktion: totals.aktion,       // aktionen[0] | null (Kompatibilität)
     invoiceNo: null, filesComplete: false,
@@ -1297,12 +1745,14 @@ async function handleComplete(req, res, id) {
     try { order = await readOrder(id); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
     if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: `/orders/${id}/rechnung.html`, invoiceNo: order.invoiceNo });
     if (!order.invoiceNo) {
-      order.invoiceNo = settings.invoicePrefix + String(settings.nextInvoice++).padStart(4, '0');
+      order.invoiceNo = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
       await saveSettings();
     }
     order.filesComplete = order.lines.every((l) => existsSync(path.join(ORDERS, id, l.stlFile)));
     order.completedAt = new Date().toISOString();
-    await writeFile(path.join(ORDERS, id, 'rechnung.html'), invoiceHTML(order));
+    // Eine ausgestellte Rechnung wird nie neu geschrieben (GoBD) — ältere Bestellungen ohne completedAt behalten ihre Datei
+    const invoiceFile = path.join(ORDERS, id, 'rechnung.html');
+    if (!existsSync(invoiceFile)) await writeFileAtomic(invoiceFile, invoiceHTML(order));
     await writeOrder(order);
   } finally { release(); }
   console.log(`📦 Bestellung ${id} — ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
@@ -1353,6 +1803,10 @@ const server = http.createServer(async (req, res) => {
         aktionen: aktiveAktionen().map(publicAktion),
         aktion: publicAktion(aktiveAktion()),
         serverNow: new Date().toISOString(),
+        // Shop-Angaben (Lieferzeit/Liefergebiet) für Kasse, Produktseiten und Hinweise
+        shop: { lieferzeit: settings.shop.lieferzeit, liefergebiet: settings.shop.liefergebiet },
+        // Hersteller = Anbieter (dieselben Angaben wie im Impressum) — Herstellerangabe beim Produktangebot (GPSR Art. 19)
+        anbieter: (({ name, owner, street, zip, city, country, email }) => ({ name: name || BRAND, owner, street, zip, city, country, email }))(settings.company || {}),
       });
     }
     // --- Kundenkonten
@@ -1440,6 +1894,46 @@ const server = http.createServer(async (req, res) => {
       u.address = { street: street || '', zip: zip || '', city: city || '' };
       await saveUsers();
       return send(res, 200, { ok: true });
+    }
+
+    // --- Widerruf (elektronische Widerrufsfunktion): speichern, Bestellung zuordnen, bestätigen — Antwort immer gleich
+    if (req.method === 'POST' && p === '/api/widerruf') {
+      let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = null; }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return send(res, 400, { ok: false, error: 'Ungültige Anfrage' });
+      const name = oneLine(body.name, 500);
+      const email = oneLine(body.email, 500).toLowerCase();
+      const orderId = clipText(body.orderId, 40).toUpperCase().replace(/\s+/g, '');
+      const nachricht = String(body.nachricht ?? '').replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, ' ').trim();
+      if (name.length < 2 || name.length > 120) return send(res, 400, { ok: false, error: 'Bitte gib deinen Namen an (2 bis 120 Zeichen).' });
+      if (email.length > 254 || !isEmail(email)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an — dorthin schicke ich die Eingangsbestätigung.' });
+      if (orderId && !ORDER_ID_RE.test(orderId)) return send(res, 400, { ok: false, error: 'Die Bestellnummer hat nicht das richtige Format (z. B. FS-260927-A1B2C3). Du kannst das Feld auch leer lassen.' });
+      if (nachricht.length > 2000) return send(res, 400, { ok: false, error: 'Die Nachricht ist zu lang (höchstens 2000 Zeichen).' });
+      if (forgotLimited(`widerruf-ip:${clientIp(req)}`, WIDERRUF_IP_MAX)) {
+        const mail = String(settings.company?.email || '').trim();
+        return send(res, 429, { ok: false, error: `Zu viele Anfragen — bitte in 15 Minuten noch einmal versuchen${mail ? ` oder schreib mir direkt an ${mail}` : ''}.` });
+      }
+      // Zuordnung: Bestellung existiert UND die E-Mail stimmt (ohne Groß/Klein) — sonst wird nur die Erklärung gespeichert
+      let order = null;
+      if (orderId) { try { order = await readOrder(orderId); } catch { order = null; } }
+      const orderMatched = !!order && String(order.customer?.email || '').trim().toLowerCase() === email;
+      const entry = await withWiderrufe((list) => {
+        const w = { ref: newWiderrufRef(list), at: new Date().toISOString(), orderId: orderId || '', name, email, nachricht, orderMatched, status: 'offen', notiz: '' };
+        list.push(w);
+        return { changed: true, result: w };
+      });
+      if (orderMatched) {
+        const release = await lockOrder(orderId);
+        try {
+          const o = await readOrder(orderId);
+          o.widerrufe.push({ ref: entry.ref, at: entry.at });
+          addHistory(o, o.status, `Widerruf ${entry.ref} über die Widerrufsfunktion eingegangen`, 'kunde');
+          await writeOrder(o);
+        } catch (err) { console.error(`Widerruf ${entry.ref}: Vermerk in ${orderId} fehlgeschlagen:`, err?.message || err); }
+        finally { release(); }
+      }
+      console.log(`↩️  Widerruf ${entry.ref}${orderId ? ` zu ${orderId}` : ''} (${orderMatched ? 'zugeordnet' : 'nicht zugeordnet'})`);
+      send(res, 200, { ok: true, ref: entry.ref, at: entry.at });
+      return runHook('widerruf', entry);
     }
 
     // --- Galerie (Produktfotos, gepflegt über den Admin)
@@ -1582,13 +2076,15 @@ const server = http.createServer(async (req, res) => {
       const sperre = produktSperre(items);
       if (sperre) return send(res, 400, { ok: false, error: sperre });
       const t = computeTotals(items, couponCode);
+      // Wie beim Checkout: ein Gutschein, der nicht (mehr) gilt, bricht vor der Zahlung ab — sonst wäre bezahlt, die Bestellung aber abgelehnt
+      if (couponCode && t.couponError) return send(res, 400, { ok: false, error: t.couponError });
       const token = await paypalToken();
       const r = await fetch(`${paypalBase()}/v2/checkout/orders`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           intent: 'CAPTURE',
-          purchase_units: [{ amount: { currency_code: settings.pricing.currency, value: t.total.toFixed(2) }, description: 'OVJU — individuelle 3D-Drucke' }],
+          purchase_units: [{ amount: { currency_code: settings.pricing.currency, value: t.total.toFixed(2) }, description: 'formsam — individuell gestaltete Vasen, 3D-gedruckt' }],
         }),
       });
       const j = await r.json();
@@ -1624,6 +2120,11 @@ const server = http.createServer(async (req, res) => {
         // erledigte Erstattungen/Gutschriften (kein Nachdruck) — Umsatz-KPIs ziehen sie ab
         kpi: { erstattet: Math.round(orders.reduce((s, o) => s + refundAmount(o), 0) * 100) / 100, erstattungen: orders.filter((o) => refundAmount(o) > 0).length },
         info: { node: process.version, uptime: Math.round(process.uptime()), startedAt: SERVER_STARTED },
+        // Hinweise für die Übersicht (z. B. fehlende Steuernummer bei Rechnungen mit USt) + Zahl offener Widerrufe
+        hinweise: settingsHinweise(),
+        // Restwert je Guthaben-Gutschein (Gutschrift aus Reklamation) — Admin zeigt ihn in der Gutschein-Tabelle
+        couponRest: Object.fromEntries(settings.coupons.filter(isGuthaben).map((c) => [String(c.code).trim().toUpperCase(), couponRest(c)])),
+        widerrufeOffen: await withWiderrufe((list) => ({ result: list.filter((w) => w.status !== 'erledigt').length })).catch(() => 0),
       });
     }
     if (req.method === 'POST' && p === '/api/admin/settings') {
@@ -1651,11 +2152,28 @@ const server = http.createServer(async (req, res) => {
           if (typeof v !== 'boolean') return send(res, 400, { ok: false, error: `Produkte: ${k} muss true oder false sein` });
         }
       }
+      // Firma, Shop- und Rechtsangaben: nur bekannte Felder, geprüft und gekürzt; fehlende Felder behalten den alten Stand
+      let company, shop, legal;
+      for (const k of ['company', 'shop', 'legal']) {
+        if (patch[k] !== undefined && (!patch[k] || typeof patch[k] !== 'object' || Array.isArray(patch[k]))) {
+          return send(res, 400, { ok: false, error: `${{ company: 'Firma', shop: 'Shop-Angaben', legal: 'Rechtsangaben' }[k]}: ungültiges Format` });
+        }
+      }
+      try {
+        if (patch.company !== undefined) company = sanitizeCompany({ ...settings.company, ...patch.company });
+        if (patch.shop !== undefined) shop = sanitizeShop({ ...settings.shop, ...patch.shop });
+        if (patch.legal !== undefined) legal = sanitizeLegal({ ...settings.legal, ...patch.legal });
+      } catch (err) { return send(res, err.httpCode || 400, { ok: false, error: err.message }); }
       const prevPricing = settings.pricing;
       // Nur bekannte Wurzel-Schlüssel übernehmen
-      for (const k of ['pricing', 'company', 'invoicePrefix', 'colors', 'coupons', 'printing']) {
+      for (const k of ['pricing', 'colors', 'coupons', 'printing']) {
         if (patch[k] !== undefined) settings[k] = patch[k];
       }
+      if (company) settings.company = company;
+      if (shop) settings.shop = shop;
+      if (legal) settings.legal = legal;
+      // Rechnungs-Nummernkreis: Präfix als Text (≤ 20 Zeichen) — der Jahreswechsel passiert automatisch beim nächsten Beleg
+      if (patch.invoicePrefix !== undefined) settings.invoicePrefix = oneLine(patch.invoicePrefix, 20) || DEFAULT_SETTINGS.invoicePrefix;
       if (aktionen) settings.aktionen = aktionen;
       // Produktschalter übernehmen (fehlende Schlüssel behalten den alten Stand)
       if (patch.produkte !== undefined) settings.produkte = sanitizeProdukte({ ...settings.produkte, ...patch.produkte });
@@ -1663,7 +2181,7 @@ const server = http.createServer(async (req, res) => {
       settings.coupons = settings.coupons.filter((c) => c && typeof c === 'object');
       for (const c of settings.coupons) c.mitAktion = !!c.mitAktion;
       // Gutschrift-Nummernkreis: Präfix als Text (≤ 20 Zeichen), nächste Nummer als ganze Zahl ≥ 1
-      if (patch.creditPrefix !== undefined) settings.creditPrefix = String(patch.creditPrefix ?? '').trim().slice(0, 20) || DEFAULT_SETTINGS.creditPrefix;
+      if (patch.creditPrefix !== undefined) settings.creditPrefix = oneLine(patch.creditPrefix, 20) || DEFAULT_SETTINGS.creditPrefix;
       if (patch.nextCredit !== undefined) settings.nextCredit = Math.max(1, Math.round(Number(patch.nextCredit)) || 1);
       // Aufpreise: Muster nur mit bekannten Keys, Zahlen ≥ 0; Farbschrift ≥ 0 — fehlen sie im Patch, bleiben die alten Werte
       if (patch.pricing !== undefined) {
@@ -1859,14 +2377,18 @@ const server = http.createServer(async (req, res) => {
             }
             if (r.art !== 'nachdruck') {
               if (r.art === 'gutschein' && !r.gutscheinCode) r.gutscheinCode = newCouponCode();
-              if (!r.gutschriftNo) r.gutschriftNo = String(settings.creditPrefix || DEFAULT_SETTINGS.creditPrefix) + String(settings.nextCredit++).padStart(4, '0');
+              if (!r.gutschriftNo) r.gutschriftNo = nextBelegNr('creditPrefix', 'nextCredit', DEFAULT_SETTINGS.creditPrefix);
               if (r.art === 'gutschein' && !settings.coupons.some((c) => String(c?.code || '').toUpperCase() === r.gutscheinCode)) {
-                settings.coupons.push({ code: r.gutscheinCode, type: 'fixed', value: r.betrag, minOrder: 0, active: true, note: `Gutschrift ${r.gutschriftNo} zu ${orderId}` });
+                // Guthaben: Restwert bleibt für spätere Bestellungen, gilt auch während einer Aktion (es ist Geld der Kundschaft)
+                settings.coupons.push({ code: r.gutscheinCode, type: 'fixed', value: r.betrag, minOrder: 0, active: true, mitAktion: true, guthaben: true, note: `Gutschrift ${r.gutschriftNo} zu ${orderId}` });
               }
               await saveSettings();
             }
             r.status = 'erledigt'; r.updatedAt = now; r.resolvedAt = now;
-            if (r.gutschriftNo) await writeFile(path.join(ORDERS, orderId, 'gutschrift.html'), creditNoteHTML(order));
+            // Ausgestellte Gutschrift nie überschreiben (GoBD) — liegt schon eine vor, bleibt sie stehen
+            const creditFile = path.join(ORDERS, orderId, 'gutschrift.html');
+            if (r.gutschriftNo && !existsSync(creditFile)) await writeFileAtomic(creditFile, creditNoteHTML(order));
+            else if (r.gutschriftNo) console.warn(`⚠️  ${orderId}: gutschrift.html existiert bereits — ${r.gutschriftNo} nicht als Datei geschrieben`);
             const detail = { gutschein: `Gutschein ${r.gutscheinCode}`, ueberweisung: `Überweisung ${maskIban(r.iban)}`, paypal: `PayPal-Referenz ${r.refundId || '—'}`, nachdruck: 'Nachdruck' }[r.art];
             addHistory(order, order.status, `Reklamation erledigt — ${REKLA_ART[r.art]}${r.gutschriftNo ? `, Gutschrift ${r.gutschriftNo} über ${money(r.betrag)}` : ''} (${detail})${note ? ': ' + note : ''}`, 'admin');
             phase = 'erledigt';
@@ -1895,6 +2417,40 @@ const server = http.createServer(async (req, res) => {
       send(res, 200, info ? { ok: true, order, info } : { ok: true, order });
       if (phase) await runHook('reklamation', order, phase, { notify: body.notify !== false });
       return;
+    }
+    // Widerrufe (Admin): Liste neueste zuerst · Status offen/erledigt mit Notiz
+    if (req.method === 'GET' && p === '/api/admin/widerrufe') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const list = await withWiderrufe((l) => ({ result: l.slice() }));
+      return send(res, 200, { ok: true, widerrufe: list.sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))) });
+    }
+    if (req.method === 'POST' && p === '/api/admin/widerruf-status') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = null; }
+      const ref = String(body?.ref || '').trim().toUpperCase();
+      if (!WIDERRUF_REF_RE.test(ref)) return send(res, 400, { ok: false, error: 'Ungültige Referenz' });
+      if (!WIDERRUF_STATUS.includes(body.status)) return send(res, 400, { ok: false, error: 'Status muss „offen“ oder „erledigt“ sein' });
+      const notiz = body.notiz === undefined ? undefined : clipText(body.notiz, 1000);
+      const found = await withWiderrufe((list) => {
+        const w = list.find((x) => x.ref === ref);
+        if (!w) return { result: null };
+        const prev = w.status;
+        w.status = body.status;
+        if (notiz !== undefined) w.notiz = notiz;
+        return { changed: true, result: { orderId: w.orderId, orderMatched: !!w.orderMatched, prev } };
+      });
+      if (!found) return send(res, 404, { ok: false, error: 'Widerruf unbekannt' });
+      // Statuswechsel auch in der Historie der zugeordneten Bestellung festhalten
+      if (found.orderMatched && found.prev !== body.status && ORDER_ID_RE.test(found.orderId)) {
+        const release = await lockOrder(found.orderId);
+        try {
+          const o = await readOrder(found.orderId);
+          addHistory(o, o.status, `Widerruf ${ref}: ${body.status === 'erledigt' ? 'als erledigt markiert' : 'wieder offen'}`, 'admin');
+          await writeOrder(o);
+        } catch (err) { console.error(`Widerruf ${ref}: Historie in ${found.orderId} fehlgeschlagen:`, err?.message || err); }
+        finally { release(); }
+      }
+      return send(res, 200, { ok: true });
     }
     if (p === '/api/admin/users') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
@@ -1938,7 +2494,7 @@ const server = http.createServer(async (req, res) => {
           csvEsc(o.reklamation ? `${REKLA_STATUS[o.reklamation.status] || o.reklamation.status} / ${REKLA_ART[o.reklamation.art] || o.reklamation.art} / ${euro(o.reklamation.betrag).toFixed(2).replace('.', ',')}` : ''),
         ].join(';'));
       }
-      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="ovju-bestellungen.csv"' });
+      res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="formsam-bestellungen.csv"' });
       return res.end('﻿' + rows.join('\n'));
     }
     // Kompatibel: alter Kurz-Endpoint (nur Status)
@@ -1967,11 +2523,13 @@ const server = http.createServer(async (req, res) => {
         if (!orderIdOk(body.orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
         let order;
         try { order = await readOrder(body.orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
-        const m = renderOrderMail(order, body);
+        // Bestätigung erneut: wieder mit AGB + Widerrufsbelehrung als Anhang (Vorschau nennt sie nur)
+        const attachments = body.kind === 'bestaetigung' ? await legalAttachments() : [];
+        const m = renderOrderMail(order, { ...body, anhaenge: attachments.map((a) => a.filename) });
         const cust = customerAddress(order);
         if (p === '/api/admin/mail-preview') return send(res, 200, { ok: true, subject: m.subject, html: m.html, text: m.text, to: cust.email, kind: m.kind });
         if (!isEmail(cust.email)) return send(res, 400, { ok: false, error: 'Die Bestellung hat keine gültige Kunden-E-Mail' });
-        const r = await mailer.send({ to: cust, subject: m.subject, text: m.text, html: m.html, kind: m.kind, ref: order.orderId });
+        const r = await mailer.send({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: m.kind, ref: order.orderId });
         if (r.ok && m.key) await noteMailSent(order, m.key, m.subject, cust.email);
         if (!r.ok && /nicht eingerichtet/.test(r.error || '')) r.error += ' — die Nachricht liegt im Versandprotokoll und kann nach der Einrichtung erneut gesendet werden';
         return send(res, 200, { ok: !!r.ok, id: r.id, error: r.error || '' });
@@ -2023,8 +2581,33 @@ const server = http.createServer(async (req, res) => {
       return res.end(druckzettelHTML(order));
     }
 
+    // --- Rechtsseiten (lib/legal.js) — /impressum /datenschutz /agb /widerruf /versand, mit oder ohne Slash am Ende
+    const mLegal = p.match(/^\/([a-z]+)\/?$/);
+    if (mLegal && LEGAL_ROUTES.includes(mLegal[1]) && (req.method === 'GET' || req.method === 'HEAD')) {
+      const slug = mLegal[1];
+      const mod = await legalModule();
+      let html = null, code = 503;
+      if (mod) {
+        try {
+          html = await mod.renderLegalPage(slug, { settings, baseUrl: baseUrlFor(settings) });
+          code = typeof html === 'string' ? 200 : 404;
+        } catch (err) { console.error(`Rechtsseite /${slug} fehlgeschlagen:`, err?.message || err); }
+      }
+      const out = code === 200 ? html : code === 503 ? legalFallbackHTML(slug) : 'Nicht gefunden';
+      res.writeHead(code, {
+        'Content-Type': code === 404 ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
+        ...(code === 503 ? { 'Retry-After': '300' } : {}),
+      });
+      return res.end(req.method === 'HEAD' ? undefined : out);
+    }
+
     // --- Seiten & Dateien
-    if (p === '/favicon.ico') { res.writeHead(204); return res.end(); }
+    if (p === '/favicon.ico') {
+      const ico = path.join(PUBLIC, 'favicon.ico');
+      if (!existsSync(ico)) { res.writeHead(204); return res.end(); }
+      res.writeHead(200, { 'Content-Type': MIME['.ico'], 'Cache-Control': 'public, max-age=86400' });
+      return createReadStream(ico).pipe(res);
+    }
     if (p === '/admin' || p === '/admin/') return send(res, 200, adminHTML(), 'text/html; charset=utf-8');
 
     if (p.startsWith('/orders/')) {
@@ -2079,11 +2662,18 @@ loadDesigns();
 loadLists();
 loadUsers();
 loadCaptures();
+loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen konnten nicht gelesen werden:', err?.message || err));
 // Sicherheitsnetz: ein einzelner Fehler außerhalb der try/catch-Pfade darf den Shop nicht beenden
 process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ablehnung:', err));
 process.on('uncaughtException', (err) => console.error('Unbehandelte Ausnahme:', err));
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🥚 OVJU Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);
+  console.log(`formsam Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);
+  // Rechtsseiten früh laden, damit ein fehlendes/fehlerhaftes lib/legal.js gleich im Log steht (die Routen versuchen es erneut)
+  legalModule().then((m) => {
+    if (!m) return;
+    console.log('Rechtsseiten: lib/legal.js geladen');
+    try { for (const h of m.legalWarnings?.(settings) || []) console.warn(`⚠️  Rechtsseiten: ${h}`); } catch { /* nur Hinweise */ }
+  });
   // Outbox laden: wartende Zustellungen aus der Zeit vor dem Neustart sofort weiterverarbeiten
   mailer.resume().catch((e) => console.error('✉️  Outbox konnte nicht geladen werden:', e?.message || e));
 });

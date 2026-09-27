@@ -1,4 +1,4 @@
-// OVJU — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing, Farbaufpreise aus /api/colors;
+// formsam — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing, Farbaufpreise aus /api/colors;
 // die reine Preisformel lebt in pricing.js und rechnet identisch zu priceItem() auf dem Server)
 import { makeExport } from './modelfactory.js';
 import { copyText, formatCode, esc } from './designcode.js';
@@ -15,6 +15,29 @@ import {
 export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp };
 /** Eierbecher bestellbar? Schalter aus /api/pricing → produkte (derzeit aus, Standard ohne Feld = aus; siehe produkte.js) */
 export const eierbecherAktiv = () => produktAktiv('eierbecher', getPricing());
+
+/** Shop-Angaben aus /api/pricing → shop (Admin → Einstellungen); Fallback = Standard des Servers, falls das Feld (noch) fehlt */
+export function shopInfo() {
+  const sh = getPricing()?.shop || {};
+  return { lieferzeit: String(sh.lieferzeit || '').trim() || '5–8 Werktage', liefergebiet: String(sh.liefergebiet || '').trim() || 'Deutschland' };
+}
+/** Überall dieselbe Lieferzeit: Elemente mit data-lieferzeit / data-liefergebiet (statischer Fallback „5–8 Werktage“ im HTML bzw.
+ *  content.json) bekommen den Wert aus den Einstellungen — nach dem Laden der Preise aufrufen */
+export function fillShopInfo(root = document) {
+  if (!getPricing()) return;
+  const { lieferzeit, liefergebiet } = shopInfo();
+  root.querySelectorAll('[data-lieferzeit]').forEach((el) => { if (el.textContent !== lieferzeit) el.textContent = lieferzeit; });
+  root.querySelectorAll('[data-liefergebiet]').forEach((el) => { if (el.textContent !== liefergebiet) el.textContent = liefergebiet; });
+  // Hersteller (= Anbieter aus /api/pricing → anbieter, wie im Impressum) im Footer „Gut zu wissen“ — Herstellerangabe nach GPSR
+  const a = getPricing()?.anbieter;
+  if (a && (a.street || a.email)) {
+    const land = a.country && a.country !== 'Deutschland' ? a.country : '';
+    const txt = `ℹ️ Hersteller: ${[a.name, a.owner, a.street, [a.zip, a.city].filter(Boolean).join(' '), land].filter(Boolean).join(', ')}${a.email ? ` · ${a.email}` : ''}`;
+    root.querySelectorAll('[data-hersteller]').forEach((el) => { if (el.dataset.txt !== txt) { el.dataset.txt = txt; el.textContent = txt; } el.hidden = false; });
+  }
+}
+/** Zahlungsarten wie in der Kasse: Überweisung immer, PayPal nur, wenn es in den Einstellungen aktiv ist */
+const zahlartenText = () => `Bezahlen per Überweisung${pricing().paypal?.enabled ? ' oder PayPal' : ''}`;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -197,6 +220,13 @@ function renderCart() {
     ${t.shipping > 0 ? `<small>Noch ${fmt(pricing().shipping.freeFrom - t.subtotal)} bis zum Gratisversand</small>` : ''}
     <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>` : '';
   $('#cart-checkout').disabled = !cart.length;
+  // Kurz vor „Zur Kasse“: wohin, wie lange, wie bezahlen (dieselben Angaben wie Versandseite und Kasse)
+  const ship = $('#cart-ship');
+  if (ship) {
+    const { lieferzeit, liefergebiet } = shopInfo();
+    ship.textContent = `Lieferung nach ${liefergebiet} · ${lieferzeit} · ${zahlartenText()}`;
+    ship.hidden = !cart.length;
+  }
 
   box.querySelectorAll('[data-d]').forEach((b) => b.addEventListener('click', () => {
     const it = cart[+b.dataset.i];
@@ -284,15 +314,21 @@ function openCheckout() {
   $('#pay-paypal-row').hidden = !pp;
   if (!pp) $('#pay-vorkasse').checked = true;
   $('#checkout-modal').showModal();
-  if (pp && !paypalReady) setupPayPal();
+  // Das PayPal-SDK (www.paypal.com) lädt erst, wenn PayPal als Zahlungsart gewählt ist — nicht schon beim Öffnen der Kasse
+  if (pp && $('#pay-paypal').checked && !paypalReady) setupPayPal();
 }
 
 function setupPayPal() {
   paypalReady = true;
   const s = document.createElement('script');
-  s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(pricing().paypal.clientId)}&currency=EUR&intent=capture`;
+  s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(pricing().paypal.clientId)}&currency=EUR&intent=capture&locale=de_DE`;
   s.onload = () => {
     window.paypal?.Buttons({
+      // Button-Lösung (§ 312j Abs. 3 BGB): Beschriftung „Jetzt kaufen“ statt nur „PayPal“ — der Knopf ersetzt „Zahlungspflichtig bestellen“
+      style: { label: 'buynow' },
+      // Vor der Zahlung dieselben Pflichtfelder wie bei „Zahlungspflichtig bestellen“ (Adresse, Bestätigung) — sonst
+      // wäre bezahlt, aber die Bestellung könnte nicht angelegt werden
+      onClick: (data, actions) => ($('#checkout-form').reportValidity() ? actions.resolve() : actions.reject()),
       createOrder: async () => {
         const r = await (await fetch('/api/paypal/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -331,7 +367,8 @@ async function submitOrder(payment, paypalOrderId = null) {
     };
     const r = await (await fetch('/api/checkout', {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-      body: JSON.stringify({ customer, items: cartPayload(), payment, paypalOrderId, couponCode: coupon?.code || null }),
+      // beschaffenheit: gesonderte Bestätigung (Wasser/Standfestigkeit) — der Server speichert den Zeitpunkt in der Bestellung
+      body: JSON.stringify({ customer, items: cartPayload(), payment, paypalOrderId, couponCode: coupon?.code || null, beschaffenheit: $('#co-beschaffenheit')?.checked === true }),
     })).json();
     if (!r.ok) throw new Error(r.error);
 
@@ -350,15 +387,17 @@ async function submitOrder(payment, paypalOrderId = null) {
 
     cart = [];
     coupon = null;
+    if ($('#co-beschaffenheit')) $('#co-beschaffenheit').checked = false;   // gilt je Bestellung
     $('#co-coupon').value = '';
     $('#co-coupon-msg').textContent = '';
     saveCart();
     $('#checkout-modal').close();
     $('#confirm-id').textContent = r.orderId;
     $('#confirm-invoice').href = done.invoiceUrl;
+    const { lieferzeit } = shopInfo();
     $('#confirm-pay-hint').textContent = payment === 'paypal'
-      ? 'Deine Zahlung ist eingegangen — wir starten den Druck!'
-      : 'Alle Zahlungsdaten (IBAN & Betrag) findest du auf deiner Rechnung.';
+      ? `Deine Zahlung ist eingegangen. Ich starte jetzt den Druck — Lieferzeit: ${lieferzeit}.`
+      : `Alle Zahlungsdaten (IBAN & Betrag) findest du auf deiner Rechnung. Sobald dein Geld da ist, starte ich den Druck — Lieferzeit: ${lieferzeit}.`;
     $('#confirm-modal').showModal();
     refreshOrders(); // Bestellhistorie im Konto aktualisieren
   } catch (err) {
@@ -398,6 +437,7 @@ export async function initCart() {
     const pp = $('#pay-paypal').checked;
     $('#paypal-buttons').hidden = !pp;
     $('#co-submit').hidden = pp;
+    if (pp && pricing().paypal?.enabled && !paypalReady) setupPayPal();
   }));
   $('#confirm-close').addEventListener('click', () => $('#confirm-modal').close());
 }

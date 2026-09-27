@@ -1,4 +1,4 @@
-// OVJU — binärer STL-Export (Millimeter, little-endian)
+// formsam — binärer STL-Export (Millimeter, little-endian)
 import * as THREE from 'three';
 
 /**
@@ -28,8 +28,8 @@ export function exportSTL(meshes) {
 
   const buffer = new ArrayBuffer(84 + tris.length * 50);
   const dv = new DataView(buffer);
-  const header = 'OVJU Eierbecher — https://ovju.de — units: mm';
-  for (let i = 0; i < Math.min(80, header.length); i++) dv.setUint8(i, header.charCodeAt(i));
+  const header = 'formsam Vase - https://formsam.de - units: mm'; // reines ASCII, max. 80 Byte (STL-Kopf)
+  for (let i = 0; i < Math.min(80, header.length); i++) dv.setUint8(i, header.charCodeAt(i) & 0x7f);
   dv.setUint32(80, tris.length, true);
   let o = 84;
   for (const t of tris) {

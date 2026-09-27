@@ -1,4 +1,4 @@
-// OVJU — Druckbarkeits-Analyse: Überhangwinkel einer binären STL (FDM, ohne Support)
+// formsam — Druckbarkeits-Analyse: Überhangwinkel einer binären STL (FDM, ohne Support)
 // Aufruf: node tools/check-printability.mjs <datei.stl> [grenzwinkel=55]
 // Überhangwinkel α: 0° = senkrechte Wand, 90° = horizontale Unterseite.
 // FDM druckt zuverlässig bis ~45–50°, mit guter Kühlung bis ~60°.

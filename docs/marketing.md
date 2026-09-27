@@ -1,4 +1,7 @@
-# OVJU – Marketing-Plan
+# Marketing-Plan Eierbecher (damals OVJU)
+
+> Historischer Stand aus der Eierbecher-Zeit, nicht umgeschrieben. Eierbecher sind derzeit per Schalter deaktiviert;
+> Marke, Claim und Tonalität heute: [marke.md](marke.md).
 
 **Produkt:** Individuell designbare, 3D-gedruckte Eierbecher (Web-3D-Konfigurator: Rippen/Spiralen/Wellen, 10 matte PLA-Farben, Text-Gravur). Gedruckt on demand in Deutschland.
 

@@ -1,4 +1,4 @@
-// OVJU Mobil (≤ 700 px) — Startseite neu strukturiert: EIN Hero mit der 3D-Formenwelt als lebendigem Hintergrund (Bühne = Menü:
+// formsam Mobil (≤ 700 px) — Startseite neu strukturiert: EIN Hero mit der 3D-Formenwelt als lebendigem Hintergrund (Bühne = Menü:
 // Wischen wechselt die Form, Punkte zeigen die Position), Katalog „Formen“ (6 Kacheln) und Katalog „Oberflächen“ (9 Muster) mit Details
 // im Bottom-Sheet, EIN klebender CTA (weicht jedem anderen Bestellknopf), danach nur noch das Nötigste.
 // Läuft ausschließlich unter 700 px (SMALL-Gate); Desktop/Tablet bleiben unberührt.
@@ -28,11 +28,13 @@ const FORM_TEXT = {
   column: 'Ein gerader Zylinder mit scharfen Facetten. Architektonisch und klar.',
   own: 'Zieh deine eigene Linie: Im Konfigurator setzt du jeden Punkt der Silhouette selbst.',
 };
-// Handy-Kurzfassungen (ganze Sätze, passen in 1–2 Zeilen) statt abgeschnittener Desktop-Texte aus content.json
+// Handy-Kurzfassungen (ganze Sätze, passen in 1–2 Zeilen) statt abgeschnittener Desktop-Texte aus content.json.
+// Lieferzeit als <span data-lieferzeit> (statischer Fallback) — app.js füllt sie nach dem Laden der Preise aus den Einstellungen (cart.js fillShopInfo)
+const LZ = '<span data-lieferzeit>5–8 Werktage</span>';
 const KURZ = {
   // Die Vertrauenskarte (#usps) entfällt mobil — sie wiederholte die Trust-Zeile des Heros; „matt bis metallic“ lebt jetzt in Schritt 1
-  steps: ['Form, Struktur und Farbe von matt bis metallic — live in 3D, auf Wunsch mit Gravur.', 'Speichern oder direkt in den Warenkorb.', 'Schicht für Schicht gedruckt, bei dir in 5–8 Werktagen. Transportschaden? Wir drucken gratis neu.'], // Material steht schon im Hero; das Neudruck-Versprechen (FAQ) steht hier sichtbar statt nur im zugeklappten FAQ
-  galerie: 'Echte Stücke in echten Wohnungen.',
+  steps: ['Form, Struktur und Farbe von matt bis metallic — live in 3D, auf Wunsch mit Gravur.', 'Speichern oder direkt in den Warenkorb.', `Schicht für Schicht gedruckt. Lieferzeit: ${LZ}. Transportschaden? Ich drucke gratis neu.`], // Material steht schon im Hero; das Neudruck-Versprechen (FAQ) steht hier sichtbar statt nur im zugeklappten FAQ
+  galerie: 'Unikate aus dem Konfigurator, zuhause in Szene gesetzt.',
   subKurz: 'Deine Vase selbst gestalten – Form, Muster, Farbe und Gravur. In 3D gedruckt, zu dir geliefert.', // kurze Displays: ein Satz, nie abgeschnitten
 };
 // Monochrome Linien-Icons (currentColor, 1,5-px-Strich) statt bunter Emoji — eine Icon-Sprache für Hero, Topbar, Aktionsleiste, Bühne, Toast,
@@ -83,7 +85,7 @@ function iconize(el, fallback = null, force = null) {
   };
   run(); new MutationObserver(run).observe(el, { childList: true, characterData: true, subtree: true });
 }
-const TRUST = [[ICON.leaf, 'Pflanzen-PLA'], [ICON.printer, 'Aus Deutschland'], [ICON.box, '5–8 Werktage']];
+const TRUST = [[ICON.leaf, 'Pflanzen-PLA'], [ICON.printer, 'Aus Deutschland'], [ICON.box, LZ]];
 // Reihenfolge der Bühne: Start = Hammerschlag (Signatur, grobe Geometrie → kein Moiré im allerersten Bild; Nachbarn Freiform und Voronoi,
 // nicht Fjordwelle), dann Orbit, Twist erst an Position 3, danach Formen und Muster im Wechsel. Erster Wechsel nach 5 s, danach alle 8 s.
 const ORDER = [6, 1, 0, 7, 2, 8, 3, 4, 5];
@@ -232,7 +234,7 @@ const SHEET_CTA = 'Diese Vase gestalten ↓';
 function formSheet(i, source) {
   const d = STUDIO_DESIGNS[i]; const cfg = designConfig(d);
   return {
-    source, kind: 'form', key: d.id, image: designImage(d), alt: `${d.description}, KI-Produktfotografie auf Basis des 3D-Modells`,
+    source, kind: 'form', key: d.id, image: designImage(d), alt: `${d.description}, KI-Inszenierung auf Basis des 3D-Modells`, ki: true,
     kicker: `FORM 0${i + 1}`, title: d.name, meta: `${d.description} · ${d.config.height / 10} cm · ${colorLabel(d.color)}`, text: FORM_TEXT[d.id] || d.description,
     price: () => priceHTML(cfg), facts: () => factsText(cfg), deal: () => dealText(cfg), trust: trustHTML, cta: SHEET_CTA, onCta: () => go(cfg),
   };
@@ -248,7 +250,7 @@ function patternSheet(key, source, chipIndex = leadChip) {
     source, kind: swatch && p.preview ? 'swatch' : 'pattern', key, image: p.preview || p.image, inset: swatch ? p.macro || null : null,
     alt: p.alt || `${p.name} – Flasche in ${p.colorName}${p.preview ? ', 3D-Vorschau aus dem Konfigurator-Modell' : ''}`,
     insetAlt: `${p.name} aus der Nähe`,
-    svg: p.preview ? null : p.svg, ground: swatch ? null : p.ground, hex: p.hex, preview: !!p.preview,
+    svg: p.preview ? null : p.svg, ground: swatch ? null : p.ground, hex: p.hex, preview: !!p.preview, ki: !swatch, // Signatur/Neu = KI-Fotos, Swatches = 3D-Vorschau bzw. Symbol
     kicker, title: p.name, meta, text: p.text, chips: p.chips, chipIndex: p.chips ? chipIndex : 0,
     price: (st) => priceHTML(patternConfig(p, st.color)), facts: (st) => factsText(patternConfig(p, st.color)), deal: (st) => dealText(patternConfig(p, st.color)), trust: trustHTML,
     note: p.note, cta: SHEET_CTA, onCta: (st) => go(patternConfig(p, st.color)),
@@ -331,13 +333,13 @@ function initHeroDom() {
   // Preiszeile der gezeigten Vase (ersetzt mobil die „ab …“-Zeile #hero-hint; die bleibt versteckt als Preisquelle der Pille)
   heroPriceEl = document.createElement('p'); heroPriceEl.className = 'm-hero-price'; hint.after(heroPriceEl);
   // Kleine Handys (≤ 700 px Höhe): Kicker und Unterzeile weichen der Bühne — diese eine Zeile sagt dann, worum es geht (nur dort sichtbar, mobile.css)
-  const one = document.createElement('p'); one.className = 'm-oneliner'; one.textContent = 'Vase selbst gestalten · wir drucken sie für dich';
+  const one = document.createElement('p'); one.className = 'm-oneliner'; one.textContent = 'Vase selbst gestalten · ich drucke sie für dich';
   ($('#hero-sub-m') || use).after(one);
   // 3D-Bühne startet mit ORDER[0] (Hammerschlag) — Punkte, Kapsel und Knopf-Ziel schon jetzt darauf (studio.js wählt die Form beim Start)
   if (art.dataset.world !== 'photo') heroIndex = ORDER[0];
   paintHero();
   // Trust-Zeile: drei gleich verteilte Chips mit Linien-Icons (die Emoji-Zeile #trust-row aus content.json bleibt für Desktop/Tablet, mobil per CSS aus)
-  const trust = document.createElement('div'); trust.className = 'm-trust'; trust.setAttribute('aria-label', 'Pflanzenbasiertes PLA, gedruckt in Deutschland, Lieferung in 5 bis 8 Werktagen');
+  const trust = document.createElement('div'); trust.className = 'm-trust';
   trust.innerHTML = TRUST.map(([ic, t]) => `<span>${ic}${t}</span>`).join('');
   ($('#trust-row') || hint).after(trust);
   const foot = $('.hero-foot a'); if (foot) { foot.classList.add('hero-foot-link'); side.appendChild(foot); }
@@ -510,9 +512,9 @@ function initPatterns() {
     // Signatur-Kachel: Bild + Titel (oben links unter der Kapsel „Signatur“, mit Verlauf auf dem Foto — die klebende Pille unten verdeckt ihn nie)
     // im Knopf; die Finish-Wahl steht als eigene Knopfgruppe (≥ 40 px Ziele) unten links – kein Bedienelement im Bedienelement.
     // Fotos (Signatur, Voronoi, Fjordwelle) per data-src: sie stehen ~2 Bildschirme tief und laden erst beim Heranscrollen (lazyImg)
-    `<div class="m-lead-wrap"><button class="m-lead" type="button" data-key="${lead.key}" aria-label="${esc(lead.name)} – Details"><div class="m-img"><img data-src="${lead.image}" width="1122" height="1402" loading="lazy" fetchpriority="low" decoding="async" alt="${esc(lead.alt)}"><img class="m-img2" aria-hidden="true" alt="" decoding="async"><span class="m-pill">Signatur</span><span class="m-badge m-lead-badge" hidden></span><div class="m-lead-title"><h3>${esc(lead.name)}</h3><span class="m-lead-sub">Gehämmert · Kupfer, Matt oder Silber</span></div></div></button>` +
+    `<div class="m-lead-wrap"><button class="m-lead" type="button" data-key="${lead.key}" aria-label="${esc(lead.name)} – Details"><div class="m-img"><img data-src="${lead.image}" width="1122" height="1402" loading="lazy" fetchpriority="low" decoding="async" alt="${esc(lead.alt)}"><img class="m-img2" aria-hidden="true" alt="" decoding="async"><span class="m-pill">Signatur</span><span class="m-badge m-lead-badge" hidden></span><mark class="ki-tag">KI-Inszenierung</mark><div class="m-lead-title"><h3>${esc(lead.name)}</h3><span class="m-lead-sub">Gehämmert · Kupfer, Matt oder Silber</span></div></div></button>` +
     `<div class="m-finish" role="group" aria-label="Finish wählen">${lead.chips.map((c, i) => `<button type="button" data-finish="${i}" class="${i === 0 ? 'on' : ''}" style="--hex:${c.hex}" aria-label="${esc(c.label)}" aria-pressed="${i === 0}"></button>`).join('')}</div></div>` +
-    `<div class="m-pair">${news.map((p) => `<button class="m-tile" type="button" data-key="${p.key}" aria-label="${esc(p.name)} – Details"><div class="m-img"><img data-src="${p.image}" width="1024" height="1280" loading="lazy" decoding="async" alt="${esc(p.alt)}"><span class="m-pill m-pill-new">Neu</span></div><h3>${esc(p.name)}</h3><span>${esc(p.sub)}</span></button>`).join('')}</div>` +
+    `<div class="m-pair">${news.map((p) => `<button class="m-tile" type="button" data-key="${p.key}" aria-label="${esc(p.name)} – Details"><div class="m-img"><img data-src="${p.image}" width="1024" height="1280" loading="lazy" decoding="async" alt="${esc(p.alt)}"><span class="m-pill m-pill-new">Neu</span><mark class="ki-tag">KI-Inszenierung</mark></div><h3>${esc(p.name)}</h3><span>${esc(p.sub)}</span></button>`).join('')}</div>` +
     // Swatches: Katalog-Beschriftung wie die Paar-Kacheln (Serifen-Name links, zweite Zeile Aufpreis bzw. „inklusive“)
     `<div class="m-swatches">${sw.map((p) => `<button class="m-swatch" type="button" data-key="${p.key}" aria-label="${esc(p.name)} – Details" style="--m-hex:${p.hex}"><div class="m-img${p.svg && !p.preview ? ' is-svg' : ''}">${swatchMedia(p)}</div><h3>${esc(p.name)}</h3><small class="m-sw-sub">${esc(swatchSub(p))}</small></button>`).join('')}</div></div>`;
   $('#formen').after(sec);
@@ -604,6 +606,7 @@ function syncCta() {
   const b = document.body.classList, H = innerHeight;
   const heroOut = hero.getBoundingClientRect().bottom <= 0;
   const atEnd = scrollY + H > document.documentElement.scrollHeight - 72; // ganz unten: Fußzeilen-Links frei lassen
+  const legal = $('footer .footer-legal'); const legalIn = !!legal && legal.getBoundingClientRect().top < H - 8; // Rechtliches (Impressum … „Vertrag widerrufen“) im Bild → Pille weicht
   const inlineIn = $$('.m-inline-cta').some((el) => { const q = el.getBoundingClientRect(); return q.bottom > 0 && q.top < H; }); // Inline-Bestellknopf irgendwo im Bild → weichen
   const barShown = b.contains('has-mbar') && !b.contains('m-konf-out'); // App-Shell-Leiste sichtbar (mobile.js), außer sie ist unterhalb der Bühne unterdrückt
   // Studio selbst kommt ins Bild (Überschrift bis Bühne): es IST der Bestellweg — die Pille würde nur die Konfigurator-Überschrift verdecken
@@ -612,7 +615,7 @@ function syncCta() {
   const footer = $('footer'); const onFooter = !!footer && footer.getBoundingClientRect().top < H - 70; // Footer überlappt den CTA-Streifen → helle Variante
   // Keine Ausnahme mehr für die Signatur-Kachel: ihr Titel steht oben links unter der Kapsel (mobile.css), die Pille muss ihm nicht weichen —
   // vorher blinkte sie beim Durchscrollen des Katalogs aus und wieder ein
-  const show = heroOut && !atEnd && !inlineIn && !barShown && !konfNear && !quiet && !b.contains('m-sheet-open') && !b.contains('no-scroll');
+  const show = heroOut && !atEnd && !legalIn && !inlineIn && !barShown && !konfNear && !quiet && !b.contains('m-sheet-open') && !b.contains('no-scroll');
   ctaWrap.classList.toggle('compact', below); ctaWrap.classList.toggle('on-footer', onFooter);
   paintFade(H); // setzt auch on-dark (dunkle Sektion unter der Pille → helle Pille)
   if (show === ctaShown) return;
@@ -740,7 +743,7 @@ function initRest() {
   const s = $('#sogehts .eyebrow'); if (s) s.textContent = 'Von der Idee zu dir';
   // Kurztexte (ganze Sätze) statt per CSS abgeschnittener Desktop-Texte
   const gs = $('#galerie-sub'); if (gs) gs.textContent = KURZ.galerie;
-  whenFilled($('#steps'), () => { $$('#steps .step').forEach((u, i) => { const p = $('p', u); if (p && KURZ.steps[i]) p.textContent = KURZ.steps[i]; reveal(u, i * 60); }); });
+  whenFilled($('#steps'), () => { $$('#steps .step').forEach((u, i) => { const p = $('p', u); if (p && KURZ.steps[i]) p.innerHTML = KURZ.steps[i]; reveal(u, i * 60); }); }); // statische Texte (inkl. Lieferzeit-Platzhalter)
   // „Zuhause“-Reihe: Motive nach Farbe abwechseln (gelb, blau, gelb statt zweimal gelb nebeneinander) — Farbe aus dem Dateinamen, nur die
   // Reihenfolge im DOM (app.js und die Galerie-Daten bleiben unberührt)
   whenFilled($('#galerie-grid'), () => {
@@ -762,7 +765,7 @@ function initRest() {
     if (wet && all.indexOf(wet) > 1) all[1].before(wet);
     // Der STL-Download (vorher als Fachbegriff in jedem Sheet) lebt jetzt hier und im Konfigurator — als Antwort auf die eigentliche Frage
     const stl = document.createElement('details'); stl.className = 'card m-faq-stl';
-    stl.innerHTML = '<summary>Bekomme ich eine Vase oder eine Datei?</summary><p>Eine echte Vase: Wir drucken sie nach deinem Design und schicken sie dir. Wer selbst einen 3D-Drucker hat, kann sein Design im Konfigurator zusätzlich als STL-Datei herunterladen – ohne Aufpreis.</p>';
+    stl.innerHTML = '<summary>Bekomme ich eine Vase oder eine Datei?</summary><p>Eine echte Vase: Ich drucke sie nach deinem Design und schicke sie dir. Wer selbst einen 3D-Drucker hat, kann sein Design im Konfigurator zusätzlich als STL-Datei herunterladen – ohne Aufpreis.</p>';
     const ds = $$('details', list); if (ds[3]) ds[3].after(stl); else list.appendChild(stl);
     const n = $$('details', list).length - 4;
     let anchor = list;

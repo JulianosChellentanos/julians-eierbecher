@@ -1,4 +1,6 @@
-# OVJU — Form follows you
+# formsam — Studio-Redesign („Form follows you“, damals OVJU)
+
+> Protokoll des Redesigns. Eierbecher (unten noch erwähnt) sind inzwischen per Schalter deaktiviert. Marke: [marke.md](marke.md).
 
 The landing page presents five available vase presets plus a custom silhouette. Every design is defined in `public/js/studio-designs.js` and built with the same `buildModel` geometry used by the configurator and STL export.
 

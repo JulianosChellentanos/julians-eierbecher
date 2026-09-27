@@ -1,4 +1,4 @@
-// OVJU — erzeugt aus einer gespeicherten Design-Konfiguration die druckfertige STL
+// formsam — erzeugt aus einer gespeicherten Design-Konfiguration die druckfertige STL
 // (wird vom Konfigurator UND vom Warenkorb-Checkout genutzt)
 import * as THREE from 'three';
 import { buildModel, buildSaucer, FONTS } from './geometry.js';
@@ -56,7 +56,7 @@ export async function makeExport(config) {
   const { geometry, info } = buildModel({ ...config, quality: 1, exportRes: false, textFont, fallbackFont });
   const parts = [{ name: 'Körper (Filament 1)', mesh: new THREE.Mesh(geometry), extruder: 1 }];
   if (info.inlay) parts.push({ name: `Schrift „${txt}“ (Filament 2)`, mesh: new THREE.Mesh(info.inlay), extruder: 2 });
-  const objects = [{ name: config.product === 'vase' ? 'OVJU Vase' : 'OVJU Eierbecher', parts }];
+  const objects = [{ name: config.product === 'vase' ? 'formsam Vase' : 'formsam Eierbecher', parts }];
   if (config.product === 'eierbecher' && config.saucer) {
     const s = buildSaucer({ ...config, quality: 1 });
     const sm = new THREE.Mesh(s.geometry);

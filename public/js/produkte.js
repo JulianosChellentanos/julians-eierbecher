@@ -1,4 +1,4 @@
-// OVJU — Produktschalter (reines Modul ohne DOM/three, auch aus Node-Tests importierbar).
+// formsam — Produktschalter (reines Modul ohne DOM/three, auch aus Node-Tests importierbar).
 //
 // Eierbecher sind vorerst deaktiviert — Produktcode, Bestellungen und Designs bleiben erhalten, damit das Produkt
 // später wieder aktiviert werden kann. Den Stand liefert der Server unter /api/pricing als

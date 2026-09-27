@@ -1,4 +1,4 @@
-// OVJU — Preislogik (reine Rechnung, ohne DOM/Three): muss identisch zu priceItem() in server.js rechnen.
+// formsam — Preislogik (reine Rechnung, ohne DOM/Three): muss identisch zu priceItem() in server.js rechnen.
 // Aufpreise kommen ausschließlich aus den öffentlichen APIs (/api/pricing: muster, farbschrift, gravur, volumen,
 // aktionen + serverNow; /api/colors: aufpreis je Farbe) — hier gibt es keine festen Beträge.
 //

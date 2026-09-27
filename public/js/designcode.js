@@ -1,8 +1,9 @@
-// OVJU — Design-Codes: kurzer Code ⇄ komplettes Design (Form, Muster, Gravur, Farbe …)
+// formsam — Design-Codes: kurzer Code ⇄ komplettes Design (Form, Muster, Gravur, Farbe …)
 // Server vergibt den Code deterministisch (gleiches Design → gleicher Code), speichert die Konfiguration.
 const $ = (s) => document.querySelector(s);
 
 export const formatCode = (c) => c ? String(c).replace(/(.{3})(?=.)/g, '$1-') : '';
+// Altes Präfix „OVJU“ (Codes aus der Zeit vor formsam) wird weiter akzeptiert und abgeschnitten
 export const normalizeCode = (raw) => String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^OVJU/, '');
 /** HTML-Sonderzeichen maskieren — Pflicht für alles, was aus Nutzer-/Serverdaten per innerHTML gerendert wird
  *  (Gravurtext, Farbnamen, Codes …); geteilte Design-Codes/Listen bringen fremde Eingaben in den eigenen Browser. */
@@ -130,7 +131,7 @@ export function initDesignCodes(opts) {
   $('#dc-share').addEventListener('click', async (e) => {
     if (!lastCode) return;
     if (navigator.share) {
-      try { await navigator.share({ title: 'Mein OVJU-Design', text: `Design-Code ${formatCode(lastCode)}`, url: designLink(lastCode) }); } catch { /* abgebrochen */ }
+      try { await navigator.share({ title: 'Mein formsam-Design', text: `Design-Code ${formatCode(lastCode)}`, url: designLink(lastCode) }); } catch { /* abgebrochen */ }
     } else copy(designLink(lastCode), e.currentTarget);
   });
   $('#dc-load').addEventListener('click', loadFromInput);

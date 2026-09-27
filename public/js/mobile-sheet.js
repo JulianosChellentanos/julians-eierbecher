@@ -1,4 +1,4 @@
-// OVJU Mobil — Bottom-Sheet für Formen und Oberflächen (ein DOM-Knoten, erst beim ersten Öffnen angelegt, nur ≤ 700 px).
+// formsam Mobil — Bottom-Sheet für Formen und Oberflächen (ein DOM-Knoten, erst beim ersten Öffnen angelegt, nur ≤ 700 px).
 // Federndes Einblenden, Drag-to-close, Schließen-Kreuz, Backdrop/Esc/Android-Zurück (genau ein History-Eintrag je Öffnung), main inert,
 // Fokus zurück zur Kachel; die Hero-3D pausiert währenddessen (ovju:world-hold). Der CTA feuert erst NACH dem Schließen.
 import { buzz } from './mobile.js';
@@ -16,7 +16,7 @@ function build() {
   sheet = document.createElement('div'); sheet.className = 'm-sheet'; sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-modal', 'true'); sheet.setAttribute('aria-labelledby', 'm-sheet-title'); sheet.tabIndex = -1;
   // Reihenfolge: Griff → Inhalt (Bild [+ rundes Detail], Kicker, Titel, Meta, Text, Chips, Preis, Versand, Mengenrabatt, CTA, Absicherung, Notiz,
   // Fußzeile) → Schließen-Kreuz (letztes Tab-Ziel, optisch oben rechts)
-  sheet.innerHTML = `<div class="m-sheet-grip"></div><div class="m-sheet-scroll"><div class="m-sheet-media"><img class="m-sheet-img" decoding="async" alt=""><img class="m-sheet-img m-sheet-img2" aria-hidden="true" alt=""><div class="m-sheet-svg"></div><img class="m-sheet-inset" decoding="async" alt="" hidden></div><p class="m-sheet-kicker"></p><h2 id="m-sheet-title" tabindex="-1"></h2><p class="m-sheet-meta"></p><p class="m-sheet-text"></p><div class="m-chips" role="group" aria-label="Finish"></div><p class="m-sheet-price"></p><p class="m-sheet-facts"></p><p class="m-sheet-deal"></p><button class="m-sheet-cta" type="button"></button><p class="m-sheet-trust"></p><p class="m-sheet-note"></p><p class="m-sheet-foot"></p></div><button class="m-sheet-close" type="button" aria-label="Schließen">×</button>`;
+  sheet.innerHTML = `<div class="m-sheet-grip"></div><div class="m-sheet-scroll"><div class="m-sheet-media"><img class="m-sheet-img" decoding="async" alt=""><img class="m-sheet-img m-sheet-img2" aria-hidden="true" alt=""><div class="m-sheet-svg"></div><img class="m-sheet-inset" decoding="async" alt="" hidden><mark class="ki-tag" hidden>KI-Inszenierung</mark></div><p class="m-sheet-kicker"></p><h2 id="m-sheet-title" tabindex="-1"></h2><p class="m-sheet-meta"></p><p class="m-sheet-text"></p><div class="m-chips" role="group" aria-label="Finish"></div><p class="m-sheet-price"></p><p class="m-sheet-facts"></p><p class="m-sheet-deal"></p><button class="m-sheet-cta" type="button"></button><p class="m-sheet-trust"></p><p class="m-sheet-note"></p><p class="m-sheet-foot"></p></div><button class="m-sheet-close" type="button" aria-label="Schließen">×</button>`;
   const toast = $('#toast');
   document.body.insertBefore(backdrop, toast); document.body.insertBefore(sheet, toast);
   backdrop.addEventListener('click', () => closeSheet());
@@ -77,10 +77,11 @@ function initDrag() {
 export function isSheetOpen() { return open; }
 
 /**
- * openSheet({source, kind, image, alt, inset, insetAlt, svg, ground, hex, preview, kicker, title, meta, text, chips, chipIndex, price, facts, deal, trust, note, cta, onCta, onChip, foot})
+ * openSheet({source, kind, image, alt, inset, insetAlt, svg, ground, hex, preview, ki, kicker, title, meta, text, chips, chipIndex, price, facts, deal, trust, note, cta, onCta, onChip, foot})
  * kind: 'form' (Produktfoto 4:5, Silhouette ganz) | 'swatch' (3D-Vorschau der ganzen Vase 4:5 auf Elfenbein, inset = rundes Makro-Detail unten
  *       rechts) | 'pattern' (Materialdetail 7:6) — steuert die Bildfläche per CSS (data-kind)
- * svg + hex: Muster ohne Vorschau → kompakter Streifen mit Symbol in der Musterfarbe statt großer Bildfläche; preview: 3D-Vorschau aus dem Konfigurator-Modell
+ * svg + hex: Muster ohne Vorschau → kompakter Streifen mit Symbol in der Musterfarbe statt großer Bildfläche; preview: 3D-Vorschau aus dem Konfigurator-Modell;
+ * ki: das Bild ist KI-generiert → Kennzeichnung „KI-Inszenierung“ in der Bildecke (EU-KI-Verordnung Art. 50)
  * meta / facts / deal: Text oder Funktion (state) → Text; price: Funktion (state) → HTML der EINEN Preiszeile oder fertiger HTML-String — werden
  * bei Chip-Wechsel neu gerechnet; trust: HTML (Linien-Icon + Text) unter dem Knopf
  */
@@ -101,6 +102,7 @@ export function openSheet(o) {
   if (o.inset && !useSvg) { inset.src = o.inset; inset.alt = o.insetAlt || ''; inset.hidden = false; } else { inset.hidden = true; inset.removeAttribute('src'); }
   if (useSvg) { img.hidden = true; img2.hidden = true; img.removeAttribute('src'); svg.innerHTML = o.svg + '<span>Live-Vorschau im Konfigurator</span>'; }
   else { img.hidden = false; img2.hidden = false; svg.innerHTML = ''; const c = state.chips[state.chip]; img.src = (c && c.image) || o.image; img.alt = o.alt || ''; }
+  $('.m-sheet-media > .ki-tag', sheet).hidden = useSvg || !o.ki;
   $('.m-sheet-kicker', sheet).textContent = o.kicker || '';
   $('#m-sheet-title', sheet).textContent = o.title || '';
   $('.m-sheet-text', sheet).textContent = o.text || '';
@@ -112,7 +114,7 @@ export function openSheet(o) {
   $('.m-sheet-cta', sheet).textContent = o.cta || 'Gestalten ↓'; // Sprung zum Konfigurator auf derselben Seite: Richtungspfeil
   $('.m-sheet-trust', sheet).innerHTML = val(o.trust);
   $('.m-sheet-note', sheet).textContent = o.note || '';
-  $('.m-sheet-foot', sheet).textContent = o.foot || (useSvg ? 'Kein Foto — im Konfigurator siehst du dein Muster live in 3D.' : o.preview ? '3D-Vorschau aus unserem Konfigurator-Modell · Live-Vorschau im Konfigurator' : 'KI-Produktfoto auf Basis unseres 3D-Modells · Live-Vorschau im Konfigurator');
+  $('.m-sheet-foot', sheet).textContent = o.foot || (useSvg ? 'Kein Foto — im Konfigurator siehst du dein Muster live in 3D.' : o.preview ? '3D-Vorschau aus dem Konfigurator-Modell · Live-Vorschau im Konfigurator' : o.ki ? 'KI-Inszenierung auf Basis des 3D-Modells · Live-Vorschau im Konfigurator' : 'Live-Vorschau im Konfigurator');
   [...$('.m-sheet-scroll', sheet).children].forEach((el, i) => el.style.setProperty('--i', i));
   $('.m-sheet-scroll', sheet).scrollTop = 0;
   if (!open) { try { history.pushState({ mSheet: 1 }, ''); } catch { /* egal */ } }

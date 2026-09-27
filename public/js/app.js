@@ -1,4 +1,4 @@
-// OVJU — Konfigurator: 3D-Szene, UI-Bindings, Bestellung (Vasen; Eierbecher vorerst deaktiviert — Schalter in produkte.js,
+// formsam — Konfigurator: 3D-Szene, UI-Bindings, Bestellung (Vasen; Eierbecher vorerst deaktiviert — Schalter in produkte.js,
 // die Eierbecher-Logik bleibt für die Reaktivierung erhalten)
 import * as THREE from 'three';
 import { STUDIO_DESIGNS, designConfig as studioDesignConfig } from './studio-designs.js';
@@ -15,7 +15,7 @@ import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { makeSTL, makeExport, exportExt, loadFont } from './modelfactory.js';
 import {
   initCart, addToCart, getPricing, fmt, fmtPlus, discountTeaser, setCodeProvider, getCart,
-  setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge, eierbecherAktiv,
+  setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge, eierbecherAktiv, fillShopInfo,
 } from './cart.js';
 import { produktAktiv, EIERBECHER_HINWEIS } from './produkte.js';
 import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } from './designcode.js';
@@ -57,14 +57,13 @@ const TEXTSIZE_RANGE = [+$('#s-textsize').min, +$('#s-textsize').max];
 // ---------------------------------------------------------------------------
 async function loadContent() {
   content = await (await fetch('content.json')).json();
-  document.title = `${content.brand.name} — ${content.brand.tagline}`;
-  $('#brand-name').textContent = content.brand.name;
+  // Kopf- und Footer-Logo sind Inline-SVG (#fs-logo in index.html) — hier kein Text mehr hineinschreiben
+  if (content.brand.title) document.title = content.brand.title;
   $('#brand-tagline').textContent = content.brand.tagline;
   $('#hero-headline').textContent = content.hero.headline;
   $('#hero-sub').textContent = content.hero.subheadline;
   $('#hero-cta').textContent = content.hero.cta;
   $('#footer-text').textContent = content.footer.text;
-  $('#footer-brand').textContent = content.brand.name;
 
   $('#usps').innerHTML = content.usps.map((u) => `
     <div class="usp card"><div class="usp-icon">${u.icon}</div>
@@ -452,7 +451,7 @@ function updateProps() {
 }
 
 // Kamera so setzen, dass das Objekt in Höhe UND Breite passt (auch mobil).
-// live = Live-Bühne (nicht Foto-Shooting/Produktfoto): auf dem Handy (≤ 700 px) ~24 % weiter weg und leicht nach oben gerückt — Hals mit Luft unter „OVJU / LIVE STUDIO“,
+// live = Live-Bühne (nicht Foto-Shooting/Produktfoto): auf dem Handy (≤ 700 px) ~24 % weiter weg und leicht nach oben gerückt — Hals mit Luft unter „formsam / LIVE STUDIO“,
 // Fuß über Dreh-Hinweis und den (seit Runde 7 höheren, 44-px-tippbaren) Szenen-Chips (mobile.css); Tablet/Desktop unverändert.
 function frameCamera(live = true) {
   const H = currentInfo ? currentInfo.height : 58;
@@ -562,7 +561,7 @@ function updatePrintBadge(geometry, info) {
     cls = 'p-warn'; txt = 'ℹ️ Offene Zellen — Brücken im Slicer prüfen';
     tip = 'Voronoi hat echte Durchbrüche. Brücken und Stützen vor dem Druck im Slicer prüfen. Für Trockenblumen oder mit passendem Einsatz.';
   } else if (sil > 50) {
-    cls = 'p-warn'; txt = '⚠️ Ausladende Form — wir drucken mit extra Kühlung';
+    cls = 'p-warn'; txt = '⚠️ Ausladende Form — ich drucke mit extra Kühlung';
     tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung — druckt mit feinen Schichten sauber.`;
   } else if (state.depth > 2.5 && worst > 65 && frac55 > 0.08) {
     cls = 'p-bad'; txt = '🔶 Tiefe Struktur zu schräg — Drall reduzieren';
@@ -1165,7 +1164,7 @@ function syncControls() {
 }
 
 function stlFilename(ext = 'stl') {
-  const brand = content ? content.brand.name.toLowerCase() : 'ovju';
+  const brand = content ? content.brand.name.toLowerCase() : 'formsam';
   return `${brand}-${state.product}-${state.preset}-${state.pattern}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.${ext}`;
 }
 
@@ -1309,7 +1308,7 @@ async function fotoShooting() {
   }
   await shotRestore(saved);
   $('#foto-grid').innerHTML = shots.map((s) => `
-    <a href="${s.url}" download="ovju-${state.product}-${s.name}.png"><img src="${s.url}" alt="Szene ${s.name}"></a>`).join('');
+    <a href="${s.url}" download="formsam-${state.product}-${s.name}.png"><img src="${s.url}" alt="Szene ${s.name}"></a>`).join('');
   $('#foto-modal').showModal();
   btn.disabled = false;
 }
@@ -1357,8 +1356,11 @@ async function loadGallery() {
   const items = [...galerie, ...(galerie.length < 4 ? rest : [])];
   if (!items.length) return;
   $('#galerie').hidden = false;
+  // Galerie-Uploads sind Fotos — ein KI-Bild bekommt die Kennzeichnung, wenn sein Dateiname „ki“ bzw. „ai“ als eigenes Wort trägt
+  // (z. B. galerie-…-ki-vase-gelb.jpg; der Admin-Upload übernimmt den Originalnamen)
+  const isKi = (f) => /(^|[-_/])(ki|ai)([-_.]|$)/i.test(String(f).replace(/^.*\//, ''));
   $('#galerie-grid').innerHTML = items.slice(0, 8).map((g, i) => `
-    <figure class="galerie-item ${i === 0 ? 'big' : ''}"><img src="${g.file}" loading="lazy" alt="OVJU Produktfoto"></figure>`).join('');
+    <figure class="galerie-item ${i === 0 ? 'big' : ''}"><img src="${g.file}" loading="lazy" alt="Vase von formsam${isKi(g.file) ? ' (KI-Inszenierung)' : ''}">${isKi(g.file) ? '<mark class="ki-tag">KI-Inszenierung</mark>' : ''}</figure>`).join('');
 }
 
 async function renderShowcase() {
@@ -1407,6 +1409,7 @@ async function renderShowcase() {
 (async () => {
   await loadContent();
   await initCart();
+  fillShopInfo(); // Lieferzeit/Liefergebiet aus /api/pricing → shop in alle [data-lieferzeit]/[data-liefergebiet] (FAQ, Schritte, Trust-Zeilen)
   applyProduktSchalter(); // braucht /api/pricing → produkte (Standard bis dahin: nur Vasen)
   await initAuth();
   // Aktionsleiste + Countdown; läuft eine Aktion ab (oder beginnt eine neue), werden Muster-Badges und alle Preise neu gerendert

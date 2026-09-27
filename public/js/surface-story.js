@@ -24,7 +24,8 @@ $('#hammer-use').addEventListener('click',()=>use({...SURFACE_DESIGNS.hammered,c
 $('#skeleton-use').addEventListener('click',()=>use(SURFACE_DESIGNS.skeleton));
 $('#coral-use').addEventListener('click',()=>use(SURFACE_DESIGNS.coral));
 const dialog=$('#scene-lightbox');
-for(const button of document.querySelectorAll('[data-view-image]'))button.addEventListener('click',()=>{const image=button.querySelector('img');dialog.querySelector('img').src=button.dataset.viewImage;dialog.querySelector('img').alt=image.alt;dialog.querySelector('p').textContent=image.alt;dialog.showModal();});
+// Lightbox: KI-Bilder (data-ki) behalten ihre Kennzeichnung auch in der Großansicht — als Zusatz in der Bildunterschrift
+for(const button of document.querySelectorAll('[data-view-image]'))button.addEventListener('click',()=>{const image=button.querySelector('img');const ki='ki' in button.dataset&&!/KI-/.test(image.alt);dialog.querySelector('img').src=button.dataset.viewImage;dialog.querySelector('img').alt=image.alt;dialog.querySelector('p').textContent=image.alt+(ki?' · KI-Inszenierung':'');dialog.showModal();});
 dialog.querySelector('button').addEventListener('click',()=>dialog.close());
 dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close();});
 // Kupfer bleibt auf allen Geräten der Start-Finish (gleiche Stimmung wie Cover und Desktop).

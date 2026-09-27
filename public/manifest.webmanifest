@@ -1,7 +1,7 @@
 {
-  "name": "OVJU – Dein Design. Deine Vase.",
-  "short_name": "OVJU",
-  "description": "Vasen selbst gestalten – 3D-Konfigurator, gedruckt aus pflanzenbasiertem PLA.",
+  "name": "formsam – Vasen selbst gestalten",
+  "short_name": "formsam",
+  "description": "Vasen selbst gestalten: Form, Oberfläche, Farbe und Gravur im 3D-Konfigurator. Einzeln gedruckt aus PLA auf Pflanzenbasis.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

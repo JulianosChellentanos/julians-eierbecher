@@ -1,5 +1,6 @@
-// OVJU Studio — Admin-Oberfläche (klassisches Skript, wird von /admin geladen)
-// Bereiche: Übersicht · Bestellungen (+ Drawer) · Druck · Kunden · Farben · Bilder · Preise · Aktionen · Firma · PayPal · E-Mail · System
+// formsam Studio — Admin-Oberfläche (klassisches Skript, wird von /admin geladen)
+// Bereiche: Übersicht (+ Pflichtangaben, Widerrufe) · Bestellungen (+ Drawer) · Druck · Kunden · Farben · Bilder · Preise · Aktionen · Firma · PayPal · E-Mail · System
+// Interne Kennungen bleiben aus Kompatibilitätsgründen beim alten Präfix: localStorage „ovju-admin-key“.
 'use strict';
 
 const KEY = () => localStorage.getItem('ovju-admin-key') || '';
@@ -125,6 +126,8 @@ function show(pane) {
   for (const [id] of NAV) $(`#pane-${id}`).hidden = id !== pane;
   $$('[data-pane]').forEach((b) => b.classList.toggle('on', b.dataset.pane === pane));
   $('#save-bar').hidden = !SETTINGS_PANES.includes(pane);
+  if (pane === 'dash') loadWiderrufe();   // Widerrufe frisch vom Server (kommen jederzeit über die Shop-Seite herein)
+  if (pane === 'company') renderPflicht();
   if (pane === 'print') renderPrint();
   if (pane === 'customers') renderCustomers();
   if (pane === 'colors') renderColors();
@@ -144,13 +147,17 @@ function updateCounters() {
   $('#nav-cnt-print').textContent = q || '';
   const rev = DATA.orders.filter((o) => st(o) !== 'storniert').reduce((s, o) => s + (o.total || 0) - refundAmount(o), 0);   // netto: abzüglich erledigter Erstattungen
   const rk = DATA.orders.filter(reklaOpen).length;
-  $('#subline').textContent = `${DATA.orders.length} Bestellungen · ${open} offen${rk ? ` · ${rk} Reklamation${rk === 1 ? '' : 'en'}` : ''} · ${money(rev)} Umsatz gesamt`;
+  const wr = wrOffenCount();   // offene Widerrufe: Zähler an „Übersicht“ (dort steht die Karte)
+  $('#nav-cnt-dash').textContent = wr || '';
+  $('#subline').textContent = `${DATA.orders.length} Bestellungen · ${open} offen${rk ? ` · ${rk} Reklamation${rk === 1 ? '' : 'en'}` : ''}${wr ? ` · ${wr} Widerruf${wr === 1 ? '' : 'e'} offen` : ''} · ${money(rev)} Umsatz gesamt`;
 }
 
 // ---------------------------------------------------------------------------
 // Bestell-Helfer
 // ---------------------------------------------------------------------------
 const st = (o) => o.status || 'neu';
+/** Bestellnummer ohne Präfix für knappe Listen: „FS-260927-A1B2C3“ → „260927-A1B2C3“ (alte Bestellungen „OV-…“ ebenso) */
+const shortId = (id) => String(id || '').replace(/^(OV|FS)-/, '');
 const custName = (o) => o.customer?.name || o.name || '';
 const custEmail = (o) => (o.customer?.email || o.email || '').trim().toLowerCase();
 const isPaid = (o) => st(o) === 'bezahlt' || (st(o) === 'neu' && o.paymentStatus === 'bezahlt');
@@ -199,13 +206,13 @@ function surchargeLine(l) {
     .filter(([, v]) => euro(v) > 0);
   return list.length ? `Aufpreise: ${list.map(([k, v]) => `${k} ${money(v)}`).join(' · ')}` : '';
 }
-/** Aktionszeile einer Bestellposition „UVP 24,90 € · Aktion −16 % (Sommer)“ (wie aktionText() in lib/mail-templates.js) — leer ohne Aktion.
+/** Aktionszeile einer Bestellposition „Normalpreis 24,90 € · Aktion −16 % (Sommer)“ (wie aktionText() in lib/mail-templates.js) — leer ohne Aktion.
  *  Der Name kommt je Zeile aus l.aktionName: bei mehreren gleichzeitigen Aktionen (z. B. −30 % nur auf Gehämmert) gilt je Position eine andere. */
 function aktionLine(l) {
   const p = Math.round(Number(l?.aktionProzent) || 0);
   if (p <= 0) return '';
   const name = String(l.aktionName || '').trim();
-  return `${euro(l.uvp) > 0 ? `UVP ${money(l.uvp)} · ` : ''}Aktion −${p} %${name ? ` (${name})` : ''}`;
+  return `${euro(l.uvp) > 0 ? `Normalpreis ${money(l.uvp)} · ` : ''}Aktion −${p} %${name ? ` (${name})` : ''}`;
 }
 /** Alle Aktionen einer Bestellung [{ id, name, prozent, ersparnis, produkte?, muster? }] — order.aktionen, ältere Bestellungen nur order.aktion (wie orderAktionen() im Server) */
 function orderAktionen(o) {
@@ -214,6 +221,8 @@ function orderAktionen(o) {
 }
 /** Geltungsbereich einer Bestell-Aktion als Zusatz „ auf Gehämmert“ — nur wenn die Bestellung ihn kennt (neuere Bestellungen speichern produkte/muster mit) */
 const orderAktionScope = (a) => (a.produkte !== undefined || a.muster !== undefined ? ` ${aktionScopeLabel(a)}` : '');
+/** Widerrufe einer Bestellung [{ ref, at }] — order.widerrufe bekommt nur Erklärungen, deren E-Mail zur Bestellung passte (Server) */
+const orderWiderrufe = (o) => (Array.isArray(o?.widerrufe) ? o.widerrufe.filter((w) => w && typeof w === 'object' && w.ref) : []);
 function estimate(l) {
   const pr = DATA.settings.printing || { minutesEgg: 75, minutesVase: 210, gramsEgg: 22, gramsVase: 110 };
   const h0 = DATA.normalHeight?.[l.product] || (l.product === 'vase' ? 150 : 58);
@@ -273,7 +282,7 @@ function renderDash() {
   $('#dash-date').textContent = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   // Heute zu tun
-  const item = (o, extra = '') => `<div class="todo-item"><a href="#orders/${esc(o.orderId)}" onclick="event.preventDefault();openOrder('${esc(o.orderId)}')"><b>${esc(o.orderId.replace(/^OV-/, ''))}</b></a><span class="who">${esc(custName(o))}</span>${extra}</div>`;
+  const item = (o, extra = '') => `<div class="todo-item"><a href="#orders/${esc(o.orderId)}" onclick="event.preventDefault();openOrder('${esc(o.orderId)}')"><b>${esc(shortId(o.orderId))}</b></a><span class="who">${esc(custName(o))}</span>${extra}</div>`;
   const unpaid = all.filter((o) => st(o) === 'neu' && o.payment !== 'paypal' && o.paymentStatus !== 'bezahlt');
   const toPrint = all.filter((o) => inQueue(o) && progress(o).done === 0 && progress(o).printing === 0);
   const printing = all.filter((o) => st(o) === 'im-druck' || (inQueue(o) && progress(o).printing > 0));
@@ -347,6 +356,7 @@ function orderMatches(o) {
     const hay = [o.orderId, o.invoiceNo, custName(o), custEmail(o), o.customer?.city, o.customer?.zip, o.trackingNo, o.paypalOrderId,
       o.reklamation?.gutscheinCode, o.reklamation?.gutschriftNo, o.reklamation?.refundId,   // Gutscheincode / Gutschriftnummer / PayPal-Erstattung
       ...orderAktionen(o).map((a) => a.name),   // Bestellungen aus einer Aktion („Sommer“) — auch mehrere je Bestellung
+      ...orderWiderrufe(o).map((w) => w.ref), orderWiderrufe(o).length ? 'widerruf' : '',   // Widerruf-Referenz „WR-…“ bzw. Stichwort „Widerruf“
       ...(o.lines || []).map((l) => `${l.colorName} ${l.config?.text || ''} ${PRESETS[l.config?.preset] || ''} ${PATTERNS[l.config?.pattern] || ''}`)].join(' ').toLowerCase();
     if (!hay.includes(F.q)) return false;
   }
@@ -381,7 +391,7 @@ function renderOrders() {
         <td data-l="Kunde">${esc(custName(o))}<br><small class="muted mail" title="${esc(custEmail(o))}">${esc(custEmail(o))}</small></td>
         <td data-l="Positionen"><span class="lines-short">${lines}</span></td>
         <td data-l="Summe" class="num">${o.total != null ? money(o.total) : '—'}<br><small class="muted">${o.payment === 'paypal' ? 'PayPal' : 'Vorkasse'} ${o.paymentStatus === 'bezahlt' ? '<span title="bezahlt">✅</span>' : '<span title="offen">⏳</span>'}</small>${o.coupon ? `<br><small class="muted">🎟️ ${esc(o.coupon.code)}</small>` : ''}${orderAktionen(o).map((a) => `<br><small class="muted" title="Aktion${esc(orderAktionScope(a))} · Ersparnis ${esc(money(a.ersparnis))}">🔥 ${esc(a.name)} −${esc(a.prozent)} %</small>`).join('')}</td>
-        <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${o.reklamation ? `<br><span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkStLabel(o.reklamation.status))} · ${esc(rkArtLabel(o.reklamation.art))}">↩️ Reklamation</span>` : ''}${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
+        <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${o.reklamation ? `<br><span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkStLabel(o.reklamation.status))} · ${esc(rkArtLabel(o.reklamation.art))}">↩️ Reklamation</span>` : ''}${orderWiderrufe(o).length ? `<br><span class="badge wr-${orderWrOffen(o) ? 'offen' : 'erledigt'}" title="Widerruf über „Vertrag widerrufen“ eingegangen${orderWrOffen(o) ? '' : ' — erledigt'}">↩️ Widerruf</span>` : ''}${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
         <td data-l="Druck">${p.total ? `<span class="prog"><i style="--w:${Math.round(p.done / p.total * 100)}%"></i>${p.done}/${p.total}</span>` : '—'}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty">Keine Treffer.</td></tr>') + '</tbody>';
@@ -439,7 +449,7 @@ function renderDrawer() {
           ${sur ? `<div class="lc-sur">💶 ${esc(sur)}</div>` : ''}
           ${ak ? `<div class="lc-ak">🔥 ${esc(ak)}</div>` : ''}
         </div>
-        <div style="text-align:right">${l.unit != null ? `<b>${money(l.line)}</b><br><small class="muted">${ak ? `<s class="uvp" title="UVP (Preis vor der Aktion)">${money(l.uvp)}</s>` : ''}${money(l.unit)}/Stk.</small>` : ''}</div>
+        <div style="text-align:right">${l.unit != null ? `<b>${money(l.line)}</b><br><small class="muted">${ak ? `<s class="uvp" title="Normalpreis (Preis vor der Aktion)">${money(l.uvp)}</s>` : ''}${money(l.unit)}/Stk.</small>` : ''}</div>
       </div>
       <div class="lc-actions">
         <span class="badge pr-${esc(pr.status)}">${{ offen: '⏳ offen', druckt: '🔥 druckt', fertig: '✅ gedruckt' }[pr.status] || pr.status}</span>
@@ -461,7 +471,7 @@ function renderDrawer() {
 
   const account = o.userId ? '<span class="badge">👤 Kundenkonto</span>' : (USERS.some((u) => u.email === custEmail(o)) ? '<span class="badge">👤 hat Konto</span>' : '<span class="badge">Gast</span>');
   const tel = cu.phone ? `<br><a href="tel:${esc(cu.phone)}">${esc(cu.phone)}</a>` : '';
-  $('#drawer-body').innerHTML = `
+  $('#drawer-body').innerHTML = `${widerrufCard(o)}
     <div class="sect">
       <h3>Status <span class="right">${fmtDT(o.createdAt)}${o.invoiceNo ? ` · <a href="/orders/${esc(o.orderId)}/rechnung.html" target="_blank">🧾 ${esc(o.invoiceNo)}</a>` : ''}</span></h3>
       <div class="stepper">${stepper}</div>
@@ -621,8 +631,13 @@ function openFreitext(id) {
   const o = DATA.orders.find((x) => x.orderId === id);
   $('#dlg-mail').dataset.order = id;
   $('#dlg-mail-to').textContent = `An: ${custName(o)} <${custEmail(o)}>`;
-  $('#dlg-mail-subject').value = `Deine OVJU-Bestellung ${id}`;
-  $('#dlg-mail-text').value = `Hallo ${custName(o).split(' ')[0]},\n\n\n\nLiebe Grüße\n${DATA.settings.company?.owner || 'OVJU'}`;
+  $('#dlg-mail-subject').value = `Deine formsam-Bestellung ${id}`;
+  // Anrede und Grußformel setzt die Vorlage (customMessage in lib/mail-templates.js) selbst — hier nur die Nachricht
+  const vorname = String(DATA.settings.company?.owner || '').trim().split(/\s+/)[0];
+  const gruss = vorname ? `${vorname} von formsam` : 'formsam';
+  $('#dlg-mail-text').value = '';
+  const f = custName(o).trim().split(/\s+/)[0];
+  $('#dlg-mail-hint').textContent = `Anrede („${f ? `Hallo ${f},` : 'Hallo!'}“) und Gruß („Viele Grüße, ${gruss}“) fügt die Vorlage selbst ein.`;
   $('#dlg-mail').showModal();
 }
 async function mailFreitext(mode) {
@@ -830,6 +845,130 @@ async function copyText(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Widerrufe (elektronische Widerrufsfunktion „Vertrag widerrufen“, Seite /widerruf#widerrufen)
+//   GET  /api/admin/widerrufe → { ok, widerrufe: [neueste zuerst] }
+//        Eintrag { ref: 'WR-YYMMDD-XXXX', at, orderId, name, email, nachricht, orderMatched, status: 'offen'|'erledigt', notiz }
+//   POST /api/admin/widerruf-status { ref, status, notiz } → { ok } — bei zugeordneter Bestellung schreibt der Server auch deren Historie
+// Fehlt der Endpoint (404 ohne JSON), bleibt die Karte ausgeblendet; der Bestell-Drawer zeigt dann nur order.widerrufe.
+// ---------------------------------------------------------------------------
+let WIDERRUFE = null;     // null = nicht geladen bzw. Endpoint fehlt
+let WR_ERR = '';          // Ladefehler (Karte zeigt ihn statt der Liste)
+let WR_ALL = false;       // erledigte Widerrufe ausgeklappt
+let WR_FLASH = '';        // kurz hervorgehobener Eintrag (Sprung aus dem Drawer) — übersteht das Neuladen der Liste
+const wrOffen = () => (WIDERRUFE || []).filter((w) => w.status !== 'erledigt');
+/** Offene Widerrufe — vor dem ersten Laden die Zahl aus /api/admin/data */
+const wrOffenCount = () => (WIDERRUFE ? wrOffen().length : Math.max(0, Math.round(Number(DATA?.widerrufeOffen) || 0)));
+/** Erstattung spätestens 14 Tage nach Eingang der Erklärung (§ 355 Abs. 3, § 357 Abs. 1 BGB) — nur, falls das Widerrufsrecht greift */
+/** Hat die Bestellung einen noch nicht erledigten Widerruf? (ohne geladene Liste: jeder zählt als offen) */
+const orderWrOffen = (o) => orderWiderrufe(o).some((x) => (WIDERRUFE || []).find((y) => y.ref === x.ref)?.status !== 'erledigt');
+const wrFrist = (iso) => { const d = new Date(iso); d.setDate(d.getDate() + 14); return d.toISOString(); };
+async function loadWiderrufe() {
+  let r;
+  try { r = await api('/api/admin/widerrufe'); } catch { return; }   // 401 → Login ist schon offen
+  if (r.notReady) { WIDERRUFE = null; WR_ERR = ''; }
+  else if (!r.ok) WR_ERR = `Widerrufe konnten nicht geladen werden: ${r.error || 'Fehler'}`;
+  else { WIDERRUFE = (Array.isArray(r.widerrufe) ? r.widerrufe : []).filter((w) => w && typeof w === 'object' && w.ref); WR_ERR = ''; }
+  renderWiderrufe();
+  updateCounters();
+  renderOrders();            // Badge „↩️ Widerruf“ offen/erledigt in der Liste
+  // Status in der Drawer-Karte aktualisieren — nur wenn die offene Bestellung Widerrufe hat (sonst keine Eingaben überschreiben)
+  if (CUR && orderWiderrufe(DATA.orders.find((o) => o.orderId === CUR)).length) renderDrawer();
+}
+/** Bestellbezug eines Widerrufs: Nummer (öffnet den Drawer, wenn bekannt) + „passt“/„passt nicht“ */
+function wrBestellung(w) {
+  if (!w.orderId) return '<span class="muted">ohne Bestellnummer</span>';
+  const o = DATA.orders.find((x) => x.orderId === w.orderId);
+  const nr = o ? `<button class="link" onclick="openOrder('${esc(o.orderId)}')">${esc(o.orderId)}</button>` : `<code>${esc(w.orderId)}</code>`;
+  const passt = w.orderMatched
+    ? '<span class="badge wr-passt" title="Bestellung gefunden und E-Mail stimmt überein — in der Bestellung vermerkt">✓ passt</span>'
+    : `<span class="badge wr-nicht" title="${o ? 'Die E-Mail stimmt nicht mit der Bestellung überein' : 'Diese Bestellnummer gibt es nicht'}">✕ passt nicht</span>`;
+  return `${nr} ${passt}`;
+}
+function wrItemHTML(w) {
+  const ref = esc(w.ref), done = w.status === 'erledigt';
+  const msg = String(w.nachricht || '').trim();
+  return `<div class="wr-item ${done ? 'erledigt' : 'offen'}${WR_FLASH === w.ref ? ' flash' : ''}" id="wr-${ref}">
+      <div class="wr-head"><span class="badge wr-${done ? 'erledigt' : 'offen'}">${done ? '✓ erledigt' : 'offen'}</span><b class="ref">${ref}</b><span class="muted">${fmtDT(w.at)} Uhr</span>
+        ${done ? '' : `<span class="wr-frist" title="Greift das Widerrufsrecht, erstattest du spätestens 14 Tage nach Eingang der Erklärung (§ 357 BGB).">Erstattung ggf. bis ${fmtDate(wrFrist(w.at))}</span>`}</div>
+      <div class="wr-who"><b>${esc(w.name)}</b> · <a href="mailto:${esc(w.email)}">${esc(w.email)}</a><br><span class="muted">Bestellung:</span> ${wrBestellung(w)}</div>
+      ${msg ? `<div class="wr-msg">${esc(msg)}</div>` : '<p class="muted" style="margin-top:6px;font-size:.8rem">Keine Nachricht.</p>'}
+      <div class="wr-foot">
+        <input type="text" id="wr-notiz-${ref}" data-wr-notiz="${ref}" maxlength="1000" value="${esc(w.notiz || '')}" placeholder="Notiz (nur für dich), z. B. „Antwort geschickt am …“" aria-label="Notiz zu ${ref}">
+        <button class="mini ghost" data-wr-ref="${ref}" data-wr-note>💾 Notiz</button>
+        ${done ? `<button class="mini ghost" data-wr-ref="${ref}" data-wr-status="offen">↺ Wieder offen</button>` : `<button class="mini acc" data-wr-ref="${ref}" data-wr-status="erledigt">✓ Erledigt</button>`}
+      </div>
+    </div>`;
+}
+/** Karte „Widerrufe“ in der Übersicht: offene zuerst (alle), erledigte eingeklappt */
+function renderWiderrufe() {
+  const card = $('#wr-card');
+  if (!card || !DATA) return;
+  card.hidden = WIDERRUFE === null && !WR_ERR;
+  if (card.hidden) return;
+  const offen = wrOffen(), erledigt = (WIDERRUFE || []).filter((w) => w.status === 'erledigt');
+  const cnt = $('#wr-count');
+  cnt.textContent = offen.length ? `${offen.length} offen` : 'keine offen';
+  cnt.className = `badge${offen.length ? ' wr-offen' : ''}`;
+  card.classList.toggle('has-open', offen.length > 0);
+  if (WR_ERR) { $('#wr-list').innerHTML = `<p class="empty">${esc(WR_ERR)}</p>`; return; }
+  const leer = (WIDERRUFE || []).length ? '<p class="empty">Keine offenen Widerrufe.</p>' : '<p class="empty">Noch keine Widerrufe eingegangen.</p>';
+  $('#wr-list').innerHTML = (offen.map(wrItemHTML).join('') || leer) +
+    (erledigt.length ? `<div class="wr-more">${WR_ALL ? erledigt.map(wrItemHTML).join('') : ''}<button class="link mini" data-wr-toggle>${WR_ALL ? 'Erledigte ausblenden' : `Erledigte zeigen (${erledigt.length})`}</button></div>` : '');
+}
+/** Status setzen bzw. nur die Notiz speichern (status unverändert) */
+async function wrSetStatus(ref, status) {
+  const w = (WIDERRUFE || []).find((x) => x.ref === ref);
+  if (!w) return;
+  status = status || w.status || 'offen';
+  const inp = document.getElementById(`wr-notiz-${ref}`);
+  const notiz = (inp ? inp.value : String(w.notiz || '')).trim().slice(0, 1000);
+  if (status === 'erledigt' && w.status !== 'erledigt' && !confirm(`Widerruf ${ref} von ${w.name} als erledigt markieren?`)) return;
+  const r = await api('/api/admin/widerruf-status', { method: 'POST', body: JSON.stringify({ ref, status, notiz }) });
+  if (r.notReady) return toast('Widerrufe sind auf dem Server noch nicht eingerichtet.', 'info');
+  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const changed = w.status !== status;
+  w.status = status; w.notiz = notiz;
+  renderWiderrufe();
+  updateCounters();
+  renderOrders();
+  toast(changed ? `${ref} ${status === 'erledigt' ? 'als erledigt markiert' : 'wieder offen'}` : `Notiz zu ${ref} gespeichert`, 'ok');
+  // Zugeordnete Bestellung: der Server vermerkt den Wechsel in ihrer Historie → nachladen (Drawer-Verlauf aktuell)
+  if (changed && w.orderMatched && w.orderId && DATA.orders.some((o) => o.orderId === w.orderId)) {
+    const rr = await api(`/api/admin/order/${encodeURIComponent(w.orderId)}`);
+    if (rr.ok && rr.order) return applyOrder(rr.order);
+  }
+  if (CUR) renderDrawer();
+}
+/** Aus dem Drawer zum Eintrag in der Übersicht springen (erledigte dafür ausklappen) */
+function wrGoto(ref) {
+  const w = (WIDERRUFE || []).find((x) => x.ref === ref);
+  if (w?.status === 'erledigt') WR_ALL = true;
+  WR_FLASH = ref;
+  closeOrder();
+  show('dash');
+  renderWiderrufe();
+  document.getElementById(`wr-${ref}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  setTimeout(() => { WR_FLASH = ''; document.getElementById(`wr-${ref}`)?.classList.remove('flash'); }, 1800);
+}
+/** Karte „Widerruf eingegangen am …“ oben im Bestell-Drawer (order.widerrufe); Status, Nachricht und Notiz aus der Widerrufsliste */
+function widerrufCard(o) {
+  const list = orderWiderrufe(o);
+  if (!list.length) return '';
+  return `<div class="sect">${list.map((x) => {
+    const w = (WIDERRUFE || []).find((y) => y.ref === x.ref);
+    const done = w?.status === 'erledigt', ref = esc(x.ref);
+    const msg = String(w?.nachricht || '').trim();
+    return `<div class="wr-alert${done ? ' erledigt' : ''}">
+        <h3>↩️ Widerruf eingegangen am ${fmtDT(x.at)} Uhr <span class="badge">${ref}</span>${w ? ` <span class="badge wr-${done ? 'erledigt' : 'offen'}">${done ? '✓ erledigt' : 'offen'}</span>` : ''}</h3>
+        <p class="muted">Über „Vertrag widerrufen“ auf der Widerrufsseite — die E-Mail passt zu dieser Bestellung. Die Eingangsbestätigung ging automatisch raus.${done ? '' : ` Greift das Widerrufsrecht, erstattest du bis ${fmtDate(wrFrist(x.at))}.`}</p>
+        ${msg ? `<div class="wr-msg">${esc(msg)}</div>` : ''}
+        ${w?.notiz ? `<p style="margin-top:6px;font-size:.82rem">📝 ${esc(w.notiz)}</p>` : ''}
+        ${w ? `<div class="row" style="margin-top:10px">${done ? `<button class="mini ghost" data-wr-ref="${ref}" data-wr-status="offen">↺ Wieder offen</button>` : `<button class="mini acc" data-wr-ref="${ref}" data-wr-status="erledigt">✓ Erledigt</button>`}<button class="mini ghost" data-wr-goto="${ref}">Zur Übersicht &amp; Notiz</button></div>` : ''}
+      </div>`;
+  }).join('')}</div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Druckwarteschlange
 // ---------------------------------------------------------------------------
 function renderPrint() {
@@ -993,12 +1132,18 @@ function renderCoupons() {
     coupons.map((c, i) => `<tr>
       <td data-l="Code"><input type="text" value="${esc(c.code)}" onchange="coupons[${i}].code=this.value.toUpperCase()" style="width:140px;text-transform:uppercase"></td>
       <td data-l="Art"><select onchange="coupons[${i}].type=this.value"><option value="percent" ${c.type === 'percent' ? 'selected' : ''}>% Rabatt</option><option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>€ Betrag</option></select></td>
-      <td data-l="Wert"><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value"></td>
+      <td data-l="Wert"><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value">${couponRestHTML(c)}</td>
       <td data-l="Mindestwert"><input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value"></td>
       <td data-l="Aktiv" style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="coupons[${i}].active=this.checked"></td>
       <td data-l="mit Aktion" style="text-align:center"><input type="checkbox" ${c.mitAktion ? 'checked' : ''} onchange="coupons[${i}].mitAktion=this.checked" title="Mit laufender Aktion kombinierbar"></td>
       <td><button class="ghost mini" onclick="coupons.splice(${i},1);setDirty(true);renderCoupons()">🗑</button></td>
     </tr>`).join('') + (coupons.length ? '' : '<tr><td colspan="7" class="empty">Noch keine Gutscheine.</td></tr>') + '</tbody>';
+}
+/** Guthaben-Gutschein (Gutschrift aus einer Reklamation): Restwert laut Server (Wert − Einlösungen in nicht stornierten Bestellungen) */
+function couponRestHTML(c) {
+  if (!c?.guthaben || c.type !== 'fixed') return '';
+  const rest = DATA?.couponRest?.[String(c.code || '').trim().toUpperCase()];
+  return `<br><small class="muted" title="Gutschrift aus einer Reklamation: wird über mehrere Bestellungen aufgebraucht, gilt auch während einer Aktion">Guthaben · Rest ${rest != null ? money(rest) : '—'}</small>`;
 }
 function addCoupon() { coupons.push({ code: 'OSTERN10', type: 'percent', value: 10, minOrder: 0, active: true, mitAktion: false }); setDirty(true); renderCoupons(); }
 
@@ -1346,7 +1491,7 @@ function fillMail(m = {}) {
   $('#m-secure').value = m.secure || 'ssl'; $('#m-user').value = m.user || ''; $('#m-pass').value = m.pass || '';
   // Der Server liefert das SMTP-Passwort nie aus (pass leer, passSet) — leer lassen = gespeichertes behalten
   $('#m-pass').placeholder = m.passSet ? '(gespeichert — leer lassen, um es zu behalten)' : '';
-  $('#m-from').value = m.from || ''; $('#m-fromname').value = m.fromName || 'OVJU'; $('#m-replyto').value = m.replyTo || '';
+  $('#m-from').value = m.from || ''; $('#m-fromname').value = m.fromName || 'formsam'; $('#m-replyto').value = m.replyTo || '';
   $('#m-adminto').value = m.adminTo || ''; $('#m-admincopy').checked = m.adminCopy !== false; $('#m-autostatus').checked = m.autoStatusMails !== false;
   $('#m-publicurl').value = m.publicUrl || '';
 }
@@ -1410,6 +1555,111 @@ async function mailResend(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Firma, Shop-Angaben, Rechtstexte (settings.company / .shop / .legal) + Pflichtangaben-Check
+// Der Hinweis erscheint in der Übersicht (gespeicherter Stand) und oben im Bereich Firma (Formular, live beim Tippen),
+// solange Pflichtangaben fehlen oder noch Platzhalter sind. Weitere Server-Hinweise (DATA.hinweise, u. a. aus lib/legal.js)
+// kommen dazu, wenn der eigene Check sie nicht schon abdeckt.
+// ---------------------------------------------------------------------------
+function fillCompany() {
+  const s = DATA.settings, c = s.company || {}, sh = s.shop || {}, lg = s.legal || {};
+  $('#c-name').value = c.name || ''; $('#c-owner').value = c.owner || ''; $('#c-street').value = c.street || '';
+  $('#c-zip').value = c.zip || ''; $('#c-city').value = c.city || ''; $('#c-country').value = c.country || 'Deutschland';
+  $('#c-email').value = c.email || ''; $('#c-phone').value = c.phone || '';
+  $('#c-steuernr').value = c.steuerNr || ''; $('#c-ustid').value = c.ustId || ''; $('#c-iban').value = c.iban || '';
+  $('#c-bic').value = c.bic || ''; $('#c-bank').value = c.bank || ''; $('#c-prefix').value = s.invoicePrefix || '';
+  $('#c-credit-prefix').value = s.creditPrefix || '';   // Gutschriftnummern (Reklamation): Präfix + nextCredit
+  $('#c-klein').checked = !!c.kleinunternehmer;
+  $('#sh-lieferzeit').value = sh.lieferzeit || ''; $('#sh-liefergebiet').value = sh.liefergebiet || '';
+  $('#lg-hoster').value = lg.hoster || ''; $('#lg-serverort').value = lg.serverOrt || '';
+  renderPflicht();
+}
+/** Firmendaten aus dem Formular — vollständig wie bisher (der Server prüft, trimmt und kürzt; S1) */
+function companyForm() {
+  const v = (id) => $(id).value;
+  return {
+    name: v('#c-name'), owner: v('#c-owner'), street: v('#c-street'), zip: v('#c-zip'), city: v('#c-city'), country: v('#c-country'),
+    email: v('#c-email'), phone: v('#c-phone'), ustId: v('#c-ustid'), steuerNr: v('#c-steuernr'), kleinunternehmer: $('#c-klein').checked,
+    iban: v('#c-iban'), bic: v('#c-bic'), bank: v('#c-bank'),
+  };
+}
+const PLATZHALTER = { street: /musterstra(ß|ss)e/i, zip: /^0{5}$/, city: /musterstadt/i };   // wie PLATZHALTER_RE in lib/legal.js
+/** Fehlende Pflichtangaben bzw. Platzhalter → [{ feld: Input-ID, text, adresse? }] */
+function pflichtLuecken(c = {}) {
+  const t = (v) => String(v ?? '').trim();
+  const out = [];
+  const platz = (k, label) => {
+    const v = t(c[k]);
+    if (!v) out.push({ feld: `c-${k}`, text: `${label} fehlt`, adresse: true });
+    else if (PLATZHALTER[k].test(v)) out.push({ feld: `c-${k}`, text: `${label} ist noch der Platzhalter „${v}“`, adresse: true });
+  };
+  if (!t(c.owner)) out.push({ feld: 'c-owner', text: 'Inhaber:in fehlt (Vor- und Nachname)' });
+  platz('street', 'Straße'); platz('zip', 'PLZ'); platz('city', 'Ort');
+  if (!t(c.email)) out.push({ feld: 'c-email', text: 'E-Mail-Adresse fehlt' });
+  // Telefon: steht in Art. 246a § 1 Abs. 1 Nr. 2 EGBGB neben Anschrift und E-Mail (wie legalWarnings() in lib/legal.js)
+  if (!t(c.phone)) out.push({ feld: 'c-phone', text: 'Telefonnummer fehlt — Pflichtinformation für Online-Verträge (Art. 246a EGBGB)' });
+  // IBAN: nur relevant, weil Vorkasse angeboten wird — „DE00 …“ ist der Platzhalter aus der Grundeinstellung
+  const iban = t(c.iban).replace(/\s+/g, '').toUpperCase();
+  if (!iban) out.push({ feld: 'c-iban', text: 'IBAN fehlt — Vorkasse-Kundschaft überweist dorthin' });
+  else if (iban.startsWith('DE00')) out.push({ feld: 'c-iban', text: 'IBAN ist noch der Platzhalter „DE00 …“ — Vorkasse-Kundschaft überweist dorthin' });
+  if (!c.kleinunternehmer && !t(c.steuerNr) && !t(c.ustId)) out.push({ feld: 'c-steuernr', text: 'Steuernummer oder USt-IdNr. fehlt — ohne Kleinunternehmerregelung Pflicht auf jeder Rechnung' });
+  return out;
+}
+/** Server-Hinweise, die der eigene Check nicht schon abdeckt (Inhaber, Anschrift, E-Mail, Telefon, Steuer stehen dort bzw. im Formular) */
+const HINWEIS_DOPPELT = /inhaber|anschrift|e-mail|telefon|steuernummer|ust-idnr/i;
+const serverHinweise = () => (Array.isArray(DATA?.hinweise) ? DATA.hinweise : []).map((h) => String(h || '').trim()).filter((h) => h && !HINWEIS_DOPPELT.test(h));
+function pflichtHTML(list, extra, inForm) {
+  const items = list.map((l) => `<li>${inForm ? `<button class="link" data-pf-focus="${esc(l.feld)}">${esc(l.text)}</button>` : esc(l.text)}</li>`)
+    .concat(extra.map((h) => `<li>${esc(h)}</li>`)).join('');
+  const nurIban = list.length && list.every((l) => l.feld === 'c-iban');
+  const why = nurIban ? 'Bestellbestätigung und Rechnung nennen die IBAN für die Überweisung.'
+    : ['Impressum und Rechnungen zeigen diese Daten.', list.some((l) => l.adresse) ? 'Rechnungen ohne vollständige Anschrift sind nicht ordnungsgemäß.' : ''].filter(Boolean).join(' ');
+  return `<div class="pf-text"><span class="pf-title">⚠️ ${list.length ? 'Pflichtangaben fehlen' : 'Bitte prüfen'}</span>
+      <ul>${items}</ul>${list.length ? `<p class="pf-why">${why}</p>` : ''}</div>
+    ${inForm ? '' : '<button class="acc" data-pf-go>Jetzt ergänzen</button>'}`;
+}
+function renderPflicht() {
+  if (!DATA) return;
+  const extra = serverHinweise();
+  const saved = pflichtLuecken(DATA.settings.company || {});
+  const dash = $('#dash-pflicht');
+  dash.hidden = !saved.length && !extra.length;
+  dash.innerHTML = dash.hidden ? '' : pflichtHTML(saved, extra, false);
+  const live = pflichtLuecken(companyForm());   // Formular: wird beim Tippen kürzer
+  const comp = $('#company-pflicht');
+  comp.hidden = !live.length && !extra.length;
+  comp.innerHTML = comp.hidden ? '' : pflichtHTML(live, extra, true);
+  const miss = new Set(live.map((l) => l.feld));
+  if (miss.has('c-steuernr')) miss.add('c-ustid');
+  for (const id of ['c-owner', 'c-street', 'c-zip', 'c-city', 'c-email', 'c-phone', 'c-iban', 'c-steuernr', 'c-ustid']) $(`#${id}`).classList.toggle('miss', miss.has(id));
+  // Telefon: Punkt im Hinweis (Art. 246a EGBGB) und zusätzlich eine erklärende Zeile unter dem Feld, solange es leer ist
+  $('#c-phone-hint').hidden = !!$('#c-phone').value.trim();
+}
+/** „Jetzt ergänzen“ / Klick auf einen Punkt: Bereich Firma, erstes fehlendes (bzw. angeklicktes) Feld fokussieren */
+function pflichtFocus(feld) {
+  if (PANE !== 'company') show('company');
+  const id = feld || pflichtLuecken(companyForm())[0]?.feld;
+  const el = id && $(`#${id}`);
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.focus({ preventScroll: true });
+}
+/**
+ * Nach dem Speichern: vom Server geprüfte Angaben übernehmen (IBAN in Vierergruppen, USt-IdNr. groß, leere Shop-/Rechtsfelder
+ * = Standardwerte) und die Hinweise neu berechnen. Schlägt das Nachladen fehl, bleibt der gesendete Stand stehen.
+ */
+async function reloadCompany() {
+  try {
+    const d = await api('/api/admin/data');
+    if (d.ok && d.settings) {
+      for (const k of ['company', 'shop', 'legal', 'invoicePrefix', 'creditPrefix', 'nextInvoice', 'nextCredit']) if (d.settings[k] !== undefined) DATA.settings[k] = d.settings[k];
+      DATA.hinweise = d.hinweise;
+      if (!dirty) fillCompany();
+    }
+  } catch { /* 401 → Login; sonst bleibt der gesendete Stand */ }
+  renderPflicht();
+}
+
+// ---------------------------------------------------------------------------
 // Einstellungen befüllen & speichern
 // ---------------------------------------------------------------------------
 function fillSettings() {
@@ -1435,13 +1685,7 @@ function fillSettings() {
   for (const a of aktionen) a.muster = akMusterNorm(a.muster);   // Migration: fehlt/unbekannt → [] (= alle Oberflächen)
   AK_OFFSET = DATA.serverNow ? (Date.parse(DATA.serverNow) - Date.now()) || 0 : 0;   // Countdown nach Serverzeit
   renderTiers(); renderColors(); renderCoupons(); renderAktionen(); renderDashAktion();
-  const c = s.company || {};
-  $('#c-name').value = c.name || ''; $('#c-owner').value = c.owner || ''; $('#c-street').value = c.street || '';
-  $('#c-zip').value = c.zip || ''; $('#c-city').value = c.city || ''; $('#c-email').value = c.email || '';
-  $('#c-phone').value = c.phone || ''; $('#c-ustid').value = c.ustId || ''; $('#c-iban').value = c.iban || '';
-  $('#c-bic').value = c.bic || ''; $('#c-bank').value = c.bank || ''; $('#c-prefix').value = s.invoicePrefix || '';
-  $('#c-credit-prefix').value = s.creditPrefix || '';   // Gutschriftnummern (Reklamation): Präfix + nextCredit
-  $('#c-klein').checked = !!c.kleinunternehmer;
+  fillCompany();
   $('#pp-id').value = s.paypal?.clientId || ''; $('#pp-secret').value = s.paypal?.secret || '';
   $('#pp-enabled').checked = !!s.paypal?.enabled; $('#pp-sandbox').checked = !!s.paypal?.sandbox;
   fillMail(s.mail);
@@ -1450,7 +1694,7 @@ function fillSettings() {
   $('#p-min-vase').value = p.minutesVase ?? 210; $('#p-g-vase').value = p.gramsVase ?? 110;
   $('#s-adminkey').value = '';
   const info = DATA.info || {};
-  $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(s.invoicePrefix || '')}${String(s.nextInvoice || 1).padStart(4, '0')}</dd><dt>Nächste Gutschrift</dt><dd>${esc(s.creditPrefix || 'GS-2026-')}${String(s.nextCredit || 1).padStart(4, '0')}</dd><dt>Produkte im Shop</dt><dd>${produktAn('eierbecher') ? 'Vasen, Eierbecher' : 'Vasen'}</dd>`;
+  $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(naechsteBelegNr(s.invoicePrefix || 'RE-2026-', s.nextInvoice))}</dd><dt>Nächste Gutschrift</dt><dd>${esc(naechsteBelegNr(s.creditPrefix || 'GS-2026-', s.nextCredit))}</dd><dt>Produkte im Shop</dt><dd>${produktAn('eierbecher') ? 'Vasen, Eierbecher' : 'Vasen'}</dd>`;
   $('#side-foot').textContent = `Node ${info.node || ''} · seit ${info.startedAt ? fmtDT(info.startedAt) : '—'}`;
   applyProduktSchalter();
   setDirty(false);
@@ -1473,8 +1717,17 @@ function applyProduktSchalter(on = eierbecherAn()) {
   if (cat && !on && cat.value === 'eierbecher') cat.value = 'galerie';
   // <option>-Elemente: display:none greift nicht in jedem Browser (Safari) → zusätzlich hidden + disabled; eine gewählte Option bleibt (Historie)
   for (const o of $$('option[data-produkt="eierbecher"]')) { const keep = on || o.selected; o.hidden = !keep; o.disabled = !keep; }
-  const icon = $('#favicon');
-  if (icon) icon.href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>${on ? '🥚' : '🏺'}</text></svg>`;
+}
+/**
+ * Vorschau der nächsten Belegnummer mit automatischem Jahreswechsel (wie belegJahreswechsel() im Server): steht im Präfix
+ * eine Jahreszahl vor dem aktuellen Jahr, gilt das aktuelle Jahr und der Zähler beginnt bei 1. Vergebene Nummern bleiben.
+ */
+function naechsteBelegNr(prefix, next) {
+  const p = String(prefix ?? ''), year = new Date().getFullYear();
+  let n = Math.max(1, Math.round(Number(next)) || 1), out = p;
+  const m = p.match(/(?<!\d)(?:19|20)\d{2}(?!\d)/);
+  if (m && Number(m[0]) < year) { out = p.slice(0, m.index) + year + p.slice(m.index + 4); n = 1; }
+  return out + String(n).padStart(4, '0');
 }
 function setDirty(v) {
   dirty = v;
@@ -1513,12 +1766,10 @@ async function saveSettings() {
       volumen: { prozent: +$('#s-vol-pct').value, euro: +$('#s-vol-eur').value },
       shipping: { flat: +$('#s-ship-flat').value, freeFrom: +$('#s-ship-free').value },
     },
-    company: {
-      name: $('#c-name').value, owner: $('#c-owner').value, street: $('#c-street').value,
-      zip: $('#c-zip').value, city: $('#c-city').value, email: $('#c-email').value,
-      phone: $('#c-phone').value, ustId: $('#c-ustid').value, kleinunternehmer: $('#c-klein').checked,
-      iban: $('#c-iban').value, bic: $('#c-bic').value, bank: $('#c-bank').value,
-    },
+    company: companyForm(),
+    // Shop-Angaben und Rechtstexte als eigene Wurzel-Schlüssel (S1) — leer = Standardwert des Servers
+    shop: { lieferzeit: $('#sh-lieferzeit').value, liefergebiet: $('#sh-liefergebiet').value },
+    legal: { hoster: $('#lg-hoster').value, serverOrt: $('#lg-serverort').value },
     paypal: { enabled: $('#pp-enabled').checked, sandbox: $('#pp-sandbox').checked, clientId: $('#pp-id').value, secret: $('#pp-secret').value },
     mail: mailForm(),
     printing: { minutesEgg: +$('#p-min-egg').value || 75, gramsEgg: +$('#p-g-egg').value || 22, minutesVase: +$('#p-min-vase').value || 210, gramsVase: +$('#p-g-vase').value || 110 },
@@ -1545,8 +1796,12 @@ async function saveSettings() {
     renderDashAktion();
     if (PANE === 'colors') renderColors();
     if (PANE === 'aktionen') aktionen.forEach((_, i) => akRefresh(i));
+    reloadCompany();   // geprüfte Firmen-/Shop-/Rechtsangaben vom Server + Pflichtangaben-Hinweis neu
   } catch (e) {
-    if (e.message !== 'auth') toast(e.message, 'err');
+    if (e.message === 'auth') return;
+    toast(e.message, 'err', 6000);
+    // Meldungen zu Firma, Shop-Angaben oder Rechtsangaben (z. B. „Firma: Steuernummer ungültig …“) → dorthin wechseln
+    if (/^(Firma|Shop-Angaben|Rechtsangaben)\b/.test(e.message) && PANE !== 'company') show('company');
   } finally { $('#save-btn').disabled = false; }
 }
 
@@ -1558,7 +1813,7 @@ async function downloadCSV() {
   if (r.status === 401) return showLogin();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(await r.blob());
-  a.download = 'ovju-bestellungen.csv';
+  a.download = 'formsam-bestellungen.csv';
   a.click();
   toast('CSV-Export gestartet', 'ok');
 }
@@ -1566,7 +1821,7 @@ async function downloadBackup() {
   const data = await api('/api/admin/export');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-  a.download = `ovju-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `formsam-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   toast('Backup heruntergeladen', 'ok');
 }
@@ -1591,6 +1846,7 @@ async function load() {
   akStartTicker();
   const [pane, id] = location.hash.replace('#', '').split('/');
   show(pane || 'dash');
+  if (PANE !== 'dash') loadWiderrufe();   // Übersicht lädt sie selbst (show) — sonst für Zähler und Drawer-Karte
   if (id) openOrder(id);
 }
 document.addEventListener('DOMContentLoaded', () => {
@@ -1608,16 +1864,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const del = e.target.closest?.('[data-del-color]');
     if (del) return deleteColor(+del.dataset.delColor);
     const cp = e.target.closest?.('[data-copy]');
-    if (cp) copyText(cp.dataset.copy);
+    if (cp) return copyText(cp.dataset.copy);
+    // Pflichtangaben: „Jetzt ergänzen“ bzw. Klick auf einen fehlenden Punkt
+    const pf = e.target.closest?.('[data-pf-go], [data-pf-focus]');
+    if (pf) return pflichtFocus(pf.dataset.pfFocus);
+    // Widerrufe: Status/Notiz, Erledigte ein-/ausklappen, aus dem Drawer zum Eintrag springen
+    const wr = e.target.closest?.('[data-wr-ref]');
+    if (wr) return wrSetStatus(wr.dataset.wrRef, wr.dataset.wrStatus || '');
+    if (e.target.closest?.('[data-wr-toggle]')) { WR_ALL = !WR_ALL; return renderWiderrufe(); }
+    const wg = e.target.closest?.('[data-wr-goto]');
+    if (wg) return wrGoto(wg.dataset.wrGoto);
   });
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
     if (e.key === '/' && !typing && !$('#app').hidden) { e.preventDefault(); $('#g-search').focus(); $('#g-search').select(); }
     if (e.key === 'Escape' && CUR && !document.querySelector('dialog[open]')) closeOrder();
+    // Notiz zu einem Widerruf: Enter speichert
+    if (e.key === 'Enter' && e.target.dataset?.wrNotiz) { e.preventDefault(); wrSetStatus(e.target.dataset.wrNotiz, ''); }
   });
   // Ungespeicherte Änderungen in Einstellungs-Bereichen erkennen
   for (const ev of ['input', 'change']) {
-    document.addEventListener(ev, (e) => { if (e.target.closest?.('.pane[data-settings]') && !e.target.closest('#m-testto')) setDirty(true); });
+    document.addEventListener(ev, (e) => {
+      if (e.target.closest?.('.pane[data-settings]') && !e.target.closest('#m-testto')) setDirty(true);
+      if (e.target.closest?.('#pane-company') && DATA) renderPflicht();   // Pflichtangaben-Hinweis live
+    });
   }
   window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
   window.addEventListener('hashchange', () => {

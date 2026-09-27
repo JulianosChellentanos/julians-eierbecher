@@ -1,4 +1,4 @@
-// OVJU — parametrische Geometrie für Eierbecher & Vasen
+// formsam — parametrische Geometrie für Eierbecher & Vasen
 // Erzeugt wasserdichte (manifold) Meshes in Millimetern, bereit für den 3D-Druck.
 import * as THREE from 'three';
 import { buildVoronoiShell, cellDistance, cellCount } from './voronoi-shell.js';

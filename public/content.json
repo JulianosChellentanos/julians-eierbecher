@@ -1,7 +1,8 @@
 {
   "brand": {
-    "name": "OVJU",
-    "tagline": "Deine Ideen nehmen Form an"
+    "name": "formsam",
+    "tagline": "Sorgsam geformt. Auf dich zugeschnitten.",
+    "title": "formsam — Vasen selbst gestalten"
   },
   "hero": {
     "headline": "Deine Idee. Deine Form.",
@@ -15,9 +16,9 @@
       "text": "Forme deine Vase live im 3D-Konfigurator: Silhouette, Oberfläche, Farbe und Gravur – du siehst sofort, was auf deinem Regal stehen wird."
     },
     {
-      "icon": "🌿",
-      "title": "Nachhaltig gedruckt",
-      "text": "Gedruckt aus PLA auf Pflanzenbasis, on demand statt auf Lager. Keine Überproduktion, kein Wegwerf-Plastik-Gefühl – nur dein Stück."
+      "icon": "🖨️",
+      "title": "Gedruckt erst nach Bestellung",
+      "text": "Jede Vase drucke ich erst, wenn du bestellst: einzeln, aus PLA, einem Kunststoff auf Pflanzenbasis. Kein Lager, keine Restposten, nur dein Stück."
     },
     {
       "icon": "✨",
@@ -39,37 +40,37 @@
     {
       "num": 3,
       "title": "Gedruckt geliefert",
-      "text": "Dein Objekt entsteht Schicht für Schicht aus PLA auf Pflanzenbasis. Individuell für dich gedruckt und zu dir geliefert."
+      "text": "Deine Vase entsteht Schicht für Schicht aus PLA auf Pflanzenbasis. Ich drucke sie einzeln für dich und schicke sie dir. Lieferzeit: <span data-lieferzeit>5–8 Werktage</span>."
     }
   ],
   "faq": [
     {
       "q": "Wie lange dauert es, bis meine Bestellung ankommt?",
-      "a": "Jedes Stück wird erst nach deiner Bestellung gedruckt. In der Regel geht dein Paket innerhalb von 2–4 Werktagen raus und ist nach 3–6 Werktagen bei dir."
+      "a": "Gedruckt wird erst, wenn du bestellst: Jede Vase entsteht einzeln für dich. Bis sie bei dir ist, dauert es <span data-lieferzeit>5–8 Werktage</span>. Bei Überweisung beginnt die Frist am Tag nach deinem Überweisungsauftrag."
     },
     {
       "q": "Kann ich einen Namen oder Text gravieren lassen?",
-      "a": "Ja! Im Konfigurator kannst du einen Namen oder kurzen Text direkt ins Design einarbeiten – erhaben oder vertieft. Perfekt für Familien-Sets oder als persönliches Geschenk."
+      "a": "Ja. Im Konfigurator arbeitest du einen Namen oder kurzen Text direkt ins Design ein – erhaben oder vertieft. Schön für Familien-Sets oder als persönliches Geschenk."
     },
     {
       "q": "Aus welchem Material wird gedruckt?",
-      "a": "Wir drucken mit hochwertigem PLA – einem Biokunststoff auf Pflanzenbasis (z. B. Maisstärke) – wahlweise samtmatt, glänzend oder mit metallischem Seidenschimmer. Die feinen Druckschichten bleiben sichtbar und gehören zum Charakter jedes Stücks."
+      "a": "Ich drucke mit PLA, einem Kunststoff auf Pflanzenbasis (z. B. aus Maisstärke), wahlweise samtmatt, glänzend oder mit metallischem Seidenschimmer. Die feinen Druckschichten bleiben sichtbar und gehören zum Charakter jedes Stücks."
     },
     {
       "q": "Was ist, wenn mir meine Vase nicht gefällt oder sie beschädigt ankommt?",
-      "a": "Kommt deine Vase beschädigt an, drucken wir kostenlos eine neue. Da jedes Stück ein Unikat nach deinem Design ist, ist ein klassischer Umtausch ausgeschlossen – melde dich aber einfach, wir finden immer eine Lösung."
+      "a": "Kommt deine Vase beschädigt an, drucke ich sie kostenlos neu – schick mir dafür einfach ein paar Fotos. Weil jede Vase nach deinem Design entsteht, ist ein Widerruf ausgeschlossen; die Details stehen in der <a href=\"/widerruf\">Widerrufsbelehrung</a>. Deine gesetzlichen Gewährleistungsrechte bleiben davon unberührt. Und wenn dir etwas nicht gefällt: Schreib mir, ich schaue mir das an."
     },
     {
       "q": "Sind die Vasen wasserdicht?",
-      "a": "Unsere Vasen sind für Trockenblumen und Gräser konzipiert. Wir imprägnieren das PLA zusätzlich, sodass es in der Regel wasserfest ist — eine Garantie für dauerhafte Wasserdichtigkeit können wir bei 3D-Druck aber nicht übernehmen. Für frische Blumen empfehlen wir ein Glas- oder Kunststoffröhrchen als Einsatz."
+      "a": "Meine Vasen sind für Trockenblumen und Gräser gedacht. Ich imprägniere das PLA zusätzlich, sodass es in der Regel wasserfest ist. Eine Garantie für dauerhafte Wasserdichtigkeit kann ich beim 3D-Druck aber nicht geben. Für frische Blumen empfehle ich ein Glas- oder Kunststoffröhrchen als Einsatz."
     },
     {
       "q": "Woraus bestehen die Produkte?",
-      "a": "Aus PLA — einem Biokunststoff auf Pflanzenbasis (Maisstärke/Zuckerrohr). Robust und langlebig – matt, glänzend oder metallic. Bitte nicht in die Spülmaschine geben und nicht dauerhaft über 50 °C aussetzen (z. B. Auto im Sommer)."
+      "a": "Aus PLA, einem Kunststoff auf Pflanzenbasis (z. B. aus Maisstärke oder Zuckerrohr). Stabil im Alltag – matt, glänzend oder metallic. Bitte nicht in die Spülmaschine geben und nicht dauerhaft über 50 °C aussetzen (z. B. im Auto im Sommer)."
     },
     {
       "q": "Gibt es Einschränkungen bei eigenen Formen?",
-      "a": "Du kannst die Silhouette frei gestalten — bei sehr ausgefallenen individuellen Formen (z. B. sehr schmaler Fuß, starker Überhang) können wir für die Standfestigkeit jedoch keine Garantie übernehmen. Unsere Druck-Ampel im Konfigurator warnt dich vor kritischen Formen."
+      "a": "Du kannst die Silhouette frei gestalten. Bei sehr ausgefallenen Formen (z. B. sehr schmaler Fuß, starker Überhang) kann ich für die Standfestigkeit aber keine Garantie geben. Die Druck-Ampel im Konfigurator warnt dich vor kritischen Formen."
     }
   ],
   "colors": [
@@ -139,23 +140,23 @@
     "sub": "Skulptur, Statement oder Bühne für Trockenblumen — gestalte deine Vase mit deiner Handschrift.",
     "vase": {
       "title": "Die Vase",
-      "text": "Skulptur, Statement oder Bühne für Trockenblumen. Du bestimmst die Form, wir drucken dein Original.",
+      "text": "Skulptur, Statement oder Bühne für Trockenblumen. Du bestimmst die Form, ich drucke dein Original.",
       "cta": "Vase designen"
     }
   },
   "hinweise": {
-    "vase": "🌾 Für Trockenblumen konzipiert. Das PLA wird imprägniert und ist in der Regel wasserfest — eine Garantie übernehmen wir dafür nicht.",
-    "eigene": "⚖️ Individuelle Form: Du gestaltest frei — für die Standfestigkeit sehr ausgefallener Silhouetten übernehmen wir keine Garantie.",
-    "checkout": "Alle Stücke bestehen aus pflanzenbasiertem PLA und werden individuell für dich gedruckt. Vasen sind für Trockenblumen konzipiert (imprägniert, i. d. R. wasserfest — ohne Gewähr). Bei frei gestalteten Formen keine Garantie für Standfestigkeit.",
+    "vase": "🌾 Für Trockenblumen gedacht. Ich imprägniere das PLA, es ist in der Regel wasserfest — eine Garantie kann ich dafür nicht geben.",
+    "eigene": "⚖️ Individuelle Form: Du gestaltest frei — für die Standfestigkeit sehr ausgefallener Silhouetten kann ich keine Garantie geben.",
+    "checkout": "Alle Stücke bestehen aus PLA auf Pflanzenbasis und werden einzeln für dich gedruckt. Vasen sind für Trockenblumen gedacht (imprägniert, i. d. R. wasserfest — ohne Gewähr). Bei frei gestalteten Formen keine Garantie für Standfestigkeit.",
     "trust": [
       "🌱 Pflanzenbasiertes PLA",
-      "🖨️ Individuell gedruckt in Deutschland",
-      "📦 In 5–8 Werktagen bei dir"
+      "🖨️ Einzeln gedruckt in Deutschland",
+      "📦 Lieferzeit <span data-lieferzeit>5–8 Werktage</span>"
     ],
     "trustKurz": [
       "🌱 Pflanzen‑PLA",
       "🖨️ Gedruckt in Deutschland",
-      "📦 5–⁠8 Werktage"
+      "📦 <span data-lieferzeit>5–8 Werktage</span>"
     ]
   },
   "eierbecher": {
@@ -178,18 +179,17 @@
     "faq": [
       {
         "q": "Ist der Eierbecher lebensmittelecht und spülmaschinenfest?",
-        "a": "Der Eierbecher kommt nur mit der Eierschale in Kontakt und ist dafür bestens geeignet. Bitte per Hand mit lauwarmem Wasser spülen – PLA mag keine Spülmaschine und keine Hitze über 50 °C."
+        "a": "Der Eierbecher kommt nur mit der Eierschale in Kontakt und ist dafür gut geeignet. Bitte per Hand mit lauwarmem Wasser spülen – PLA mag keine Spülmaschine und keine Hitze über 50 °C."
       }
     ],
     "texte": {
-      "meta-desc": "Designe deine eigene Vase im 3D-Konfigurator — Rippen, Spiralen, Lamellen, gehämmert, 16 Farben von matt bis metallic, persönliche Gravur. 3D-gedruckt aus pflanzenbasiertem PLA und geliefert. Passende Eierbecher inklusive.",
-      "favicon|href": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥚</text></svg>",
+      "meta-desc": "formsam: Gestalte deine eigene Vase oder deinen Eierbecher im 3D-Konfigurator — Silhouette, Rippen, Lamellen, gehämmert, Farben von matt bis metallic, persönliche Gravur. Ich drucke einzeln für dich, aus PLA auf Pflanzenbasis.",
       "cover-kicker": "Vasen & Eierbecher · von dir entworfen",
-      "hero-sub-m": "Vase oder Eierbecher selbst gestalten – Form, Muster, Farbe und Gravur. Wir drucken dein Original in 3D und liefern es dir.",
+      "hero-sub-m": "Vase oder Eierbecher selbst gestalten – Form, Muster, Farbe und Gravur. Ich drucke dein Original in 3D und schicke es dir.",
       "skeleton-small": "Für Trockenblumen oder mit passendem Einsatz. Brücken und Stützen im Slicer prüfen. Beim Eierbecher wird das Zellmuster als geschlossenes Relief umgesetzt.",
       "pattern-skelett|title": "Unregelmäßiges Zellnetz: offene Vase, geschlossenes Relief beim Eierbecher",
       "gravur-small": "Name, Datum oder kurzer Spruch, plastisch in die Wand geprägt — in 7 Schriftarten. Bei Vasen bis 30 Zeichen (längere Texte laufen um die Seite), beim Eierbecher je nach Form ca. 15–20 — der Zähler unter dem Feld sagt es dir.",
-      "galerie-sub": "Echte Stücke, echte Frühstückstische — jedes davon ein Unikat aus dem Konfigurator."
+      "galerie-sub": "Unikate aus dem Konfigurator, auf dem Frühstückstisch in Szene gesetzt."
     }
   }
 }

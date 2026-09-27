@@ -1,4 +1,4 @@
-/* OVJU Mobil ≤ 700 px — komplette Handy-Startseite (lebendige 3D-Bühne, Kataloge „Formen“ und „Oberflächen“, Bottom-Sheet, klebender CTA).
+/* formsam Mobil ≤ 700 px — komplette Handy-Startseite (lebendige 3D-Bühne, Kataloge „Formen“ und „Oberflächen“, Bottom-Sheet, klebender CTA).
    Eingebunden mit media="(max-width: 700px)" UND intern nochmals @media-gewickelt: Desktop ≥ 981 px und Tablet 701–980 px bleiben unberührt.
    Farben nur über Tokens (Darkmode automatisch); Animationen nur transform/opacity; prefers-reduced-motion stoppt alles (studio.css, global). */
 @media(max-width:700px){
@@ -342,4 +342,28 @@
  #cart-modal .m-ico,#checkout-modal .m-ico{display:inline-grid;vertical-align:-.16em;margin-right:.35em}
  #cart-modal .m-ico svg,#checkout-modal .m-ico svg{width:1.1em;height:1.1em}
  #cart-modal .ci-del .m-ico{margin:0}
+ /* ===== E · formsam: Logo, Story „Über formsam“, KI-Kennzeichnung, Rechtliches im Footer (auch auf dem Handy erreichbar) ===== */
+ .logo-svg{height:28px}
+ footer .logo .logo-svg{height:34px}
+ footer p.footer-claim{font-size:15px!important;margin:0 0 8px}
+ /* Story: gleiche Stelle wie am Desktop (nach „Zuhause“, vor „So geht's“), Bildzeichen klein über dem Kicker */
+ .story-band{padding:28px 0 18px}
+ .story-grid{display:block}
+ .story-mark{width:44px;aspect-ratio:auto;max-height:none;background:none;border-radius:0;display:block;overflow:visible;margin:0 0 14px}
+ .story-mark::before{display:none}
+ .story-mark svg{width:44px}
+ .story-copy .section-title{font-size:30px;letter-spacing:-1px;line-height:1.08;margin-bottom:14px;text-align:left}
+ .story-copy>p:not(.eyebrow){font-size:13px;line-height:1.6;margin:0 0 10px;max-width:none}
+ .story-copy>p.story-lead{font-size:19px;margin-top:16px}
+ .story-copy>p.story-sign{font-size:23px;margin-top:8px}
+ /* KI-Kennzeichnung: Hero-Poster oben rechts (Kapsel und Pause-Knopf erscheinen erst mit der 3D), Katalog-Fotos unten rechts, Sheet unten links */
+ .form-world .ki-world{top:14px;right:14px}.form-world.fallback .ki-world{opacity:1}
+ .design-image .ki-tag{top:10px;right:10px;font-size:9.5px;padding:5px 7px}
+ .m-img .ki-tag{top:auto;bottom:8px;right:8px}
+ .m-sheet-media .ki-tag{top:auto;right:auto;left:10px;bottom:10px}
+ /* Rechtliches: Links umbrechend mit ≥ 44 px Trefferhöhe, „Vertrag widerrufen“ als volle Zeile */
+ footer .footer-legal{flex-direction:column;align-items:stretch;gap:10px;margin-top:20px;padding-top:12px;justify-content:flex-start}
+ footer .footer-links{gap:0 18px;justify-content:flex-start}
+ footer .footer-links a{display:inline-block;padding:12px 0;margin:-2px 0;font-size:12px}
+ footer a.footer-withdraw{justify-content:center;min-height:44px;font-size:13px}
 }

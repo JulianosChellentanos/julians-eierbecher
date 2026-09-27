@@ -1,4 +1,4 @@
-// OVJU — Design-Listen: Sammlungen von Designs (z. B. für eine Hochzeit) mit
+// formsam — Design-Listen: Sammlungen von Designs (z. B. für eine Hochzeit) mit
 // Vorschau, Design-Code und Menge. Eigene Listen liegen mit Bearbeitungs-Token
 // im localStorage, geteilte Listen werden per Code/Link nur gelesen.
 import { addToCart, itemTitle, itemSub, getPricing } from './cart.js';
@@ -177,7 +177,7 @@ function renderList(list) {
   $('#ls-copycode').addEventListener('click', (e) => flash(e.currentTarget, copyText(formatListCode(list.code))));
   $('#ls-copylink').addEventListener('click', (e) => flash(e.currentTarget, copyText(listLink(list.code))));
   $('#ls-sharebtn')?.addEventListener('click', async () => {
-    try { await navigator.share({ title: `OVJU-Liste „${list.name}“`, text: `Design-Liste ${formatListCode(list.code)}`, url: listLink(list.code) }); } catch { /* abgebrochen */ }
+    try { await navigator.share({ title: `formsam-Liste „${list.name}“`, text: `Design-Liste ${formatListCode(list.code)}`, url: listLink(list.code) }); } catch { /* abgebrochen */ }
   });
   $('#ls-rename')?.addEventListener('change', async (e) => {
     const name = e.target.value.trim(); if (!name) return;

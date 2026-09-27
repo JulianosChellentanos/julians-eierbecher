@@ -4,7 +4,7 @@ import {mkdtempSync,rmSync,statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {STUDIO_DESIGNS} from '../public/js/studio-designs.js';
-const dir=mkdtempSync(join(tmpdir(),'ovju-studio-'));
+const dir=mkdtempSync(join(tmpdir(),'formsam-studio-'));
 try{
  for(const design of STUDIO_DESIGNS){
   const file=join(dir,design.id+'.stl');

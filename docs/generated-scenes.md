@@ -1,4 +1,4 @@
-# OVJU – FDM-Bildserie
+# formsam – FDM-Bildserie
 
 15 Motive, erstellt mit dem eingebauten **imagegen**-Tool. Als Geometrievorlage dienten Renderings aus dem tatsächlichen Konfigurator. Alle Bilder wurden visuell geprüft, in das Projekt kopiert und für die Website als WebP (Qualität 92 %, unveränderte Abmessungen) gespeichert. Die PNG-Originale bleiben erhalten.
 

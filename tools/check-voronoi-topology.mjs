@@ -5,7 +5,7 @@ import {buildModel} from '../public/js/geometry.js';
 const font=new Font(JSON.parse(readFileSync(new URL('../public/fonts/helvetiker_bold.typeface.json',import.meta.url),'utf8')));
 const cases=[
  ...[.4,.65,1].flatMap(quality=>[8,48,90].map(ribs=>({name:`quality-${quality}-cells-${ribs}`,quality,ribs}))),
- ...['gepraegt','gehaemmert','gestanzt'].map(textStyle=>({name:`text-${textStyle}`,text:'OVJU',textStyle,textSize:8,textPos:.5,textFont:font,quality:.65})),
+ ...['gepraegt','gehaemmert','gestanzt'].map(textStyle=>({name:`text-${textStyle}`,text:'formsam',textStyle,textSize:8,textPos:.5,textFont:font,quality:.65})),
  {name:'egg-solid',product:'eierbecher',preset:'kelch',height:58,quality:.65},
 ];
 for(const c of cases){

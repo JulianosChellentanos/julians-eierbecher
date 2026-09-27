@@ -1,4 +1,4 @@
-// OVJU — CLI: erzeugt eine Eierbecher-/Vasen-STL ohne Browser (für Tests/Reproduktion)
+// formsam — CLI: erzeugt eine Vasen-/Eierbecher-STL ohne Browser (für Tests/Reproduktion)
 // Aufruf: node tools/generate-stl.mjs out.stl '{"preset":"kelch","ribs":48,"text":"Mia","textStyle":"gehaemmert",...}'
 import { writeFileSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { Font } from '../public/vendor/FontLoader.js';
 import { exportSTL } from '../public/js/exporter.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const out = process.argv[2] || 'eierbecher.stl';
+const out = process.argv[2] || 'formsam.stl';
 const params = process.argv[3] ? JSON.parse(process.argv[3]) : {};
 
 const txt = String(params.text || '').trim();

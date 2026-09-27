@@ -1,4 +1,4 @@
-// OVJU — Kundenkonto: Registrieren, Anmelden, Passwort vergessen/zurücksetzen, Bestellhistorie, Standard-Adresse
+// formsam — Kundenkonto: Registrieren, Anmelden, Passwort vergessen/zurücksetzen, Bestellhistorie, Standard-Adresse
 const $ = (s) => document.querySelector(s);
 
 let currentUser = null;
@@ -48,6 +48,16 @@ function reklaHtml(o) {
   const code = r.status === 'erledigt' && r.art === 'gutschein' && r.gutscheinCode
     ? `<div class="ao-code" style="margin-top:4px">🎟️ Dein Gutschein-Code: <code style="font-size:.92rem;letter-spacing:.06em;font-weight:700;user-select:all">${esc(r.gutscheinCode)}</code> <small>— markieren, kopieren und im Warenkorb unter „Gutscheincode“ einlösen</small></div>` : '';
   return `<div class="ao-rekla" style="flex-basis:100%;font-size:.76rem;line-height:1.45;color:var(--ink-soft)">↩️ Reklamation: ${parts.map(esc).join(' · ')}${link}${code}</div>`;
+}
+/**
+ * Link „Vertrag widerrufen“ je Bestellung → Widerrufsfunktion auf /widerruf (Abschnitt #widerrufen) mit vorbefüllter Bestellnummer.
+ * Die Nummer steht als ?order=… (lib/legal.js liest ?order= und ?bestellung=).
+ * Stornierte Bestellungen brauchen keinen Widerruf mehr.
+ */
+function widerrufHtml(o) {
+  if (o.status === 'storniert') return '';
+  const id = encodeURIComponent(o.orderId);
+  return `<a class="ao-widerruf" href="/widerruf?order=${id}#widerrufen" target="_blank" rel="noopener">Vertrag widerrufen</a>`;
 }
 /** Die letzten Schritte der Bestellung (Historie vom Server: at/status/note), kompakt in einer Zeile */
 function stepsHtml(o) {
@@ -122,7 +132,7 @@ async function requestReset() {
   const btn = $('#af-submit');
   btn.disabled = true;
   const r = await api('/api/auth/forgot', { email: $('#af-email').value.trim() },
-    'Passwort-Zurücksetzen ist gerade nicht verfügbar — schreib uns einfach kurz eine E-Mail.');
+    'Passwort-Zurücksetzen ist gerade nicht verfügbar — schreib mir einfach kurz eine E-Mail.');
   btn.disabled = false;
   if (!r.ok) { showErr(r.error); return; }
   $('#auth-forgot').hidden = true;
@@ -176,7 +186,8 @@ export function openAccount() {
       <div class="ao-mid"><span class="ao-status">${STATUS_LABEL[o.status] || esc(o.status)}</span>
         ${trackingHtml(o)}</div>
       <div class="ao-right"><b>${o.total ? money(o.total) : '—'}</b>
-        ${o.invoiceNo ? `<a href="/orders/${encodeURIComponent(o.orderId)}/rechnung.html" target="_blank">🧾 Rechnung</a>` : ''}</div>
+        ${o.invoiceNo ? `<a href="/orders/${encodeURIComponent(o.orderId)}/rechnung.html" target="_blank">🧾 Rechnung</a>` : ''}
+        ${widerrufHtml(o)}</div>
       ${stepsHtml(o)}
       ${reklaHtml(o)}
     </div>`).join('')

@@ -1,4 +1,4 @@
-// OVJU — Mobile App-Shell: Tabs statt Endlos-Scroll, Swipe, Bottom-Bar,
+// formsam — Mobile App-Shell: Tabs statt Endlos-Scroll, Swipe, Bottom-Bar,
 // Vollbild-3D, Toasts, Haptik, animierte Preise. Greift nur auf kleinen Screens.
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];

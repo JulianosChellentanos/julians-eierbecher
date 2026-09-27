@@ -1,4 +1,4 @@
-/* OVJU / Objects with personality — editorial studio layer */
+/* formsam / Objects with personality — editorial studio layer */
 :root{--bg:#f8f6f0;--bg-soft:#eeebe2;--card:#fffdf8;--ink:#292d25;--ink-soft:#707367;--accent:#b65337;--accent-dark:#93412a;--line:#dedfd4;--radius:8px;--shadow:0 14px 45px #292d2508}
 .dark{--bg:#20241e;--bg-soft:#2a3027;--card:#282e25;--ink:#f1eee3;--ink-soft:#b9bcae;--line:#454c3e;--accent:#e8a486;--accent-dark:#f1b69b}
 ::selection{background:#d8e4b5;color:#292d25}a,button,input{ -webkit-tap-highlight-color:transparent}button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:5px}section[id]{scroll-margin-top:95px}.wrap{max-width:1400px;padding-inline:48px}.skip-link{position:fixed;top:-80px;left:20px;z-index:1000;background:var(--ink);color:var(--bg);padding:14px}.skip-link:focus{top:15px}
@@ -41,3 +41,66 @@
 .world-meta em{font-style:normal;display:contents}
 @media(max-width:640px){:root{--wrap-x:22px}}
 @media(max-width:360px){.form-hero h1{font-size:40px}.cover-kicker{letter-spacing:.08em}.hero-cover{height:clamp(260px,36vh,320px)}.cover-badge{letter-spacing:.04em}.world-use{padding:15px 14px}.world-use small i{display:none}}
+
+/* ===== formsam — Marke: Logo (Inline-SVG #fs-logo), Bildzeichen als Ladeanzeige und in der Story, KI-Kennzeichnung, Rechtliches im Footer, Kasse ===== */
+:root{--terra-text:#9e4f2c}.dark{--terra-text:var(--accent-dark)} /* Terrakotta als Textfarbe auf Creme (Kontrast ≥ 4,5:1) */
+.svg-defs{position:absolute;width:0;height:0;overflow:hidden}
+.nm{text-transform:none;font-style:normal;font-weight:inherit} /* Name „formsam“ bleibt klein, auch in Versal-Zeilen */
+/* Logo: Wort-Bild-Marke, Schrift-Teil in currentColor (Kopf: Tinte bzw. Creme im Dunkelmodus, Footer: Creme auf Grün) — Kopfhöhe unverändert */
+.logo{line-height:0}.logo-svg{display:block;height:34px;width:auto;overflow:visible}
+#brand-name{color:#211d18}.dark #brand-name,footer .logo{color:#f4efe7} /* Schrift-Teil in Markenfarbe: Tinte auf Hell, Creme auf Dunkel */
+footer .logo{margin-bottom:14px}footer .logo .logo-svg{height:44px}
+footer p.footer-claim{font:italic 400 17px/1.35 var(--serif)!important;color:#f1eee4!important;margin:0 0 10px;letter-spacing:0}
+@media(max-width:640px){.logo-svg{height:30px}footer .logo .logo-svg{height:38px}}
+/* Ladeanzeige: das Bildzeichen baut sich Schicht für Schicht von unten nach oben auf wie beim 3D-Druck — noch nicht gedruckte Schichten
+   stehen blass als Vorschau (reduced motion: alle Animationen aus → das Zeichen steht vollständig) */
+.fs-build{fill:#c86f4a;overflow:visible} /* Markenfarbe Terrakotta — in Hell und Dunkel gleich (wie das Logo) */
+.loading .loading-icon{width:46px;height:58px;font-size:0;animation:none}
+.loading .fs-build use{animation:fs-print1 2.6s ease-out infinite}
+.loading .fs-build use:nth-child(2){animation-name:fs-print2}.loading .fs-build use:nth-child(3){animation-name:fs-print3}
+.loading .fs-build use:nth-child(4){animation-name:fs-print4}.loading .fs-build use:nth-child(5){animation-name:fs-print5}
+@keyframes fs-print1{0%{opacity:.14;transform:translateY(4px)}8%,84%{opacity:1;transform:none}94%,100%{opacity:.14;transform:none}}
+@keyframes fs-print2{0%,13%{opacity:.14;transform:translateY(4px)}21%,84%{opacity:1;transform:none}94%,100%{opacity:.14;transform:none}}
+@keyframes fs-print3{0%,26%{opacity:.14;transform:translateY(4px)}34%,84%{opacity:1;transform:none}94%,100%{opacity:.14;transform:none}}
+@keyframes fs-print4{0%,39%{opacity:.14;transform:translateY(4px)}47%,84%{opacity:1;transform:none}94%,100%{opacity:.14;transform:none}}
+@keyframes fs-print5{0%,52%{opacity:.14;transform:translateY(4px)}60%,84%{opacity:1;transform:none}94%,100%{opacity:.14;transform:none}}
+/* Story „Über formsam“: Bildzeichen auf feinen Druckschichten, baut sich beim Hereinscrollen einmal auf (studio.js: .reveal → .visible) */
+.story-band{padding:90px 0;background:var(--bg)}
+.story-grid{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:80px;align-items:center}
+.story-mark{position:relative;aspect-ratio:4/5;max-height:560px;border-radius:4px;background:var(--bg-soft);display:grid;place-items:center;overflow:hidden}
+.story-mark::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(to bottom,transparent 0 9px,color-mix(in srgb,var(--ink) 5%,transparent) 9px 10px);pointer-events:none}
+.story-mark svg{position:relative;width:36%;height:auto}
+.story-mark.reveal:not(.visible) use{opacity:0}
+.story-mark.visible use{animation:fs-in .55s cubic-bezier(.22,1,.36,1) both;animation-delay:.25s}
+.story-mark.visible use:nth-child(2){animation-delay:.45s}.story-mark.visible use:nth-child(3){animation-delay:.65s}
+.story-mark.visible use:nth-child(4){animation-delay:.85s}.story-mark.visible use:nth-child(5){animation-delay:1.05s}
+@keyframes fs-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.story-copy .section-title{margin-bottom:30px}.story-copy h2 em{font-weight:400;color:var(--accent)}
+.story-copy>p:not(.eyebrow){font-size:14px;line-height:1.85;max-width:540px;margin:0 0 16px;color:var(--ink-soft)}
+.story-copy>p.story-lead{font:450 23px/1.35 var(--serif);letter-spacing:-.3px;color:var(--ink);margin:30px 0 0}
+.story-copy>p.story-sign{font:italic 400 28px/1 var(--serif);color:var(--terra-text);margin:16px 0 0}
+@media(max-width:980px){.story-band{padding:60px 0}.story-grid{grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr);gap:40px}}
+/* KI-Kennzeichnung (EU-KI-Verordnung Art. 50): dezent, lesbar, immer in einer Bildecke — nur auf KI-generierten Fotos, nie auf echten Fotos oder 3D-Vorschauen */
+.ki-tag{position:absolute;top:10px;right:10px;z-index:3;pointer-events:none;margin:0;padding:5px 8px;border-radius:999px;background:#211d18a3;color:#f4efe7;font:500 10px/1 var(--sans);letter-spacing:.03em;text-transform:none;white-space:nowrap;-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.image-expand .ki-tag,.design-image .ki-tag{top:14px;right:14px}
+.form-world .ki-world{top:72px;right:30px;transition:opacity .5s}.form-world.ready .ki-world,.form-world.fallback .ki-world{opacity:0} /* Poster bis die 3D steht; im Fallback nennt die Kopfzeile die KI-Inszenierung */
+#lab-reference[hidden]+.ki-tag{display:none}
+.design-image img[data-src]~.ki-tag,.m-img img[data-src]~.ki-tag{visibility:hidden} /* aufgeschobene Bilder (Handy): Kennzeichnung erst mit dem Bild */
+.galerie-item{position:relative}
+/* Rechtliches im Footer: Links zu den Rechtsseiten + deutlich sichtbarer Knopf „Vertrag widerrufen“ */
+.footer-legal{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px 28px;margin-top:44px;padding-top:22px;border-top:1px solid #ffffff1f}
+.footer-links{display:flex;flex-wrap:wrap;gap:6px 22px}
+footer .footer-links a{font-size:12px;text-decoration:none}footer .footer-links a:hover{color:#fff!important;text-decoration:underline;text-underline-offset:3px}
+footer a.footer-withdraw{display:inline-flex;align-items:center;min-height:40px;padding:0 18px;border:1px solid #f4efe780;border-radius:999px;color:#f4efe7!important;font:600 12px var(--sans);text-decoration:none;transition:background .15s}
+footer a.footer-withdraw:hover{background:#f4efe71a}
+@media(max-width:980px){.footer-legal{justify-content:center}.footer-links{justify-content:center}}
+/* Warenkorb und Kasse: Liefer-/Zahlungszeile vor „Zur Kasse“, Rechtshinweis über „Zahlungspflichtig bestellen“; Konto: „Vertrag widerrufen“ je Bestellung */
+.cart-ship{margin:4px 0 12px;font-size:.8rem;line-height:1.45;color:var(--ink-soft);text-align:center}
+.co-legal{margin:14px 0 0;font-size:.8rem;line-height:1.55;color:var(--ink-soft);text-align:left}
+dialog label.co-check{flex-direction:row;align-items:flex-start;gap:10px;margin:14px 0 0;font-size:.8rem;font-weight:400;line-height:1.5;color:var(--ink);cursor:pointer;text-align:left}
+.co-check input{width:18px;height:18px;flex:0 0 auto;margin:1px 0 0;accent-color:var(--ink)}
+dialog label.pay-row{flex-direction:row}.pay-row input{accent-color:var(--ink)} /* „dialog label“ (Spalte) stellte den Radioknopf über den Text */
+.co-check a{color:var(--terra-text);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.co-legal a,#faq-list p a,.auth-wrap .tiny a{color:var(--terra-text);font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.acc-order a.ao-widerruf{font-size:.76rem;font-weight:500;text-decoration:underline;text-underline-offset:2px}
+.trust-row span span{display:inline}.trust-row [data-lieferzeit]{white-space:nowrap} /* Lang-/Kurzfassung als Fließtext: keine Flex-Lücke vor der eingesetzten Lieferzeit */

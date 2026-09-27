@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// mail-test.mjs — Tests & Werkzeuge für den OVJU-E-Mail-Versand (lib/mailer.js, lib/mail-templates.js)
+// mail-test.mjs — Tests & Werkzeuge für den formsam-E-Mail-Versand (lib/mailer.js, lib/mail-templates.js)
 //
 //   node tools/mail-test.mjs --smoke                 Fake-SMTP-Server (net/tls) → kompletter Protokoll-Test
 //   node tools/mail-test.mjs --render                alle Vorlagen → tmp-tests/mail-*.html (zum Anschauen)
@@ -31,15 +31,16 @@ function sampleSettings() {
     invoicePrefix: 'RE-2026-',
     pricing: { currency: 'EUR' },
     company: {
-      name: 'OVJU — Julians Eierbecher', owner: 'Julian Sendlhofer', street: 'Musterstraße 1', zip: '00000', city: 'Musterstadt',
+      name: 'formsam', owner: 'Julian Sendlhofer', street: 'Musterstraße 1', zip: '00000', city: 'Musterstadt', country: 'Deutschland',
       email: 'shop@example.com', phone: '', kleinunternehmer: true, iban: 'DE00 0000 0000 0000 0000 00', bic: 'GENODEF1XXX', bank: 'Musterbank',
     },
-    mail: { enabled: false, publicUrl: 'https://ovju.example.com/' },
+    shop: { lieferzeit: '3–5 Werktage', liefergebiet: 'Deutschland' },
+    mail: { enabled: false, publicUrl: 'https://formsam.de/' },
   };
 }
 function sampleOrder(over = {}) {
   return {
-    orderId: 'OV-260910-A1B2C3', userId: 'u-1', createdAt: '2026-09-10T09:12:00.000Z', status: 'neu',
+    orderId: 'FS-260910-A1B2C3', userId: 'u-1', createdAt: '2026-09-10T09:12:00.000Z', status: 'neu',
     payment: 'vorkasse', paymentStatus: 'offen',
     customer: { name: 'Mia <script>alert(1)</script> Müller', email: 'mia@example.com', street: 'Wellenweg 3 & 4', zip: '22222', city: 'Flussdorf', note: 'Bitte als Geschenk verpacken :)' },
     lines: [
@@ -83,6 +84,13 @@ function sampleAktionen() {
   o.lines[1] = { ...o.lines[1], unit: 8.91, off: 0, line: 35.64, uvp: 9.9, aktionProzent: 10, aktionBetrag: 0.99, aktionName: 'Herbst', aktionId: 'ak-b', saucer: false, parts: { grund: 9.9 } };
   Object.assign(o, { subtotal: 53.07, shipping: 0, total: 53.07 });
   return o;
+}
+/** Widerruf über die Widerrufsfunktion (POST /api/widerruf) — over überschreibt Felder */
+function sampleWiderruf(over = {}) {
+  return {
+    ref: 'WR-260927-4F2A', at: '2026-09-27T14:05:00.000Z', orderId: 'FS-260910-A1B2C3', name: 'Mia Müller', email: 'mia@example.com',
+    nachricht: 'Ich möchte den Vertrag widerrufen.\nZweite Zeile & <b>', orderMatched: true, status: 'offen', notiz: '', ...over,
+  };
 }
 /** Bestellung mit Reklamation (Standard: Gutschein, Rücksendung erwartet) — over überschreibt Felder der Reklamation */
 function sampleRekla(over = {}, orderOver = {}) {
@@ -159,13 +167,13 @@ function fakeSmtp(opts = {}) {
       switch (verb) {
         case 'EHLO': {
           s.ehlo = arg;
-          const lines = ['250 fake.ovju.test freut sich', '250 SIZE 10485760'];
+          const lines = ['250 fake.formsam.test freut sich', '250 SIZE 10485760'];
           if (o.mode === 'starttls' && !s.tls) lines.push('250 STARTTLS');
           if (o.mechs.length) lines.push(`250 AUTH ${o.mechs.join(' ')}`);
           lines.push('250 8BITMIME');
           reply(lines); break;
         }
-        case 'HELO': s.ehlo = arg; reply('250 fake.ovju.test'); break;
+        case 'HELO': s.ehlo = arg; reply('250 fake.formsam.test'); break;
         case 'STARTTLS': {
           if (o.mode !== 'starttls' || s.tls) { reply('454 4.7.0 TLS nicht verfügbar'); break; }
           reply('220 2.0.0 Los geht die TLS-Aushandlung', () => {
@@ -205,7 +213,7 @@ function fakeSmtp(opts = {}) {
       so.on('error', () => { /* Client hat abgebrochen */ });
     };
     attach(sock);
-    if (!o.silent) reply(['220 fake.ovju.test ESMTP Fake-Server', '220 bereit für den Test']);
+    if (!o.silent) reply(['220 fake.formsam.test ESMTP Fake-Server', '220 bereit für den Test']);
   };
   const server = o.mode === 'ssl' ? tls.createServer({ key: o.key, cert: o.cert }, handler) : net.createServer(handler);
   return new Promise((resolve, reject) => {
@@ -258,7 +266,7 @@ const findPart = (m, type) => {
 async function smoke() {
   mkdirSync(TMP, { recursive: true });
   const settings = sampleSettings();
-  const cfgFor = (srv, over = {}) => ({ enabled: true, host: '127.0.0.1', port: srv.port, secure: 'none', user: srv.opts.user, pass: srv.opts.pass, from: 'shop@example.com', fromName: 'OVJU Werkstatt ✓', ...over });
+  const cfgFor = (srv, over = {}) => ({ enabled: true, host: '127.0.0.1', port: srv.port, secure: 'none', user: srv.opts.user, pass: srv.opts.pass, from: 'shop@example.com', fromName: 'formsam Werkstatt ✓', ...over });
   const fastT = { connect: 2000, command: 2500 };
   const t0 = Date.now();
 
@@ -269,8 +277,8 @@ async function smoke() {
     const text = 'Grüße aus der Werkstatt!\n.Punkt am Zeilenanfang\n..zwei Punkte\nLange Zeile: ' + 'ä'.repeat(900) + '\nEnde mit Leerzeichen \n\tTab-Zeile\n= Gleichheitszeichen =\n';
     const html = '<p>Grüße &amp; Umlaute äöü — <b>fett</b></p>\n<p>.Punkt</p>';
     const built = buildMessage({
-      from: { name: 'OVJU Werkstatt ✓', email: 'shop@example.com' }, to: 'Mia Müller <mia@example.com>', replyTo: 'julian@example.com',
-      subject: 'Grüße & Umlaute äöü — Bestellung OV-260910-A1B2C3 ist eingegangen, vielen Dank für dein Vertrauen', text, html,
+      from: { name: 'formsam Werkstatt ✓', email: 'shop@example.com' }, to: 'Mia Müller <mia@example.com>', replyTo: 'julian@example.com',
+      subject: 'Grüße & Umlaute äöü — Bestellung FS-260910-A1B2C3 ist eingegangen, vielen Dank für dein Vertrauen', text, html,
     });
     const r = await smtpSend(cfgFor(srv), built, { timeouts: fastT });
     check(r.ok, 'Versand über Fake-Server ok', r.error);
@@ -278,7 +286,7 @@ async function smoke() {
     check(s.ehlo && s.ehlo.length > 0, `EHLO gesendet (${s.ehlo})`);
     check(s.auth?.mech === 'PLAIN' && s.auth.user === srv.opts.user && s.auth.pass === srv.opts.pass, 'AUTH PLAIN: Benutzer/Passwort (mit Umlaut) korrekt angekommen', s.auth);
     check(s.from === 'shop@example.com' && s.rcpts.join() === 'mia@example.com', 'MAIL FROM / RCPT TO korrekt', { from: s.from, rcpts: s.rcpts });
-    check(r.log.some((l) => l === 'S: 220-fake.ovju.test ESMTP Fake-Server') && r.log.some((l) => l === 'S: 220 bereit für den Test'), 'Mehrzeilige Begrüßung (220-/220 ) geparst (in Chunks gesendet)');
+    check(r.log.some((l) => l === 'S: 220-fake.formsam.test ESMTP Fake-Server') && r.log.some((l) => l === 'S: 220 bereit für den Test'), 'Mehrzeilige Begrüßung (220-/220 ) geparst (in Chunks gesendet)');
     check(r.log.filter((l) => l.startsWith('S: 250-')).length >= 3, 'Mehrzeilige EHLO-Antwort geparst');
     check(r.log.some((l) => l === 'C: AUTH PLAIN ****') && !r.log.some((l) => l.includes('geheim') || l.includes(Buffer.from(`\0${srv.opts.user}\0${srv.opts.pass}`).toString('base64'))), 'SMTP-Log maskiert das Passwort');
     check(s.wire.some((l) => l === '..Punkt am Zeilenanfang') && s.wire.some((l) => l === '...zwei Punkte'), 'Dot-Stuffing auf der Leitung (..Punkt / ...zwei)');
@@ -286,8 +294,8 @@ async function smoke() {
     check(s.data.split('\r\n').every((l) => l.length <= 998), 'Alle Zeilen ≤ 998 Zeichen');
     const m = parseMime(s.data);
     check(/^=\?UTF-8\?B\?/.test(m.headers.subject), 'Subject als =?UTF-8?B?…?= kodiert');
-    check(decodeWords(m.headers.subject) === 'Grüße & Umlaute äöü — Bestellung OV-260910-A1B2C3 ist eingegangen, vielen Dank für dein Vertrauen', 'Subject dekodiert (mehrere Encoded-Words, gefaltet)', decodeWords(m.headers.subject));
-    check(/^=\?UTF-8\?B\?[A-Za-z0-9+/=]+\?= <shop@example\.com>$/.test(m.headers.from) && decodeWords(m.headers.from) === 'OVJU Werkstatt ✓ <shop@example.com>', 'From mit kodiertem Anzeigenamen', m.headers.from);
+    check(decodeWords(m.headers.subject) === 'Grüße & Umlaute äöü — Bestellung FS-260910-A1B2C3 ist eingegangen, vielen Dank für dein Vertrauen', 'Subject dekodiert (mehrere Encoded-Words, gefaltet)', decodeWords(m.headers.subject));
+    check(/^=\?UTF-8\?B\?[A-Za-z0-9+/=]+\?= <shop@example\.com>$/.test(m.headers.from) && decodeWords(m.headers.from) === 'formsam Werkstatt ✓ <shop@example.com>', 'From mit kodiertem Anzeigenamen', m.headers.from);
     check(decodeWords(m.headers.to) === 'Mia Müller <mia@example.com>', 'To mit Anzeigename', m.headers.to);
     check(m.headers['reply-to'] === 'julian@example.com', 'Reply-To gesetzt');
     check(/^<[^@\s<>]+@[^\s<>]+>$/.test(m.headers['message-id']) && m.headers['message-id'] === built.id, 'Message-ID vorhanden und gültig', m.headers['message-id']);
@@ -422,7 +430,7 @@ async function smoke() {
     const srv = await fakeSmtp();
     const live = { ...settings, mail: { enabled: false } };
     const mailer = createMailer({ dataDir: dir, getSettings: () => live, log: () => {}, retryDelaysMs: [0, 40, 40], timeouts: fastT, outboxMax: 20, unrefTimers: false });
-    const msg = (over = {}) => ({ to: 'mia@example.com', subject: 'Outbox-Test äöü', text: 'Grüße', html: '<p>Grüße</p>', kind: 'test', ref: 'OV-1', ...over });
+    const msg = (over = {}) => ({ to: 'mia@example.com', subject: 'Outbox-Test äöü', text: 'Grüße', html: '<p>Grüße</p>', kind: 'test', ref: 'FS-1', ...over });
 
     const d = await mailer.send(msg());
     check(!d.ok && d.error === 'E-Mail-Versand ist nicht eingerichtet' && d.id, 'Deaktiviert: ok:false + Meldung', d);
@@ -527,7 +535,9 @@ async function smoke() {
     check(tr.ok && Array.isArray(tr.log) && tr.log.some((l) => /^S: 250/.test(l)) && srv.sessions.at(-1).rcpts[0] === 'julian@example.com' && srv.sessions.at(-1).auth?.pass === srv.opts.pass, 'test(): Testmail + SMTP-Dialog, leeres Passwort = gespeichertes', tr.error || tr.log.slice(-3));
     const tr2 = await mailer2.test({ host: '' }, 'x@example.com');
     check(!tr2.ok && /Host/.test(tr2.error), 'test() ohne Host → Meldung', tr2);
-    check((await mailer2.list()).every((e) => e.subject !== 'OVJU Testmail ✔ — der E-Mail-Versand funktioniert'), 'test() schreibt keinen Protokolleintrag');
+    check((await mailer2.list()).every((e) => e.subject !== 'formsam Testmail ✔ — der E-Mail-Versand funktioniert'), 'test() schreibt keinen Protokolleintrag');
+    check(decodeWords(parseMime(srv.sessions.at(-1).data).headers.subject) === 'formsam Testmail ✔ — der E-Mail-Versand funktioniert' && /formsam-Shop/.test(qpDecode(findPart(parseMime(srv.sessions.at(-1).data), 'text/plain').body)) && !/OVJU/i.test(srv.sessions.at(-1).data), 'test(): Testmail mit formsam-Betreff und -Text, ohne alte Marke');
+    check(/^X-Mailer: formsam Shop$/m.test(srv.sessions.at(-1).data) && /boundary="=_formsam_/.test(srv.sessions.at(-1).data), 'Header: X-Mailer „formsam Shop“, Boundary =_formsam_…');
 
     await srv.close();
     rmSync(dir, { recursive: true, force: true });
@@ -537,7 +547,7 @@ async function smoke() {
   console.log('\n— Vorlagen');
   {
     const baseUrl = baseUrlFor(settings);
-    check(baseUrl === 'https://ovju.example.com', 'baseUrlFor(): publicUrl ohne Slash am Ende', baseUrl);
+    check(baseUrl === 'https://formsam.de', 'baseUrlFor(): publicUrl ohne Slash am Ende', baseUrl);
     check(baseUrlFor({}) === 'http://localhost:4488', 'baseUrlFor(): Fallback localhost:4488');
     const order = sampleOrder();
     const all = {
@@ -547,6 +557,9 @@ async function smoke() {
       passwort: T.passwordReset({ user: { name: 'Mia Müller', email: 'mia@example.com' }, link: `${baseUrl}/?reset=abc123`, settings }),
       admin: T.adminNewOrder({ order, settings, baseUrl }),
       nachricht: T.customMessage({ order, subject: 'Kurze Rückfrage <zur Farbe>', text: 'Hallo Mia,\n\nwelche Farbe soll der Untersetzer haben?\nSalbei oder Kupfer?\n\nDanke & Grüße', settings, baseUrl }),
+      widerruf: T.widerrufEingang({ widerruf: sampleWiderruf(), settings, baseUrl }),
+      widerrufOhne: T.widerrufEingang({ widerruf: sampleWiderruf({ orderId: '', nachricht: '', orderMatched: false }), settings, baseUrl }),
+      adminWiderruf: T.adminWiderruf({ widerruf: sampleWiderruf(), settings, baseUrl }),
     };
     for (const st of Object.keys(T.STATUS_MAIL)) {
       all[`status-${st}`] = T.orderStatus({ order: sampleOrder({ status: st, trackingNo: st === 'versendet' ? '00340434161094000000' : '', carrier: 'dhl', paymentStatus: st === 'storniert' ? 'bezahlt' : 'offen', payment: st === 'storniert' ? 'paypal' : 'vorkasse' }), status: st, settings, baseUrl });
@@ -554,18 +567,48 @@ async function smoke() {
     Object.assign(all, reklaMails(settings, baseUrl));
     let allOk = true;
     for (const [k, v] of Object.entries(all)) {
-      const good = v && typeof v.subject === 'string' && v.subject && typeof v.text === 'string' && (k === 'admin' ? v.text.includes('Admin:') : v.text.includes('Grüße')) && typeof v.html === 'string' && v.html.startsWith('<!DOCTYPE html>') && v.html.length < 60_000;
+      const good = v && typeof v.subject === 'string' && v.subject && typeof v.text === 'string' && (/^admin/i.test(k) ? v.text.includes('Admin:') : v.text.includes('Grüße')) && typeof v.html === 'string' && v.html.startsWith('<!DOCTYPE html>') && v.html.length < 60_000;
       if (!good) { allOk = false; console.log('   ✗', k, v?.subject); }
     }
     check(allOk, `${Object.keys(all).length} Vorlagen liefern { subject, text, html }`);
     const htmls = Object.values(all).map((v) => v.html).join('');
     check(!htmls.includes('<script>') && htmls.includes('&lt;script&gt;'), 'Kundenstrings sind HTML-escaped (<script> im Namen)');
-    check(!/<(img|link|script)\b/i.test(htmls) && !/url\(/i.test(htmls) && !/@import/i.test(htmls), 'Keine externen Bilder/Fonts/Skripte');
-    check(htmls.split('<!DOCTYPE').every((h) => /max-width:560px/.test(h) || !h) && /#f4efe7/.test(htmls) && /#fbf8f2/.test(htmls) && /#c86f4a/.test(htmls) && /Georgia/.test(htmls), 'OVJU-Look: 560 px, Farben, Serif-Überschriften');
+    const imgs = htmls.match(/<img\b[^>]*>/gi) || [];
+    check(imgs.length === Object.keys(all).length && imgs.every((i) => i.includes(`src="${baseUrl}/img/brand/formsam-mail.png"`) && /width="220"/.test(i) && /alt="formsam"/.test(i)) && !/<(link|script)\b/i.test(htmls) && !/url\(/i.test(htmls) && !/@import/i.test(htmls),
+      'Einziges Bild je Mail: Logo von der eigenen Domain (formsam-mail.png, width=220, alt) — keine Fonts/Skripte', imgs.slice(0, 2));
+    check(htmls.split('<!DOCTYPE').every((h) => /max-width:560px/.test(h) || !h) && /#f4efe7/.test(htmls) && /#fbf8f2/.test(htmls) && /#c86f4a/.test(htmls) && /Georgia/.test(htmls), 'formsam-Look: 560 px, Farben (Creme/Terrakotta), Serif-Überschriften mit Georgia-Rückfall');
+    // Marke, Tonalität, Signatur, Fußzeile mit Rechtslinks
+    const texts = Object.values(all).map((v) => `${v.subject}\n${v.text}`).join('\n');
+    check(!/OVJU|Julians Eierbecher|Dein Design\. Dein Unikat/i.test(htmls + texts), 'Keine alte Marke (OVJU, „Julians Eierbecher“, alter Claim) in Betreff, Text oder HTML');
+    check(htmls.includes(T.CLAIM) && T.CLAIM === 'Sorgsam geformt. Auf dich zugeschnitten.', 'Claim im Kopf jeder Mail');
+    const kunde = Object.entries(all).filter(([k]) => !/^admin/i.test(k));
+    const wirUns = kunde.map(([k, v]) => [k, `${v.text}`.replace(/wir finden gemeinsam/g, '').match(/\b(wir|uns|unser\w*)\b/gi)]).filter(([, m]) => m);
+    check(!wirUns.length, 'Tonalität: Julian spricht als „ich“ (kein wir/uns/unser in Kundenmails)', wirUns);
+    check(kunde.every(([, v]) => v.text.includes('Viele Grüße\nJulian von formsam') && v.html.includes('Viele Grüße<br><span style="color:#9e4f2c;">Julian von formsam</span>')), 'Signatur „Viele Grüße / Julian von formsam“ in allen Kundenmails (Text + HTML)', kunde.filter(([, v]) => !v.text.includes('Julian von formsam')).map(([k]) => k));
+    const legal = ['impressum', 'datenschutz', 'agb', 'widerruf'].map((x) => `${baseUrl}/${x}`);
+    check(Object.values(all).every((v) => legal.every((u) => v.html.includes(`href="${u}"`))) && kunde.every(([, v]) => legal.every((u) => v.text.includes(u))), 'Fußzeile: Impressum · Datenschutz · AGB · Widerruf (HTML aller Mails, Text der Kundenmails)');
+    check(Object.values(all).every((v) => v.html.includes('formsam &nbsp;·&nbsp; Julian Sendlhofer &nbsp;·&nbsp; Musterstraße 1, 00000 Musterstadt')) && kunde.every(([, v]) => v.text.includes('— formsam · Julian Sendlhofer · Musterstraße 1, 00000 Musterstadt')), 'Fußzeile: Firmenname, Inhaber, Anschrift');
+    // Signatur ohne Inhaber, Kopf ohne öffentliche Adresse, Land außerhalb Deutschlands
+    const ohneInhaber = { ...settings, company: { ...settings.company, owner: '' } };
+    const wo = T.welcome({ user: { name: 'Mia' }, settings: ohneInhaber, baseUrl });
+    check(wo.text.includes('Viele Grüße\nformsam') && !wo.text.includes(' von formsam'), 'Signatur ohne Inhaber: nur „formsam“');
+    const lokal = T.welcome({ user: { name: 'Mia' }, settings, baseUrl: 'http://localhost:4488' });
+    check(!/<img\b/i.test(lokal.html) && lokal.html.includes('font-size:30px;line-height:1.1;color:#211d18;">formsam</span>') && lokal.html.includes('href="http://localhost:4488/impressum"'), 'Ohne öffentliche Adresse (localhost): Wortmarke als Text statt Bild, Links bleiben');
+    const ohneUrl = T.renderLayout({ title: 'X', bodyHtml: '<p>x</p>', settings, baseUrl: '' });
+    check(!/<img\b/i.test(ohneUrl) && !/href="\/impressum"/.test(ohneUrl) && ohneUrl.includes('>formsam</span>'), 'Ohne baseUrl: Text-Wortmarke, keine Rechtslinks');
+    const at = T.orderConfirmation({ order: sampleOrder(), settings: { ...settings, company: { ...settings.company, country: 'Österreich' } }, baseUrl });
+    check(at.text.includes('Musterstraße 1, 00000 Musterstadt, Österreich'), 'Land außerhalb Deutschlands steht in der Fußzeile');
     const b = all.bestaetigung;
-    check(/Hallo Mia,/.test(b.text) && /DE00 0000 0000 0000 0000 00/.test(b.text) && /Verwendungszweck: OV-260910-A1B2C3/.test(b.text) && /Zahlungseingang|Zahlung eingegangen/.test(b.text), 'Bestätigung (Vorkasse): Anrede, IBAN, Verwendungszweck, Hinweis');
+    check(/Hallo Mia,/.test(b.text) && /DE00 0000 0000 0000 0000 00/.test(b.text) && /Verwendungszweck: FS-260910-A1B2C3/.test(b.text) && /Zahlungseingang|Zahlung eingegangen/.test(b.text), 'Bestätigung (Vorkasse): Anrede, IBAN, Verwendungszweck, Hinweis');
     check(/Gravur „Für Oma ❤“ \(Farbschrift, Schrift Kalligrafie, Schriftfarbe Perlmutt\)/.test(b.text) && /mit Untersetzer/.test(b.text) && /Mengenrabatt −50 %/.test(b.text) && /Gutschein OSTERN10: −5,75 €/.test(nb(b.text)) && /Versand: kostenlos/.test(b.text) && /Gesamt: 51,75 €/.test(nb(b.text)), 'Bestätigung: Positionen (Gravur/Farbschrift, Untersetzer, Rabatt), Gutschein, Versand, Gesamt');
-    check(b.html.includes('https://ovju.example.com/orders/OV-260910-A1B2C3/rechnung.html') && b.html.includes('Mein Konto'), 'Bestätigung: Rechnungslink + Konto-Hinweis');
+    check(b.html.includes('https://formsam.de/orders/FS-260910-A1B2C3/rechnung.html') && b.html.includes('Mein Konto'), 'Bestätigung: Rechnungslink + Konto-Hinweis');
+    check(b.subject === 'Deine Bestellung FS-260910-A1B2C3 bei formsam — danke!' && all.willkommen.subject === 'Willkommen bei formsam, Mia!' && all.passwort.subject === 'Dein neues Passwort für formsam' && all.nachricht.subject === 'Kurze Rückfrage <zur Farbe>', 'Betreffzeilen mit formsam (Bestellung, Willkommen, Passwort)', [b.subject, all.willkommen.subject, all.passwort.subject]);
+    check(b.text.includes('Gedruckt wird erst, wenn du bestellst — deine Stücke entstehen für dich, sobald deine Zahlung da ist.') && b.text.includes('Lieferzeit: ca. 3–5 Werktage ab Zahlungseingang.') && b.html.includes('Lieferzeit: ca. 3–5 Werktage ab Zahlungseingang.'), 'Bestätigung (Vorkasse): „Gedruckt wird erst, wenn du bestellst“ + Lieferzeit aus settings.shop');
+    const nurVase = T.orderConfirmation({ order: sampleOrder({ payment: 'paypal', paymentStatus: 'bezahlt', lines: [sampleOrder().lines[0]] }), settings, baseUrl });
+    check(nurVase.text.includes('Gedruckt wird erst, wenn du bestellst — deine Vase entsteht jetzt für dich.') && nurVase.text.includes('Lieferzeit: ca. 3–5 Werktage.'), 'Bestätigung (PayPal, eine Vase): „deine Vase entsteht jetzt für dich“, Lieferzeit ohne Zahlungseingang');
+    const mitAnh = T.orderConfirmation({ order: sampleOrder(), settings, baseUrl, anhaenge: ['formsam-AGB.html', 'formsam-Widerrufsbelehrung.html'] });
+    check(mitAnh.text.includes('Die AGB und die Widerrufsbelehrung (mit Muster-Widerrufsformular) hängen an dieser E-Mail — zum Aufbewahren: formsam-AGB.html, formsam-Widerrufsbelehrung.html.') && mitAnh.html.includes('formsam-Widerrufsbelehrung.html') && !b.text.includes('hängen an dieser E-Mail'), 'Bestätigung mit Rechtstexten im Anhang: Hinweis nur, wenn Anhänge dabei sind');
+    check(T.lieferzeitText({}) === 'ca. 5–8 Werktage' && T.lieferzeitText({ shop: { lieferzeit: 'eine Woche' } }) === 'eine Woche', 'lieferzeitText(): Standard und freier Text');
     check(/bezahlt via PayPal/.test(all.bestaetigungPaypal.text) && !/IBAN/.test(all.bestaetigungPaypal.text), 'Bestätigung (PayPal): kein Bankblock');
     const v = all['status-versendet'];
     check(v.html.includes('https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=00340434161094000000') && /Sendungsnummer \(DHL\): 00340434161094000000/.test(v.text), 'Status versendet: Sendungsnummer + DHL-Link');
@@ -574,7 +617,7 @@ async function smoke() {
     check(/Foto/.test(all['status-abgeschlossen'].text), 'Status abgeschlossen: Bitte um Foto/Feedback');
     check(!T.statusMailAllowed('neu') && T.statusMailAllowed('im-druck') && T.statusMailAllowed('gedruckt') && !T.statusMailAllowed('quatsch'), 'statusMailAllowed()');
     check(all.passwort.text.includes(`${baseUrl}/?reset=abc123`) && /60 Minuten/.test(all.passwort.text), 'Passwort-Reset: Link + 60 Minuten');
-    check(all.admin.html.includes(`${baseUrl}/admin`) && /Neue Bestellung OV-260910-A1B2C3 · 51,75 €/.test(nb(all.admin.subject)), 'Admin-Mail: Link zum Admin, kompakter Betreff');
+    check(all.admin.html.includes(`${baseUrl}/admin`) && /Neue Bestellung FS-260910-A1B2C3 · 51,75 €/.test(nb(all.admin.subject)), 'Admin-Mail: Link zum Admin, kompakter Betreff');
     check(all.nachricht.subject === 'Kurze Rückfrage <zur Farbe>' && all.nachricht.html.includes('Kurze Rückfrage &lt;zur Farbe&gt;') && all.nachricht.html.includes('Untersetzer haben?<br>Salbei oder Kupfer?') && (all.nachricht.html.match(/<p style="margin:0 0 12px;">/g) || []).length >= 3, 'Freitext: Absätze/Umbrüche, escaped');
     const uw = T.welcome({ user: { name: '', email: 'x@example.com' }, settings, baseUrl });
     check(/^Hallo!/.test(uw.text), 'Ohne Namen: neutrale Anrede');
@@ -585,14 +628,14 @@ async function smoke() {
     check(/nichts zurückschicken/.test(ro.text) && /IBAN/.test(ro.text) && !/Musterstraße 1\n/.test(ro.text), 'Reklamation angelegt ohne Rücksendung: kein Adressblock, IBAN-Bitte bei Überweisung');
     check(/Rücksendung eingegangen/.test(all['reklamation-eingegangen'].subject) && /Gutschein-Code/.test(all['reklamation-eingegangen'].text) && /deutlich zu sehen/.test(all['reklamation-eingegangen'].text), 'Reklamation eingegangen: nächster Schritt + Notiz');
     const rg = all['reklamation-erledigt-gutschein'];
-    check(/Gutschein-Code/.test(rg.subject) && rg.html.includes('font-size:26px') && rg.html.includes('GS-AB12-CD34') && /GUTSCHEIN-CODE \(51,75 €\): GS-AB12-CD34/.test(nb(rg.text)) && /Checkout/.test(rg.text) && rg.text.includes(`${baseUrl}/orders/OV-260910-A1B2C3/gutschrift.html`) && rg.html.includes('gutschrift.html'), 'Reklamation erledigt (Gutschein): Code groß, Checkout-Hinweis, Gutschrift-Link');
+    check(/Gutschein-Code/.test(rg.subject) && rg.html.includes('font-size:26px') && rg.html.includes('GS-AB12-CD34') && /GUTSCHEIN-CODE \(51,75 €\): GS-AB12-CD34/.test(nb(rg.text)) && /Checkout/.test(rg.text) && rg.text.includes(`${baseUrl}/orders/FS-260910-A1B2C3/gutschrift.html`) && rg.html.includes('gutschrift.html'), 'Reklamation erledigt (Gutschein): Code groß, Checkout-Hinweis, Gutschrift-Link');
     const ru = all['reklamation-erledigt-ueberweisung'];
     check(/5 Werktagen/.test(ru.text) && /…3000/.test(ru.text) && !/DE89 3704/.test(ru.text) && !/DE89 3704/.test(ru.html) && ru.text.includes('gutschrift.html'), 'Reklamation erledigt (Überweisung): 5 Werktage, IBAN nur maskiert');
     check(/1–3 Tagen/.test(all['reklamation-erledigt-paypal'].text) && /1AB23456CD789012E/.test(all['reklamation-erledigt-paypal'].text), 'Reklamation erledigt (PayPal): 1–3 Tage, Referenz');
     const rn = all['reklamation-erledigt-nachdruck'];
-    check(/drucken dein Design neu/.test(rn.text) && !/gutschrift\.html/.test(rn.text) && /Nachdruck/.test(rn.subject), 'Reklamation erledigt (Nachdruck): kein Gutschrift-Link');
+    check(/Ich drucke dein Design neu/.test(rn.text) && !/gutschrift\.html/.test(rn.text) && /Nachdruck/.test(rn.subject), 'Reklamation erledigt (Nachdruck): kein Gutschrift-Link');
     const rx = all['reklamation-abgelehnt'];
-    check(/Spülmaschine/.test(rx.text) && /tut uns wirklich leid/.test(rx.text) && rx.html.includes('50 °C'), 'Reklamation abgelehnt: Begründung, freundlich');
+    check(/Spülmaschine/.test(rx.text) && /tut mir wirklich leid/.test(rx.text) && /Meine Begründung/.test(rx.text) && rx.html.includes('50 °C'), 'Reklamation abgelehnt: Begründung, freundlich');
     let thrown = 0;
     try { T.reklamationMail({ order: sampleOrder(), phase: 'angelegt', settings, baseUrl }); } catch { thrown++; }
     try { T.reklamationMail({ order: sampleRekla(), phase: 'storniert', settings, baseUrl }); } catch { thrown++; }
@@ -600,11 +643,11 @@ async function smoke() {
     check(T.lineParts({ product: 'vase', config: { preset: 'flasche', pattern: 'rippen', height: 150, rim: 'wulst' } }).includes('Wulstrand') && !T.lineParts({ product: 'vase', config: { preset: 'flasche', rim: 'glatt' } }).join().includes('Rand') && T.lineParts({ product: 'vase', config: { rim: 'muster' } }).includes('Musterkante'), 'lineParts(): Rand nur bei Wulst/Musterkante');
     // Aktion: UVP-Zeile je Position + Ersparnis unter den Summen; Bestellungen ohne die Felder bleiben unverändert
     const ba = T.orderConfirmation({ order: sampleAktion(), settings, baseUrl });
-    check(/UVP 24,90 € · Aktion −16 %/.test(nb(ba.text)) && /UVP 9,90 € · Aktion −16 %/.test(nb(ba.text)) && /1 × 20,92 €/.test(nb(ba.text)) && /Aktion „Sommer-Sale“ −16 %: Ersparnis −10,32 €/.test(nb(ba.text)) && ba.html.includes('UVP 24,90') && ba.html.includes('Ersparnis') && !/Mengenrabatt/.test(ba.text), 'Bestätigung mit Aktion: UVP-Zeile, reduzierter Einzelpreis, Ersparnis-Zeile, kein Mengenrabatt');
-    check(!/Aktion|UVP|Ersparnis/.test(b.text) && !/Ersparnis/.test(b.html) && T.aktionText({ unit: 9.9 }, settings) === '' && T.aktionSummary({ aktion: null }, settings).length === 0, 'Ohne Aktion: keine UVP-/Ersparnis-Zeilen (alte Bestellungen unverändert)');
+    check(/Normalpreis 24,90 € · Aktion −16 %/.test(nb(ba.text)) && /Normalpreis 9,90 € · Aktion −16 %/.test(nb(ba.text)) && /1 × 20,92 €/.test(nb(ba.text)) && /Aktion „Sommer-Sale“ −16 %: Ersparnis −10,32 €/.test(nb(ba.text)) && ba.html.includes('Normalpreis 24,90') && ba.html.includes('Ersparnis') && !/Mengenrabatt/.test(ba.text), 'Bestätigung mit Aktion: Normalpreis-Zeile, reduzierter Einzelpreis, Ersparnis-Zeile, kein Mengenrabatt');
+    check(!/Aktion|UVP|Normalpreis|Ersparnis/.test(b.text) && !/Ersparnis/.test(b.html) && T.aktionText({ unit: 9.9 }, settings) === '' && T.aktionSummary({ aktion: null }, settings).length === 0, 'Ohne Aktion: keine UVP-/Ersparnis-Zeilen (alte Bestellungen unverändert)');
     // Zwei Aktionen gleichzeitig (Oberflächen-Aktion + Aktion auf alles): Name je Zeile, je Aktion eine Ersparnis-Zeile mit Geltungsbereich
     const bb = T.orderConfirmation({ order: sampleAktionen(), settings, baseUrl });
-    check(/UVP 24,90 € · Aktion −30 % \(Gehämmert-Woche\)/.test(nb(bb.text)) && /UVP 9,90 € · Aktion −10 % \(Herbst\)/.test(nb(bb.text)) && /1 × 17,43 €/.test(nb(bb.text)) && /4 × 8,91 €/.test(nb(bb.text)) &&
+    check(/Normalpreis 24,90 € · Aktion −30 % \(Gehämmert-Woche\)/.test(nb(bb.text)) && /Normalpreis 9,90 € · Aktion −10 % \(Herbst\)/.test(nb(bb.text)) && /1 × 17,43 €/.test(nb(bb.text)) && /4 × 8,91 €/.test(nb(bb.text)) &&
       /Aktion „Gehämmert-Woche“ −30 % auf Gehämmert: Ersparnis −7,47 €/.test(nb(bb.text)) && /Aktion „Herbst“ −10 % auf alles: Ersparnis −3,96 €/.test(nb(bb.text)) &&
       (bb.html.match(/: Ersparnis/g) || []).length === 2 && bb.html.includes('(Gehämmert-Woche)') && !/Mengenrabatt/.test(bb.text), 'Bestätigung mit zwei Aktionen: Aktionsname je Zeile, zwei Ersparnis-Zeilen mit Geltungsbereich');
     check(T.aktionScopeLabel(null) === 'auf alles' && T.aktionScopeLabel({ produkte: 'alle', muster: [] }) === 'auf alles' && T.aktionScopeLabel({ produkte: 'vase' }) === 'auf Vasen' &&
@@ -612,6 +655,16 @@ async function smoke() {
       T.aktionScopeLabel({ produkte: 'alle', muster: ['rippen', 'wellen', 'lamellen'] }) === 'auf Rippen, Wellen und Lamellen' && T.aktionScopeLabel({ produkte: 'eierbecher', muster: ['rippen', 'wellen'] }) === 'auf Eierbecher mit Rippen oder Wellen' &&
       T.aktionScopeLabel({ produkte: 'alle', muster: ['glatt', 'rippen', 'wellen', 'lamellen'] }) === 'auf 4 Oberflächen' && T.aktionScopeLabel({ produkte: 'alle', muster: ['glatt', 'rippen', 'wellen', 'lamellen', 'zickzack', 'querwellen', 'gehaemmert', 'skelett', 'koralle'] }) === 'auf alles' &&
       T.orderAktionen({ aktion: { id: 'x', name: 'Alt', prozent: 16, ersparnis: 1 } }).length === 1 && T.orderAktionen({}).length === 0, 'aktionScopeLabel()/orderAktionen(): Geltungsbereich-Texte, Rückfall auf order.aktion');
+    // Widerruf: Eingangsbestätigung (Inhalt, Datum + Uhrzeit, Referenz) und Admin-Meldung
+    const wv = all.widerruf;
+    check(wv.subject === 'Dein Widerruf ist eingegangen (WR-260927-4F2A)' && /^Hallo Mia,/.test(wv.text), 'Widerruf: Betreff mit Referenz, Anrede', wv.subject);
+    check(wv.text.includes('Eingegangen am: 27. September 2026 um 16:05 Uhr') && wv.text.includes('Dein Widerruf ist am 27. September 2026 um 16:05 Uhr bei mir eingegangen') && wv.html.includes('27. September 2026 um 16:05 Uhr'), 'Widerruf: Datum + Uhrzeit des Eingangs in deutscher Zeit (14:05 UTC → 16:05 Uhr)', wv.text.slice(0, 300));
+    check(wv.text.includes('Referenz: WR-260927-4F2A') && wv.text.includes('Erklärung: Widerruf des Vertrags zu Bestellung FS-260910-A1B2C3') && wv.text.includes('Bestellnummer: FS-260910-A1B2C3') && wv.text.includes('E-Mail: mia@example.com') && wv.text.includes('Deine Nachricht: Ich möchte den Vertrag widerrufen.\n  Zweite Zeile & <b>'), 'Widerruf: Inhalt der Erklärung (Referenz, Bestellung, Name, E-Mail, Nachricht mit Umbruch)');
+    check(wv.html.includes('Zweite Zeile &amp; &lt;b&gt;') && !wv.html.includes('<b>Zweite') && wv.html.includes(`href="${baseUrl}/widerruf"`), 'Widerruf: Nachricht escaped, Link zur Widerrufsbelehrung');
+    check(all.widerrufOhne.text.includes('Bestellnummer: keine angegeben') && all.widerrufOhne.text.includes('Erklärung: Widerruf des Vertrags\n') && !all.widerrufOhne.text.includes('Deine Nachricht'), 'Widerruf ohne Bestellnummer/Nachricht: „keine angegeben“, keine leere Nachrichtenzeile');
+    const aw = all.adminWiderruf;
+    check(/^Widerruf WR-260927-4F2A · FS-260910-A1B2C3 · zugeordnet$/.test(aw.subject) && aw.text.includes('Admin:') && aw.text.includes('zugeordnet (E-Mail passt)') && aw.text.includes('Nachricht: Ich möchte'), 'Admin-Meldung Widerruf: Betreff, Zuordnung, Inhalt', aw.subject);
+    check(/bitte prüfen$/.test(T.adminWiderruf({ widerruf: sampleWiderruf({ orderMatched: false }), settings, baseUrl }).subject), 'Admin-Meldung: nicht zugeordnet → „bitte prüfen“');
     // Vorlage durch den Encoder: Zeilenlänge bleibt unter 998, Dekodierung identisch
     const built = buildMessage({ from: 'shop@example.com', to: 'mia@example.com', subject: b.subject, text: b.text, html: b.html });
     check(built.raw.split('\r\n').every((l) => l.length <= 998), 'Bestätigungs-HTML kodiert: alle Zeilen ≤ 998');
@@ -641,6 +694,8 @@ function render() {
     'passwort-vergessen': T.passwordReset({ user: { name: 'Mia Müller', email: 'mia@example.com' }, link: `${baseUrl}/?reset=abc123def456`, settings }),
     'admin-neue-bestellung': T.adminNewOrder({ order, settings, baseUrl }),
     nachricht: T.customMessage({ order, subject: 'Kurze Rückfrage zur Farbe', text: 'welche Farbe soll der Untersetzer haben?\nSalbei oder Kupfer?\n\nDanke & liebe Grüße\nJulian', settings, baseUrl }),
+    'widerruf-eingang': T.widerrufEingang({ widerruf: sampleWiderruf(), settings, baseUrl }),
+    'admin-widerruf': T.adminWiderruf({ widerruf: sampleWiderruf(), settings, baseUrl }),
   };
   for (const st of Object.keys(T.STATUS_MAIL)) {
     out[`status-${st}`] = T.orderStatus({

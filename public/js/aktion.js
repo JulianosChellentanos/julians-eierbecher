@@ -1,4 +1,4 @@
-// OVJU — Aktionsleiste & Countdown: zeigt die primäre Aktion (höchster Rabatt) als Leiste über dem Header (statt der
+// formsam — Aktionsleiste & Countdown: zeigt die primäre Aktion (höchster Rabatt) als Leiste über dem Header (statt der
 // .announcement-Zeile) — läuft noch eine zweite, hängt der Desktop-Banner „· außerdem: Name −16 % auf alles“ an.
 // Hält alle Countdown-Stellen (.aktion-countdown, optional data-aktion-id für eine bestimmte Aktion) aktuell und beendet
 // jede Aktion clientseitig einzeln, sobald ihre Restzeit abgelaufen ist (pricing.js → expireAktion(id) → Preise neu

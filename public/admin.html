@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex">
-<title>OVJU Studio — Admin</title>
-<link rel="icon" id="favicon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏺</text></svg>">
+<title>formsam Studio — Admin</title>
+<link rel="icon" href="/img/brand/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" id="favicon" href="/img/brand/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/img/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#f4efe7">
 <style>
   @font-face { font-family: 'Fraunces'; src: url('/fonts/fraunces-latin.woff2') format('woff2'); font-weight: 400 700; font-display: swap; }
   @font-face { font-family: 'Inter'; src: url('/fonts/inter-latin.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
@@ -84,11 +87,15 @@
   .hint { background: #fbf3e4; border: 1px solid #ecd9b3; border-radius: 12px; padding: 10px 14px; font-size: .84rem; color: #6b5330; }
   .hint.info { background: #e9f0f7; border-color: #c6d6e8; color: #2f4a66; }
   kbd { font: 600 .7rem var(--sans); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: var(--ink-soft); background: #fff; }
+  /* Marke: Bildzeichen (Vase aus fünf Druckschichten) vor „formsam Studio“ — Höhe folgt der Schriftgröße */
+  .brand { display: inline-flex; align-items: center; gap: .42em; }
+  .brand img { height: 1.22em; width: auto; flex: none; }
 
   /* ---------- Login ---------- */
   .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: radial-gradient(700px 340px at 18% -10%, rgba(200, 111, 74, .14), transparent 70%), radial-gradient(700px 340px at 85% 0%, rgba(156, 175, 136, .16), transparent 70%); }
   .login { width: min(400px, 100%); text-align: center; padding: 38px 32px 32px; }
   .login .logo { font-family: var(--serif); font-size: 1.8rem; font-weight: 700; letter-spacing: .03em; }
+  .login .logo-mark { display: block; height: 58px; width: auto; margin: 0 auto 12px; }
   .login .logo small { display: block; font-family: var(--sans); font-size: .72rem; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-top: 4px; }
   .login input { width: 100%; text-align: center; font-size: 1rem; margin: 22px 0 12px; padding: 12px; }
   .login button { width: 100%; justify-content: center; padding: 12px; }
@@ -97,7 +104,7 @@
   /* ---------- Shell ---------- */
   .shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh; }
   .side { background: var(--bg-soft); border-right: 1px solid var(--line); padding: 20px 14px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
-  .side-head { font-family: var(--serif); font-size: 1.3rem; font-weight: 700; padding: 6px 10px 16px; letter-spacing: .02em; }
+  .side-head { font-family: var(--serif); font-size: 1.16rem; font-weight: 700; padding: 6px 10px 16px; letter-spacing: .01em; white-space: nowrap; }
   .side-head small { display: block; font-family: var(--sans); font-size: .66rem; color: var(--accent); font-weight: 700; letter-spacing: .16em; text-transform: uppercase; margin-top: 2px; }
   .nav { display: flex; flex-direction: column; gap: 2px; }
   .nav button { width: 100%; justify-content: flex-start; text-align: left; gap: 10px; background: transparent; color: var(--ink); border-radius: 12px; padding: 9px 12px; font-weight: 500; font-size: .9rem; }
@@ -155,6 +162,41 @@
   .toplist .bar { height: 8px; border-radius: 5px; background: var(--accent); min-width: 3px; }
   .recent div { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid #eee5d5; font-size: .85rem; cursor: pointer; }
   .recent div:hover { background: #f6f0e6; }
+  /* Pflichtangaben-Hinweis (Übersicht + oben im Bereich Firma), solange Angaben fehlen oder Platzhalter sind */
+  .pflicht { display: flex; gap: 10px 18px; align-items: flex-start; flex-wrap: wrap; background: #fbe9e0; border: 1px solid #e9b9a3; border-left: 6px solid var(--accent); border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; font-size: .86rem; color: #5a3322; }
+  .pflicht .pf-text { flex: 1 1 300px; min-width: 0; }
+  .pflicht .pf-title { font-family: var(--serif); font-size: 1rem; font-weight: 600; color: var(--ink); }
+  .pflicht ul { margin: 6px 0 6px; padding-left: 18px; }
+  .pflicht li { margin: 2px 0; }
+  .pflicht li button.link { font-size: inherit; font-weight: 600; text-align: left; white-space: normal; color: var(--accent-dark); }
+  .pflicht .pf-why { font-size: .8rem; color: #7a4a33; }
+  .pflicht > button { flex: none; }
+  input.miss { border-color: #e0a58a; background: #fff8f4; }
+  .legal-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .legal-links a { border: 1.5px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: .82rem; background: #fff; }
+  .legal-links a:hover { background: var(--bg-soft); text-decoration: none; }
+
+  /* ---------- Widerrufe (Übersicht-Karte + Bestell-Drawer) ---------- */
+  .wr-card.has-open { border-left: 6px solid var(--accent); }
+  .wr-card h2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .wr-item { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px 14px; margin-bottom: 10px; transition: box-shadow .3s; }
+  .wr-item.erledigt { background: #faf7f1; }
+  .wr-item.flash { box-shadow: 0 0 0 3px rgba(200, 111, 74, .35); }
+  .wr-head { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; font-size: .86rem; }
+  .wr-head .ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .84rem; letter-spacing: .02em; }
+  .wr-frist { color: var(--ink-soft); font-size: .76rem; }
+  .wr-who { margin-top: 6px; font-size: .87rem; overflow-wrap: anywhere; line-height: 1.6; }
+  .wr-msg { margin-top: 8px; padding: 8px 12px; border-left: 3px solid #e9b9a3; background: var(--bg); border-radius: 0 8px 8px 0; font-size: .85rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .wr-foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .wr-foot input { flex: 1 1 220px; padding: 7px 11px; font-size: .84rem; }
+  .badge.wr-offen { background: #fbe9e0; border-color: #e9b9a3; color: var(--accent-dark); }
+  .badge.wr-erledigt, .badge.wr-passt { background: #e3f0e3; border-color: #bfd7bf; color: var(--green); }
+  .badge.wr-nicht { background: #f6e3e3; border-color: #e5bcbc; color: var(--red); }
+  .wr-more { margin-top: 4px; }
+  .wr-alert { background: #fbe9e0; border: 1px solid #e9b9a3; border-left: 6px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; font-size: .86rem; }
+  .wr-alert:last-child { margin-bottom: 0; }
+  .wr-alert h3 { margin: 0 0 4px; flex-wrap: wrap; }
+  .wr-alert.erledigt { background: #eef3ea; border-color: #bfd7bf; border-left-color: var(--green); }
 
   /* ---------- Bestellungen ---------- */
   .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
@@ -331,7 +373,7 @@
   @media (max-width: 1240px) {
     .shell { grid-template-columns: 204px minmax(0, 1fr); }
     .side { padding: 18px 10px; }
-    .side-head { font-size: 1.12rem; padding: 4px 8px 12px; }
+    .side-head { font-size: 1rem; padding: 4px 8px 12px; }
     .content { padding: 22px 20px 60px; }
     .top-row { padding: 11px 20px; }
     .save-bar { padding: 12px 20px; }
@@ -379,7 +421,7 @@
 <!-- ===== Login ===== -->
 <div id="login" class="login-wrap" hidden>
   <div class="login card">
-    <div class="logo">🥚 OVJU Studio<small>Admin-Bereich</small></div>
+    <div class="logo"><img class="logo-mark" src="/img/brand/formsam-zeichen.svg" alt="" width="44" height="56">formsam Studio<small>Admin-Bereich</small></div>
     <p class="muted" style="margin-top:14px">Bitte mit dem Admin-Passwort anmelden.</p>
     <input type="password" id="pw" placeholder="Passwort" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
     <button onclick="login()">Anmelden</button>
@@ -390,7 +432,7 @@
 <!-- ===== App ===== -->
 <div id="app" class="shell" hidden>
   <aside class="side">
-    <div class="side-head">🥚 OVJU Studio<small>Admin</small></div>
+    <div class="side-head"><span class="brand"><img src="/img/brand/formsam-zeichen.svg" alt="" width="19" height="24">formsam Studio</span><small>Admin</small></div>
     <nav class="nav" id="nav"></nav>
     <div class="side-counters">
       <div>Offene Bestellungen<b id="cnt-open">0</b></div>
@@ -402,10 +444,10 @@
   <div class="main">
     <header class="top">
       <div class="top-row">
-        <div class="brand-m">🥚 OVJU Studio</div>
+        <div class="brand-m"><span class="brand"><img src="/img/brand/formsam-zeichen.svg" alt="" width="17" height="22">formsam Studio</span></div>
         <div class="search">
           <span class="lupe">🔍</span>
-          <input type="search" id="g-search" placeholder="Bestellungen, Kunden, Rechnungs-/Gutschriftnummern, Gutscheincodes durchsuchen …" autocomplete="off">
+          <input type="search" id="g-search" placeholder="Bestellungen, Kunden, Rechnungs-/Gutschriftnummern, Gutscheincodes, Widerrufe durchsuchen …" autocomplete="off">
           <kbd>/</kbd>
         </div>
         <div class="top-actions">
@@ -422,9 +464,16 @@
       <!-- 📊 Übersicht -->
       <section id="pane-dash" class="pane" hidden>
         <div class="pane-head"><div><h1>Übersicht</h1><p id="subline"></p></div><div class="muted" id="dash-date"></div></div>
+        <div class="pflicht" id="dash-pflicht" role="status" hidden></div>
         <div class="dash-ak" id="dash-aktion" onclick="show('aktionen')" title="Zum Bereich Aktionen" hidden></div>
         <div class="kpis" id="kpis"></div>
         <div class="card"><h2>📋 Heute zu tun</h2><div class="todo" id="todo"></div></div>
+        <!-- Widerrufe (elektronische Widerrufsfunktion /widerruf#widerrufen) — ohne Endpoint /api/admin/widerrufe ausgeblendet -->
+        <div class="card wr-card" id="wr-card" hidden>
+          <h2>↩️ Widerrufe <span class="badge" id="wr-count"></span></h2>
+          <p class="muted" style="margin-bottom:10px">Eingegangen über „Vertrag widerrufen“. Die Kundschaft hat die Eingangsbestätigung schon per Mail. Prüf, ob das Widerrufsrecht greift — für Vasen nach eigenem Design meist nicht (§ 312g Abs. 2 Nr. 1 BGB) — und antworte per Mail. Greift es, erstattest du spätestens 14 Tage nach Eingang.</p>
+          <div id="wr-list"></div>
+        </div>
         <div class="grid2">
           <div class="card"><h2>📈 Umsatz der letzten 30 Tage <small id="chart-sum"></small></h2><div id="chart"></div></div>
           <div class="card"><h2>🕑 Letzte Bestellungen</h2><div class="recent" id="recent"></div></div>
@@ -472,7 +521,7 @@
 
       <!-- 🖼️ Bilder -->
       <section id="pane-images" class="pane" hidden>
-        <div class="pane-head"><div><h1>Produktfotos &amp; Galerie</h1><p>Erscheinen sofort auf der Startseite. <b>Galerie</b>-Fotos füllen „Zuhause bei OVJU“; ein Foto der Kategorie <span data-produkt="eierbecher"><b>Eierbecher</b> bzw. </span><b>Vase</b> ersetzt zusätzlich das Render-Bild der Produktkarte.</p></div></div>
+        <div class="pane-head"><div><h1>Produktfotos &amp; Galerie</h1><p>Erscheinen sofort auf der Startseite. <b>Galerie</b>-Fotos füllen „Zuhause bei formsam“; ein Foto der Kategorie <span data-produkt="eierbecher"><b>Eierbecher</b> bzw. </span><b>Vase</b> ersetzt zusätzlich das Render-Bild der Produktkarte.</p></div></div>
         <div class="card">
           <div class="row">
             <select id="img-cat"><option value="galerie">Galerie</option><option value="eierbecher" data-produkt="eierbecher">Eierbecher (Produktkarte)</option><option value="vase">Vase (Produktkarte)</option></select>
@@ -542,24 +591,64 @@
 
       <!-- 🏢 Firma -->
       <section id="pane-company" class="pane" data-settings hidden>
-        <div class="pane-head"><div><h1>Mein Unternehmen</h1><p>Erscheint auf jeder Rechnung und in E-Mails.</p></div></div>
+        <div class="pane-head"><div><h1>Mein Unternehmen</h1><p>Erscheint auf jeder Rechnung, in E-Mails, im Impressum und in den Rechtstexten.</p></div></div>
+        <div class="pflicht" id="company-pflicht" role="status" hidden></div>
         <div class="card">
+          <h2>🏢 Anbieter <small>— Impressum, Rechnung, Mail-Fußzeile</small></h2>
           <div class="grid">
-            <label>Firmenname<input id="c-name"></label>
-            <label>Inhaber:in<input id="c-owner"></label>
-            <label>Straße &amp; Nr.<input id="c-street"></label>
-            <label>PLZ<input id="c-zip" style="width:120px"></label>
-            <label>Ort<input id="c-city"></label>
-            <label>E-Mail<input id="c-email"></label>
-            <label>Telefon (optional)<input id="c-phone"></label>
-            <label>USt-IdNr. (optional)<input id="c-ustid"></label>
-            <label>IBAN (für Vorkasse)<input id="c-iban"></label>
-            <label>BIC<input id="c-bic"></label>
-            <label>Bank<input id="c-bank"></label>
-            <label>Rechnungs-Präfix<input id="c-prefix" style="width:160px"></label>
-            <label>Gutschrift-Präfix <small>für Reklamationen</small><input id="c-credit-prefix" style="width:160px" placeholder="GS-2026-"></label>
+            <label>Firmenname<input id="c-name" placeholder="formsam"></label>
+            <label>Inhaber:in<input id="c-owner" placeholder="Vor- und Nachname" autocomplete="name"></label>
+            <label>Straße &amp; Nr.<input id="c-street" autocomplete="street-address"></label>
+            <label>PLZ<input id="c-zip" style="width:120px" inputmode="numeric" autocomplete="postal-code"></label>
+            <label>Ort<input id="c-city" autocomplete="address-level2"></label>
+            <label>Land<input id="c-country" placeholder="Deutschland" autocomplete="country-name"></label>
+            <label>E-Mail<input id="c-email" type="email" placeholder="hallo@formsam.de" autocomplete="email"></label>
+            <label><span>Telefon <small>für Impressum &amp; Widerruf</small></span><input id="c-phone" type="tel" autocomplete="tel"></label>
           </div>
-          <label class="inline" style="margin-top:14px"><input type="checkbox" id="c-klein"> Kleinunternehmer nach § 19 UStG (keine USt ausweisen)</label>
+          <p class="muted" id="c-phone-hint" style="margin-top:10px" hidden>Ohne Telefonnummer fehlt eine Pflichtinformation für Online-Verträge (Art. 246a § 1 EGBGB). Trag eine ein, wenn du eine hast — sie steht dann im Impressum und in der Widerrufsbelehrung.</p>
+        </div>
+        <div class="card">
+          <h2>🧾 Steuer &amp; Belege</h2>
+          <label class="inline"><input type="checkbox" id="c-klein"> Kleinunternehmer nach § 19 UStG (keine USt ausweisen)</label>
+          <div class="grid" style="margin-top:12px">
+            <label><span>Steuernummer <small>vom Finanzamt</small></span><input id="c-steuernr" placeholder="z. B. 12/345/67890" autocomplete="off"></label>
+            <label><span>USt-IdNr. <small>falls vorhanden</small></span><input id="c-ustid" placeholder="z. B. DE123456789" autocomplete="off"></label>
+            <label>Rechnungs-Präfix<input id="c-prefix" style="width:160px" placeholder="RE-2026-"></label>
+            <label><span>Gutschrift-Präfix <small>für Reklamationen</small></span><input id="c-credit-prefix" style="width:160px" placeholder="GS-2026-"></label>
+          </div>
+          <p class="hint" id="c-steuer-hint" style="margin-top:12px">Als Kleinunternehmer braucht deine Rechnung keine Steuernummer. Sonst muss jede Rechnung die Steuernummer <b>oder</b> die USt-IdNr. tragen. Die USt-IdNr. steht, wenn vorhanden, auch im Impressum.</p>
+          <p class="muted" style="margin-top:8px">Steht im Präfix eine Jahreszahl, stellt der Shop sie beim ersten Beleg im neuen Jahr selbst um und beginnt wieder bei 1. Ausgestellte Nummern bleiben unverändert.</p>
+        </div>
+        <div class="card">
+          <h2>🏦 Bankverbindung <small>— für Vorkasse, steht in Bestellbestätigung und Rechnung</small></h2>
+          <div class="grid">
+            <label>IBAN<input id="c-iban" autocomplete="off" placeholder="DE12 3456 7890 1234 5678 90"></label>
+            <label>BIC<input id="c-bic" autocomplete="off"></label>
+            <label>Bank<input id="c-bank" autocomplete="off"></label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>📦 Shop-Angaben</h2>
+          <div class="grid">
+            <label>Lieferzeit<input id="sh-lieferzeit" maxlength="60" placeholder="z. B. 5–8 Werktage"></label>
+            <label><span>Liefergebiet <small>wohin du lieferst</small></span><input id="sh-liefergebiet" maxlength="80" placeholder="Deutschland"></label>
+          </div>
+          <p class="muted" style="margin-top:10px">Shop, Rechnung, E-Mails und Rechtstexte übernehmen diese Werte. Leer lassen = Standard (5–8 Werktage, Deutschland).</p>
+        </div>
+        <div class="card">
+          <h2>⚖️ Rechtstexte</h2>
+          <div class="grid">
+            <label><span>Hoster <small>Name und Anschrift</small></span><input id="lg-hoster" maxlength="200" placeholder="IONOS SE, Elgendorfer Str. 57, 56410 Montabaur"></label>
+            <label>Serverstandort<input id="lg-serverort" maxlength="120" placeholder="Berlin (Deutschland)"></label>
+          </div>
+          <p class="muted" style="margin-top:10px">Hoster und Serverstandort stehen in der Datenschutzerklärung. Impressum, Datenschutz, AGB, Widerruf und Versand entstehen aus den Angaben auf dieser Seite. Sie zeigen immer den gespeicherten Stand:</p>
+          <div class="legal-links">
+            <a href="/impressum" target="_blank" rel="noopener">Impressum ↗</a>
+            <a href="/datenschutz" target="_blank" rel="noopener">Datenschutz ↗</a>
+            <a href="/agb" target="_blank" rel="noopener">AGB ↗</a>
+            <a href="/widerruf" target="_blank" rel="noopener">Widerruf ↗</a>
+            <a href="/versand" target="_blank" rel="noopener">Versand &amp; Zahlung ↗</a>
+          </div>
         </div>
       </section>
 
@@ -606,11 +695,11 @@
         <div class="card">
           <h2>✍️ Absender &amp; Empfänger</h2>
           <div class="grid">
-            <label>Absender-Adresse <small>muss zum SMTP-Konto gehören</small><input id="m-from" placeholder="shop@ovju.de"></label>
-            <label>Absender-Name<input id="m-fromname" placeholder="OVJU"></label>
+            <label>Absender-Adresse <small>muss zum SMTP-Konto gehören</small><input id="m-from" placeholder="hallo@formsam.de"></label>
+            <label>Absender-Name<input id="m-fromname" placeholder="formsam"></label>
             <label>Antwort-Adresse (Reply-To)<input id="m-replyto" placeholder="optional"></label>
             <label>Admin-Adresse (Kopien an mich)<input id="m-adminto" placeholder="ich@example.de"></label>
-            <label>Öffentliche Shop-Adresse <small>für Links in E-Mails</small><input id="m-publicurl" placeholder="https://ovju.de"></label>
+            <label>Öffentliche Shop-Adresse <small>für Links und Logo in E-Mails</small><input id="m-publicurl" placeholder="https://formsam.de"></label>
           </div>
           <p class="muted" style="margin-top:10px">Absender-Adresse: Gmail schreibt fremde Absender auf die Konto-Adresse um (außer verifizierte „Senden als“-Aliase); Strato, IONOS, GMX und WEB.DE lehnen Absender ab, die nicht zum Postfach gehören. Eigene Domain: SPF-Eintrag des Providers setzen und DKIM aktivieren, sonst landen Mails im Spam.</p>
           <div class="row" style="margin-top:14px;gap:22px">
@@ -694,7 +783,8 @@
   <div class="dlg-body">
     <p class="muted" id="dlg-mail-to" style="margin-bottom:10px"></p>
     <label>Betreff<input id="dlg-mail-subject"></label>
-    <label style="margin-top:10px">Text<textarea id="dlg-mail-text" rows="8"></textarea></label>
+    <label style="margin-top:10px">Text<textarea id="dlg-mail-text" rows="8" placeholder="Deine Nachricht …"></textarea></label>
+    <p class="muted" id="dlg-mail-hint" style="margin-top:8px"></p>
   </div>
   <div class="dlg-foot"><button class="ghost" onclick="mailFreitext('preview')">👁 Vorschau</button><button onclick="mailFreitext('send')">Senden</button></div>
 </dialog>
