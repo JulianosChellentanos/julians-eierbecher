@@ -13,8 +13,9 @@ import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
-const ORDERS = path.join(__dirname, 'orders');
-const DATA = path.join(__dirname, 'data');
+// ORDERS_DIR/DATA_DIR: abgeschottete Testinstanz (z. B. PORT=4490 DATA_DIR=tmp-tests/sandbox/data ORDERS_DIR=tmp-tests/sandbox/orders)
+const ORDERS = path.resolve(process.env.ORDERS_DIR || path.join(__dirname, 'orders'));
+const DATA = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const PORT = process.env.PORT || 4488;
 const SERVER_STARTED = new Date().toISOString();
 const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
@@ -2027,7 +2028,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/admin' || p === '/admin/') return send(res, 200, adminHTML(), 'text/html; charset=utf-8');
 
     if (p.startsWith('/orders/')) {
-      const file = path.normalize(path.join(__dirname, p));
+      const file = path.normalize(path.join(ORDERS, p.slice('/orders/'.length)));
       // Nur Rechnung/Gutschrift (Links in Mails/Konto) und Modelldateien (reine Geometrie) — order.json mit Kundendaten,
       // interner Notiz und Historie wird nie ausgeliefert
       const base = path.basename(file);
