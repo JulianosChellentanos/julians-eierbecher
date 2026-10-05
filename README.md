@@ -150,6 +150,10 @@ public/
   index.html               Landing + Konfigurator
   css/style.css            Design (warm-minimal, Fraunces/Inter lokal)
   js/geometry.js           Parametrische Geometrie für Vase & Eierbecher (manifold, mm)
+  js/model-worker.js       Hintergrund-Thread: rechnet Modell, Druck-Ampel und Druckdateien (Seite bleibt bedienbar)
+  js/model-builder.js      Planer dazu: „neuester Stand gewinnt“, Ladeanzeige, Rückfall auf die Seite ohne Worker
+  js/printcheck.js         Kennzahlen der Druck-Ampel (Überhang, Silhouette)
+  js/font.js               Gravur-Schrift (typeface.json → Glyphen), auch im Worker ladbar
   js/exporter.js           Binärer STL-Export
   js/app.js                3D-Szene, UI, Bestellflow
   content.json             Texte, Farben, Preise (Marketing)
@@ -166,6 +170,17 @@ docs/marke.md              Markenleitfaden
 docs/rechtstexte.md        Notiz zu den Rechtstexten (Annahmen, offene Punkte)
 docs/marketing.md          Marketing-Plan (Stand der Eierbecher-Zeit, damals OVJU)
 ```
+
+## Flüssige Bedienung auf dem Handy
+
+Eine Gravur-Vorschau kostet auf Handys 0,5–2 s Rechenzeit. Deshalb rechnet der Konfigurator in einem Web Worker
+(`public/js/model-worker.js`): Die Seite bleibt beim Tippen, Ziehen und Formwechsel bedienbar, es zählt immer nur der
+neueste Stand, und ab 160 ms Rechenzeit zeigt die Bühne einen Fortschrittsbalken mit „Gravur/Form/Oberfläche wird
+berechnet …“. Warenkorb, Download, Design-Code und Listen warten automatisch auf den fertigen Stand. Druckdateien für
+Download und Kasse entstehen ebenfalls im Worker. Ohne Worker-Unterstützung rechnet die Seite wie früher selbst.
+Solange der Konfigurator sichtbar ist (`body.konf-aktiv`), pausiert die Handy-Startseite ihre Hintergrundarbeit
+(Formenwelt-Vorbau, Muster-Vorschaubilder), die sonst im Main-Thread dazwischenfunken würde.
+Wichtig: Module, die der Worker lädt, importieren three.js relativ (`../vendor/three.module.js`), nicht über die Import-Map.
 
 ## Qualitätssicherung
 

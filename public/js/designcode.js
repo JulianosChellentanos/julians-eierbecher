@@ -38,12 +38,14 @@ export async function uploadThumb(code, dataURL) {
 
 let getThumb = null;    // () => JPEG data-URL der aktuellen Vorschau (optional)
 let getConfig = null;   // () => config des aktuellen Designs
+let whenReady = null;   // () => Promise: Vorschau zeigt den aktuellen Stand (Modell rechnet im Hintergrund)
 let applyConfig = null; // (config) => Design in den Konfigurator laden
 let lastCode = null;
 let onListCode = null;  // (code) => Liste öffnen, wenn ein Listen-Code eingegeben wird
 let lastSig = null;
 
 async function showCurrent() {
+  if (whenReady) { $('#dc-code').classList.add('busy'); await whenReady(); } // Code erst für den fertig berechneten Stand
   const cfg = getConfig();
   const sig = JSON.stringify(cfg);
   const out = $('#dc-code'); const link = $('#dc-link');
@@ -124,6 +126,7 @@ export async function loadFromURL() {
 
 export function initDesignCodes(opts) {
   getConfig = opts.getConfig; applyConfig = opts.applyConfig; getThumb = opts.getThumb || null;
+  whenReady = opts.whenReady || null;
   if (opts.onListCode) onListCode = opts.onListCode;
   $('#dc-close').addEventListener('click', () => $('#code-modal').close());
   $('#dc-copy').addEventListener('click', (e) => { if (lastCode) copy(formatCode(lastCode), e.currentTarget); });

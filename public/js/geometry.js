@@ -1,6 +1,6 @@
 // formsam — parametrische Geometrie für Eierbecher & Vasen
 // Erzeugt wasserdichte (manifold) Meshes in Millimetern, bereit für den 3D-Druck.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.js'; // relativ statt Import-Map: auch im Hintergrund-Thread (model-worker.js) ladbar
 import { buildVoronoiShell, cellDistance, cellCount } from './voronoi-shell.js';
 import { buildGlyphField, measureText, roundedRectSDF, TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC, FRONT_TEXT_ARC } from './textrelief.js';
 export { TEXT_STYLES, FONT_RULES, fontAllowsStyle, MAX_TEXT_ARC, FRONT_TEXT_ARC };

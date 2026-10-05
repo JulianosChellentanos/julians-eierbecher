@@ -575,13 +575,18 @@ const snapshotJob = (p) => ({ ...(p.view || {}), config: p.config, hex: p.hex, f
  */
 let prevBusy = false, catalogNear = false;
 const missingPreviews = () => MOBILE_PATTERNS.filter((p) => p.tier === 'swatch' && !p.preview);
+// Solange der Konfigurator sichtbar ist (app.js: body.konf-aktiv), ruhen die Vorschauen: jede kostet im Main-Thread Neuaufbau,
+// Canvas-Umbau und Pixel-Auslesen (auf schwächeren Handys 0,5–2 s) und würde dort Tippen und Regler blockieren.
+const konfAktiv = () => document.body.classList.contains('konf-aktiv');
+window.addEventListener('ovju:konf-aktiv', (e) => { if (!e.detail) setTimeout(kickPreviews, 1500); });
 function kickPreviews() {
-  if (prevBusy || !missingPreviews().length) return;
+  if (prevBusy || !missingPreviews().length || konfAktiv()) return;
   const hero3D = worldReady && art.dataset.world !== 'photo';
   if (hero3D) {
     prevBusy = true;
     const next = () => {
       const p = missingPreviews()[0];
+      if (konfAktiv()) { prevBusy = false; return; } // Konfigurator in Benutzung → später (ovju:konf-aktiv) weiter
       if (!p || art.dataset.world === 'photo') { prevBusy = false; if (p) kickPreviews(); return; } // 3D inzwischen abgebrochen → offscreen weiter
       window.dispatchEvent(new CustomEvent('ovju:world-snapshot', { detail: { ...snapshotJob(p), cb: (out) => { if (out && out.full) applyPreview(p, out); else p.preview = ''; setTimeout(() => (out ? idle(next, 1200) : (prevBusy = false)), 120); } } }));
     };

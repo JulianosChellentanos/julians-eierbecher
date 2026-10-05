@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.js'; // relativ statt Import-Map: auch im Hintergrund-Thread (model-worker.js) ladbar
 
 const fract=x=>x-Math.floor(x);
 const hash=(i,j,s)=>fract(Math.sin(i*127.1+j*311.7+s*74.7)*43758.5453);

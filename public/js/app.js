@@ -5,14 +5,15 @@ import { STUDIO_DESIGNS, designConfig as studioDesignConfig } from './studio-des
 import { OrbitControls } from '../vendor/OrbitControls.js';
 import { TextGeometry } from '../vendor/TextGeometry.js';
 import {
-  buildModel, buildSaucer, bendTextOntoCup, maxTextArc, sampleProfile,
+  sampleProfile,
   DEFAULTS, PRODUCTS, PATTERNS, FLOWS, FONTS, RIMS, TEXT_STYLES, FONT_RULES, fontAllowsStyle, isIntegratedTextStyle, FRONT_TEXT_ARC,
 } from './geometry.js';
 import { downloadSTL } from './exporter.js';
 import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
-import { makeSTL, makeExport, exportExt, loadFont } from './modelfactory.js';
+import { exportExt } from './modelfactory.js';
+import { requestModel, buildModelOnce, exportModel, onBuildStatus, warmUp, builderMode } from './model-builder.js';
 import {
   initCart, addToCart, getPricing, fmt, fmtPlus, discountTeaser, setCodeProvider, getCart,
   setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge, eierbecherAktiv, fillShopInfo,
@@ -537,54 +538,10 @@ function activePoints() {
   return PRODUCTS[state.product].presets[state.preset].points;
 }
 
-// Druckbarkeits-Ampel: analysiert die echten Flächennormalen des Meshes
-// (Überhangwinkel: 0° = senkrechte Wand, 90° = horizontale Unterseite)
-function overhangStats(geometry) {
-  const pos = geometry.getAttribute('position').array;
-  const idx = geometry.index ? geometry.index.array : null; // Facetten-Muster kommen nicht-indiziert (Crease-Normalen)
-  const nIdx = idx ? idx.length : pos.length / 3;
-  let worst = 0, total = 0, over55 = 0;
-  for (let i = 0; i < nIdx; i += 3) {
-    const a = (idx ? idx[i] : i) * 3, b = (idx ? idx[i + 1] : i + 1) * 3, c = (idx ? idx[i + 2] : i + 2) * 3;
-    const cy = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3;
-    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
-    const wx = pos[c] - pos[a], wy = pos[c + 1] - pos[a + 1], wz = pos[c + 2] - pos[a + 2];
-    const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
-    const len = Math.hypot(nx, ny, nz);
-    if (len < 1e-12) continue;
-    total += len;
-    if (cy < 0.4) continue; // Bodenfläche liegt auf dem Druckbett
-    const nyN = ny / len;
-    if (nyN < -1e-6) {
-      const al = Math.asin(Math.min(1, -nyN)) * 180 / Math.PI;
-      if (al > worst) worst = al;
-      if (al > 55) over55 += len;
-    }
-  }
-  return { worst, frac55: total ? over55 / total : 0 };
-}
-
-// Silhouetten-Überhang: max. Auskrag-Winkel der glatten Außenkontur (analytisch).
-// Das ist beim FDM-Druck das harte Kriterium — Mustertiefen ≤ 1,6 mm sind dagegen
-// selbsttragende Mikro-Features (Faustregel: < 2 mm horizontale Ausdehnung).
-function silhouetteOverhang(info) {
-  let worst = 0;
-  const N = 160;
-  let prev = info.radiusAt(0);
-  for (let i = 1; i <= N; i++) {
-    const t = i / N;
-    const r = info.radiusAt(t);
-    const drdy = (r - prev) / (info.height / N);
-    if (drdy > 0) worst = Math.max(worst, Math.atan(drdy) * 180 / Math.PI);
-    prev = r;
-  }
-  return worst;
-}
-
-function updatePrintBadge(geometry, info) {
+// Druckbarkeits-Ampel: Kennzahlen { sil, worst, frac55 } rechnet printcheck.js zusammen mit dem Modell im Hintergrund-Thread
+function updatePrintBadge(stats, info) {
   const el = $('#print-badge');
-  const sil = silhouetteOverhang(info);
-  const { worst, frac55 } = overhangStats(geometry);
+  const { sil, worst, frac55 } = stats;
   let cls, txt, tip;
   if (sil > 62) {
     cls = 'p-bad'; txt = '🔶 Form kragt stark aus – Silhouette flacher ziehen';
@@ -631,28 +588,68 @@ window.addEventListener('ovju:studio-design', (e) => {
   $('#konfigurator')?.scrollIntoView({ behavior: reducedMotion.matches ? 'instant' : 'smooth' });
 });
 
-const loadedFonts = {};
-let fontLoadId = 0;
-function rebuild() {
-  // Relief-Gravur braucht die Schrift schon beim Wandaufbau — nachladen und dann neu bauen
-  let textFont, fallbackFont;
-  if (state.text.trim()) {
-    textFont = loadedFonts[state.font]; fallbackFont = loadedFonts.droid_sans;
-    if (!textFont || !fallbackFont) {
-      const myId = ++fontLoadId;
-      Promise.all([loadFont(state.font), loadFont('droid_sans')]).then(([f, fb]) => {
-        loadedFonts[state.font] = f; loadedFonts.droid_sans = fb;
-        if (myId === fontLoadId) rebuild();
-      }).catch(() => {});
-    }
+// ---------------------------------------------------------------------------
+// Modell neu berechnen — im Hintergrund-Thread (model-builder.js): die Seite bleibt beim Tippen und Ziehen bedienbar,
+// die Ladeanzeige zeigt den Fortschritt, und es zählt immer der neueste Stand (Zwischenstände fallen weg).
+// rebuild() gibt ein Promise zurück, das erfüllt wird, sobald dieser oder ein neuerer Stand auf der Bühne steht.
+// ---------------------------------------------------------------------------
+let reqSeq = 0, shownSeq = 0, reframeAt = 0, lastReqParams = null;
+const shownWaiters = [];
+function waitShown(seq) {
+  return shownSeq >= seq ? Promise.resolve() : new Promise((r) => shownWaiters.push({ seq, r }));
+}
+/** Alle bisher angeforderten Änderungen sind berechnet und sichtbar (vor Warenkorb, Download, Design-Code …) */
+const modelReady = () => waitShown(reqSeq);
+function markShown(seq) {
+  if (seq > shownSeq) shownSeq = seq;
+  for (let i = shownWaiters.length - 1; i >= 0; i--) {
+    if (shownWaiters[i].seq <= shownSeq) { shownWaiters[i].r(); shownWaiters.splice(i, 1); }
   }
-  const { geometry, info } = buildModel({ ...state, customPoints: customByProduct[state.product], textFont, fallbackFont });
+}
+// Wofür gerechnet wird (Text der Ladeanzeige): die erste geänderte Gruppe gewinnt
+const KIND_KEYS = [
+  ['gravur', ['text', 'textSize', 'textPos', 'textStyle', 'font', 'textColor']],
+  ['form', ['product', 'preset', 'customPoints', 'height', 'width', 'rim', 'saucer']],
+  ['oberflaeche', ['pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves']],
+];
+function changeKind(prev, next) {
+  if (!prev) return 'modell';
+  for (const [kind, keys] of KIND_KEYS) if (keys.some((k) => JSON.stringify(prev[k]) !== JSON.stringify(next[k]))) return kind;
+  return 'modell';
+}
+function rebuild() {
+  const params = JSON.parse(JSON.stringify({ ...state, customPoints: customByProduct[state.product] }));
+  const kind = changeKind(lastReqParams, params);
+  lastReqParams = params;
+  const seq = ++reqSeq;
+  return requestModel(params, kind).then((res) => {
+    if (!res) return; // von einem neueren Stand überholt
+    if (seq > shownSeq) applyBuild(res, seq);
+    markShown(seq);
+  }, (err) => {
+    console.error('Modell konnte nicht berechnet werden:', err);
+    markShown(seq); // niemand soll ewig auf diesen Stand warten — die Bühne behält den letzten guten
+  }).then(() => waitShown(seq));
+}
+
+// Shader vorab übersetzen, sobald das erste Modell steht und der Browser Luft hat: die Bühne zeichnet erst, wenn sie sichtbar ist —
+// ohne Vorlauf würde der Browser die Programme genau dann übersetzen (auf schwächeren Handys gut 1 s Stillstand beim Ankommen).
+// compileAsync nutzt KHR_parallel_shader_compile, wartet also ohne den Main-Thread anzuhalten.
+function prewarmShaders() {
+  if (typeof renderer.compileAsync !== 'function') return;
+  const go = () => renderer.compileAsync(scene, camera).catch(() => {});
+  if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 4000 }); else setTimeout(go, 1200);
+}
+
+/** Ergebnis der Hintergrund-Rechnung auf die Bühne bringen (Meshes tauschen, Ampel, Hinweise, Maße) */
+function applyBuild({ geometry, inlay, saucer, info, stats }, seq) {
   currentInfo = info;
   if (!cupMesh) {
     cupMesh = new THREE.Mesh(geometry, material);
     cupMesh.castShadow = true;
     cupMesh.receiveShadow = true;
     cupGroup.add(cupMesh);
+    prewarmShaders();
   } else {
     cupMesh.geometry.dispose();
     cupMesh.geometry = geometry;
@@ -663,26 +660,26 @@ function rebuild() {
     saucerMesh.geometry.dispose();
     saucerMesh = null; saucerInfo = null;
   }
-  if (state.product === 'eierbecher' && state.saucer) {
-    const s = buildSaucer({ ...state, customPoints: customByProduct[state.product] });
-    saucerInfo = s.info;
-    saucerMesh = new THREE.Mesh(s.geometry, material);
+  if (saucer) {
+    saucerInfo = saucer.info;
+    saucerMesh = new THREE.Mesh(saucer.geometry, material);
     saucerMesh.castShadow = true;
     saucerMesh.receiveShadow = true;
     cupGroup.add(saucerMesh);
   }
   cupMesh.position.y = saucerLift();
   if (inlayMesh) { cupGroup.remove(inlayMesh); inlayMesh.geometry.dispose(); inlayMesh = null; }
-  if (info.inlay) {
-    inlayMesh = new THREE.Mesh(info.inlay, inlayMaterial);
+  if (inlay) {
+    inlayMesh = new THREE.Mesh(inlay, inlayMaterial);
     inlayMesh.castShadow = true;
     inlayMesh.position.y = saucerLift();
     cupGroup.add(inlayMesh);
   }
-  updatePrintBadge(geometry, info);
+  updatePrintBadge(stats, info);
   rebuildText();
   updateProps();
-  if (!userInteracted) frameCamera();
+  // Neu einrahmen: solange niemand die Kamera bewegt hat — oder einmal nach einem geladenen Design (reframeAt)
+  if (!userInteracted || (reframeAt && seq >= reframeAt)) { frameCamera(); reframeAt = 0; }
   const dimLong = info.product === 'vase'
     ? `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Öffnung Ø ${info.openingDiameter.toFixed(0)} mm`
     : `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`
@@ -700,6 +697,82 @@ function rebuild() {
   // Randoption: bei offenen Voronoi-Vasen ohne Wirkung → Hinweis, Auswahl gedimmt
   $('#rim-note').hidden = !info.openCells;
   $('#rim-row').classList.toggle('disabled', !!info.openCells);
+}
+
+// Konfigurator sichtbar → body.konf-aktiv + Ereignis 'ovju:konf-aktiv': Die Handy-Startseite pausiert dann ihre Hintergrundarbeit
+// (Formenwelt-Vorbau in studio.js, Muster-Vorschaubilder in mobile-home.js) — beides rechnet im Main-Thread und würde hier
+// Tippen und Regler verzögern. Verlässt man den Konfigurator, geht es weiter.
+function initKonfAktiv() {
+  const sec = $('#konfigurator');
+  if (!sec || !('IntersectionObserver' in window)) return;
+  let aktiv = false;
+  new IntersectionObserver(([e]) => {
+    if (e.isIntersecting === aktiv) return;
+    aktiv = e.isIntersecting;
+    document.body.classList.toggle('konf-aktiv', aktiv);
+    window.dispatchEvent(new CustomEvent('ovju:konf-aktiv', { detail: aktiv }));
+  }).observe(sec);
+  // Kommt der Konfigurator beim Scrollen in die Nähe (anderthalb Bildschirmhöhen vorher), die Bühne einmal unsichtbar zeichnen:
+  // Browser ohne parallele Shader-Übersetzung übersetzen dann jetzt — während des Scrollens, das auf Handys im eigenen Thread
+  // flüssig weiterläuft — statt beim ersten Antippen im Konfigurator.
+  const near = new IntersectionObserver(([e]) => {
+    if (!e.isIntersecting || !cupMesh) return;
+    near.disconnect();
+    try { resize(); renderer.render(scene, camera); } catch { /* egal */ }
+  }, { rootMargin: '0px 0px 150% 0px' });
+  near.observe(sec);
+}
+
+// Ladeanzeige der Hintergrund-Rechnung: ab 160 ms ein dünner Balken am oberen Bühnenrand (Fortschritt geschätzt aus der zuletzt
+// gemessenen Rechenzeit dieser Art) und eine Pille mit dem Schichten-Zeichen; bei der Gravur zusätzlich ein Hinweis unter dem
+// Textfeld. Schnelle Rechnungen zeigen nichts (kein Flackern). Folgt direkt ein neuerer Stand, läuft der Balken weiter statt neu.
+const BUILD_LABEL = { gravur: 'Gravur wird berechnet …', form: 'Form wird berechnet …', oberflaeche: 'Oberfläche wird berechnet …' };
+function initBuildIndicator() {
+  const box = $('#stage-build');
+  if (!box) return;
+  const stage = box.closest('.stage'), bar = box.querySelector('.sb-bar i'), label = box.querySelector('.sb-txt'), tb = $('#text-busy');
+  let showTimer = 0, hideTimer = 0, raf = 0, t0 = 0, exp = 400, p0 = 0, p = 0, kind = 'modell', visible = false;
+  const tick = () => {
+    p = p0 + (0.94 - p0) * (1 - Math.exp(-2.2 * (performance.now() - t0) / exp));
+    bar.style.transform = `scaleX(${p.toFixed(4)})`;
+    raf = requestAnimationFrame(tick);
+  };
+  const show = () => {
+    showTimer = 0;
+    if (!$('#loading').classList.contains('hidden')) return; // erstes Modell: dafür steht die große Ladeanzeige
+    visible = true;
+    box.hidden = false;
+    stage?.classList.add('is-building');
+    stage?.setAttribute('aria-busy', 'true');
+    if (tb) tb.hidden = kind !== 'gravur';
+    if (!raf) raf = requestAnimationFrame(tick);
+  };
+  const hide = () => {
+    hideTimer = 0; visible = false; p = 0;
+    cancelAnimationFrame(raf); raf = 0;
+    box.hidden = true;
+    stage?.classList.remove('is-building');
+    stage?.removeAttribute('aria-busy');
+    if (tb) tb.hidden = true;
+    bar.style.transform = 'scaleX(0)';
+  };
+  onBuildStatus((ev) => {
+    if (!ev.live) return; // Druckdateien und Showcase-Bilder: eigene bzw. keine Anzeige
+    if (ev.type === 'start') {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = 0; p = 0.12; } // gerade fertig geworden → kurz neu ansetzen
+      kind = ev.kind;
+      label.textContent = BUILD_LABEL[kind] || 'Vorschau wird berechnet …';
+      if (tb && visible) tb.hidden = kind !== 'gravur';
+      t0 = performance.now(); exp = Math.max(150, ev.expectedMs || 400); p0 = visible ? p : 0;
+      if (!visible && !showTimer) showTimer = setTimeout(show, 160);
+    } else if (ev.type === 'done' && !ev.more) {
+      clearTimeout(showTimer); showTimer = 0;
+      if (!visible) return;
+      cancelAnimationFrame(raf); raf = 0;
+      bar.style.transform = 'scaleX(1)';
+      hideTimer = setTimeout(hide, 260);
+    }
+  });
 }
 
 let textBuildId = 0;
@@ -1104,14 +1177,19 @@ function initControls() {
   });
 
   $('#btn-download').addEventListener('click', async () => {
+    await modelReady();
     const cfg = currentConfig();
-    const ex = await makeExport(cfg);
+    const ex = await exportModel(cfg);
     downloadSTL(ex.buffer, stlFilename(ex.ext), ex.mime);
     if (ex.ext === '3mf') showToast('🎨 3MF mit zwei Teilen – in Bambu Studio öffnen, Filamente sind zugeordnet');
   });
 
   // In den Warenkorb (mit Live-Vorschaubild)
-  $('#btn-order').addEventListener('click', () => {
+  $('#btn-order').addEventListener('click', async () => {
+    const btn = $('#btn-order');
+    if (btn.dataset.wait) return; // Doppeltipp, während die Vorschau noch rechnet
+    btn.dataset.wait = '1';
+    try { await modelReady(); } finally { delete btn.dataset.wait; }
     renderer.render(scene, camera);
     addToCart({
       config: designConfig(),
@@ -1261,8 +1339,7 @@ async function applyDesign(cfg, code) {
   $('#i-text').value = state.text; $('#c-gravur').checked = !!state.text; $('#gravur-options').hidden = !state.text;
   $('#c-saucer').checked = state.saucer;
   rebuild();
-  rebuildText();
-  frameCamera();
+  reframeAt = reqSeq; // das geladene Design einrahmen, sobald es berechnet ist (auch wenn die Kamera schon bewegt wurde)
   showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Konfigurator bereit");
   renderPrices();
   return true;
@@ -1347,7 +1424,7 @@ async function fotoShooting() {
 }
 
 async function productShot(params, hex, extraProp) {
-  const { geometry, info } = buildModel({ ...DEFAULTS, ...params, quality: 0.75 });
+  const { geometry, info } = await buildModelOnce({ ...DEFAULTS, ...params, quality: 0.75 });
   const g = new THREE.Group();
   const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: hex, roughness: 0.62 }));
   m.castShadow = true;
@@ -1440,6 +1517,7 @@ async function renderShowcase() {
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
+warmUp(); // Hintergrund-Thread lädt Geometrie-Code und Schriften, während die Seite noch Inhalte holt
 (async () => {
   await loadContent();
   await initCart();
@@ -1458,12 +1536,13 @@ async function renderShowcase() {
   initControls();
   studioReady = true;
   if (pendingStudioDesign) { const cfg = pendingStudioDesign; pendingStudioDesign = null; onStudioDesign(cfg); }
-  loadFont(state.font); // Standardschrift vorwärmen
   // Startprodukt über setProduct() initialisieren (Slider-Bereiche, Tabs, Hinweise, Preise)
   state.product = START_PRODUCT === 'vase' ? 'eierbecher' : 'vase';
   setProduct(START_PRODUCT);
   animate();
-  $('#loading').classList.add('hidden');
+  initBuildIndicator();
+  initKonfAktiv();
+  modelReady().then(() => $('#loading').classList.add('hidden'));
   await loadGallery();
   setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders
   initMobileShell({ product: state.product });
@@ -1472,6 +1551,7 @@ async function renderShowcase() {
     // Abgelehntes Design (deaktiviertes Produkt) als Fehler melden → der Code-Dialog zeigt den Hinweis statt zu schließen
     applyConfig: async (cfg, code) => { if (await applyDesign(cfg, code) === false) throw new Error(EIERBECHER_HINWEIS); },
     getThumb: () => { renderer.render(scene, camera); return captureThumb(); },
+    whenReady: modelReady,
     onListCode: (code) => openList(code),
   });
   setCodeProvider(async (item) => {
@@ -1481,6 +1561,7 @@ async function renderShowcase() {
   });
   initLists({
     getDesign: async () => {
+      await modelReady();
       renderer.render(scene, camera);
       const config = designConfig();
       const code = await saveDesign(config);
@@ -1503,9 +1584,12 @@ async function renderShowcase() {
       syncControls();
       userInteracted = true; // Auto-Rotation stoppen für reproduzierbare Shots
       cupGroup.rotation.y = cfg.viewAngle ?? 0.5;
-      rebuild();
-      frameCamera();
+      const done = rebuild();
+      reframeAt = reqSeq;
+      return done;
     },
+    ready: () => modelReady(),
+    builder: () => builderMode(), // 'worker' | 'main' | 'start' — Diagnose
     text: () => (currentInfo && currentInfo.text) || null,
   };
 })();

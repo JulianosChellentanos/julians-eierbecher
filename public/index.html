@@ -136,6 +136,7 @@
       <div class="stage-badge" id="dim-info"></div>
       <div class="stage-openwarn" id="open-warn" hidden></div>
       <div class="stage-print p-ok" id="print-badge"></div>
+      <div class="stage-build" id="stage-build" hidden aria-hidden="true"><span class="sb-bar"><i></i></span><span class="sb-pill"><svg class="fs-build sb-icon" viewBox="0 0 78.99 100" focusable="false"><use href="#fs-l5"/><use href="#fs-l4"/><use href="#fs-l3"/><use href="#fs-l2"/><use href="#fs-l1"/></svg><span class="sb-txt">Vorschau wird berechnet …</span></span></div>
       <div class="stage-color"><span id="color-name">Elfenbein</span></div>
       <div class="scene-chips" id="scene-chips"></div>
       <button class="stage-full-btn" id="btn-fullscreen" title="Vollbild">⤢</button>
@@ -237,7 +238,7 @@
         </label>
         <div id="gravur-options" hidden>
           <input type="text" id="i-text" maxlength="30" placeholder="z. B. Anna & Tom 12.06.2027" autocomplete="off">
-          <div class="text-meta"><span class="tiny" id="text-arc" hidden></span><span class="tiny" id="text-count">0/30</span></div>
+          <div class="text-meta"><span class="tiny" id="text-arc" hidden></span><span class="tiny text-busy" id="text-busy" hidden>Vorschau wird berechnet …</span><span class="tiny" id="text-count">0/30</span></div>
           <div class="warn" id="text-warn"></div>
           <div class="font-row" id="font-row"></div>
           <div class="style-row" id="style-row"></div>

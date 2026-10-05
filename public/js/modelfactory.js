@@ -1,17 +1,20 @@
 // formsam — erzeugt aus einer gespeicherten Design-Konfiguration die druckfertige STL
 // (wird vom Konfigurator UND vom Warenkorb-Checkout genutzt)
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.js'; // relativ statt Import-Map: auch im Hintergrund-Thread (model-worker.js) ladbar
 import { buildModel, buildSaucer, FONTS } from './geometry.js';
-import { FontLoader } from '../vendor/FontLoader.js';
+import { Font } from './font.js';
 import { exportSTL } from './exporter.js';
 import { make3MF } from './threemf.js';
 
 const fontCache = {};
+/** Schrift laden (einmal je Schrift; Pfad relativ zu diesem Modul, damit es auf der Seite und im Hintergrund-Thread gleich auflöst) */
 export function loadFont(key) {
   if (!FONTS[key]) key = 'helvetiker';
   if (!fontCache[key]) {
-    fontCache[key] = new Promise((resolve, reject) =>
-      new FontLoader().load(`fonts/${FONTS[key].file}`, resolve, undefined, reject));
+    fontCache[key] = fetch(new URL(`../fonts/${FONTS[key].file}`, import.meta.url))
+      .then((r) => { if (!r.ok) throw new Error(`Schrift ${key} nicht ladbar (${r.status})`); return r.json(); })
+      .then((json) => new Font(json))
+      .catch((err) => { delete fontCache[key]; throw err; }); // Fehlschlag nicht cachen — beim nächsten Aufruf erneut versuchen
   }
   return fontCache[key];
 }

@@ -1,7 +1,7 @@
 /* formsam Service Worker – Scope "/" */
 'use strict';
 
-const VERSION = 'formsam-v1';
+const VERSION = 'formsam-v2'; // v2: Modellberechnung im Hintergrund-Thread (model-worker.js), neue Module → alte Caches verwerfen
 const IMMUTABLE_CACHE = VERSION + '-immutable';
 const DYNAMIC_CACHE = VERSION + '-dynamic';
 const KNOWN_CACHES = [IMMUTABLE_CACHE, DYNAMIC_CACHE];

@@ -1377,3 +1377,33 @@ section[id] { scroll-margin-top: 72px; }
   .stage-openwarn { top: 72px; }
   body.is-mobile .stage-openwarn { top: calc(72px + env(safe-area-inset-top, 0px)); }
 }
+
+/* Ladeanzeige der Hintergrund-Rechnung (model-builder.js → app.js initBuildIndicator): ab 160 ms Rechenzeit ein dünner
+   Fortschrittsbalken am oberen Bühnenrand und eine kleine Pille mit dem Bildzeichen, das sich Schicht für Schicht aufbaut.
+   Die Bühne bleibt dabei bedienbar (pointer-events: none); der Dreh-Hinweis tritt so lange zurück. */
+.stage-build { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.sb-bar { position: absolute; left: 0; right: 0; top: 0; height: 3px; overflow: hidden;
+  background: color-mix(in srgb, #c86f4a 16%, transparent); }
+.sb-bar i { position: absolute; inset: 0; background: #c86f4a; transform-origin: left center; transform: scaleX(0); }
+.sb-bar i::after { content: ''; position: absolute; top: 0; bottom: 0; width: 38%; right: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55)); animation: sb-glow 1.1s ease-in-out infinite; }
+@keyframes sb-glow { from { opacity: 0.15; } 50% { opacity: 1; } to { opacity: 0.15; } }
+.sb-pill { position: absolute; left: 50%; bottom: 70px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; padding: 7px 15px 7px 11px; border-radius: 999px;
+  background: color-mix(in srgb, var(--card) 96%, transparent); /* ohne backdrop-filter: würde auf Handys jedes Bild der Bühne neu weichzeichnen */
+  border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(40, 30, 20, 0.12);
+  font-size: 0.78rem; font-weight: 600; color: var(--ink); white-space: nowrap;
+  animation: sb-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes sb-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translateX(-50%); } }
+.sb-icon { width: 13px; height: 17px; flex: none; }
+.sb-pill .fs-build use { animation: fs-print1 1.5s ease-out infinite; }
+.sb-pill .fs-build use:nth-child(2) { animation-name: fs-print2; } .sb-pill .fs-build use:nth-child(3) { animation-name: fs-print3; }
+.sb-pill .fs-build use:nth-child(4) { animation-name: fs-print4; } .sb-pill .fs-build use:nth-child(5) { animation-name: fs-print5; }
+.stage.is-building .stage-hint { opacity: 0 !important; visibility: hidden; } /* visibility: die Einblend-Animation des Hinweises (fill both) hält sonst einen Rest stehen */
+.text-busy { color: #9e4f2c; font-weight: 600; }
+.text-busy::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%;
+  background: #c86f4a; vertical-align: 1px; animation: sb-glow 0.9s ease-in-out infinite; }
+.dark .text-busy { color: #e3a07f; }
+@media (max-width: 980px) {
+  .sb-pill { bottom: 64px; font-size: 0.72rem; padding: 6px 13px 6px 10px; }
+}

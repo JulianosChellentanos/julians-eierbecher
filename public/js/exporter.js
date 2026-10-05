@@ -1,5 +1,5 @@
 // formsam — binärer STL-Export (Millimeter, little-endian)
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.js'; // relativ statt Import-Map: auch im Hintergrund-Thread (model-worker.js) ladbar
 
 /**
  * Exportiert eine Liste von THREE.Mesh als binäres STL.

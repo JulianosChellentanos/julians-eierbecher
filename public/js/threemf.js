@@ -1,7 +1,7 @@
 // formsam — 3MF-Export (Mehrfarbdruck): ein Objekt mit mehreren Teilen, je Teil ein Filament/Extruder.
 // Bambu Studio / OrcaSlicer lesen die Teilezuordnung aus Metadata/model_settings.config.
 // Reines JS: ZIP-Writer (Deflate über CompressionStream im Browser, zlib in Node), XML-Mesh-Export.
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.js'; // relativ statt Import-Map: auch im Hintergrund-Thread (model-worker.js) ladbar
 
 // ---------------------------------------------------------------------------
 // CRC32 (ZIP)
