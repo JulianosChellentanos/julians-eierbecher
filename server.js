@@ -783,8 +783,9 @@ function clientIp(req) {
 // ---------------------------------------------------------------------------
 const WARTUNG_COOKIE = 'fs_zugang';
 const WARTUNG_TAGE = 30;
-const WARTUNG_FREI = new Set(['/__wartung', '/favicon.ico', '/sw.js']);
-const WARTUNG_FREI_PREFIX = ['/img/brand/', '/fonts/'];
+// Manifest und App-Icons holt der Browser ohne Cookies (anonymous) → müssen frei sein, sonst 503 nach dem Freischalten
+const WARTUNG_FREI = new Set(['/__wartung', '/favicon.ico', '/sw.js', '/manifest.webmanifest']);
+const WARTUNG_FREI_PREFIX = ['/img/brand/', '/img/icons/', '/fonts/'];
 const wartungAktiv = () => !!(settings.wartung?.aktiv && settings.wartung?.hash && settings.wartung?.secret);
 const wartungToken = () => crypto.createHmac('sha256', settings.wartung.secret).update(`zugang|${settings.wartung.hash}`).digest('base64url');
 function cookieWert(req, name) {
