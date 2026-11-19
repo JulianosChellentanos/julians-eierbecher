@@ -18,6 +18,8 @@ const PUBLIC = path.join(__dirname, 'public');
 const ORDERS = path.resolve(process.env.ORDERS_DIR || path.join(__dirname, 'orders'));
 const DATA = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const PORT = process.env.PORT || 4488;
+// HOST=127.0.0.1 hinter einem Reverse-Proxy (Produktivserver: nginx mit HTTPS) — der Shop-Port ist dann nicht von außen erreichbar
+const HOST = process.env.HOST || '0.0.0.0';
 const SERVER_STARTED = new Date().toISOString();
 const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
 const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
@@ -3527,8 +3529,8 @@ process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ab
 process.on('uncaughtException', (err) => console.error('Unbehandelte Ausnahme:', err));
 // Erst Guthaben-Einlösungen und vergebene Belegnummern aus den Bestellungen lesen, dann Anfragen annehmen — sonst könnte eine
 // Bestellung direkt nach dem Start ein schon verbrauchtes Guthaben einlösen oder eine vergebene Nummer bekommen
-loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummern konnten nicht gelesen werden:', err?.message || err)).then(() => server.listen(PORT, '0.0.0.0', () => {
-  console.log(`formsam Shop läuft → http://0.0.0.0:${PORT}  (Admin: /admin)`);
+loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummern konnten nicht gelesen werden:', err?.message || err)).then(() => server.listen(PORT, HOST, () => {
+  console.log(`formsam Shop läuft → http://${HOST}:${PORT}  (Admin: /admin)`);
   // Rechtsseiten früh laden, damit ein fehlendes/fehlerhaftes lib/legal.js gleich im Log steht (die Routen versuchen es erneut)
   legalModule().then((m) => {
     if (!m) return;
