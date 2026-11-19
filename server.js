@@ -244,6 +244,8 @@ const DEFAULT_SETTINGS = {
   // Angaben für die Rechtsseiten (lib/legal.js): Hoster und Serverstandort (Datenschutzerklärung)
   legal: { hoster: 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur', serverOrt: 'Berlin (Deutschland)' },
   paypal: { enabled: false, sandbox: true, clientId: '', secret: '' },
+  // Wartungsmodus: Shop nur mit Zugangskennwort (hash = scrypt, secret = HMAC-Schlüssel für das Freigabe-Cookie)
+  wartung: { aktiv: false, hash: '', secret: '' },
   colors: null,   // wird beim ersten Start aus content.json übernommen
   coupons: [],    // [{ code, type: 'percent'|'fixed', value, minOrder, active, note?, mitAktion }] — mitAktion: mit laufender Aktion kombinierbar
   // Aktionen (zeitlich begrenzte Prozent-Rabatte): [{ id, name, prozent, start, ende, produkte, muster, mengenrabatt, hinweis, aktiv }] — siehe sanitizeAktion()
@@ -770,6 +772,131 @@ function clientIp(req) {
 }
 
 // ---------------------------------------------------------------------------
+// Wartungsmodus (settings.wartung): vor dem ganzen Shop steht eine Seite mit Zugangskennwort. Wer es kennt, bekommt ein
+// Cookie (30 Tage) und sieht den Shop normal — so lässt sich die Seite vor dem Start ansehen und testen.
+// Kennwort nur als scrypt-Hash; das Cookie ist ein HMAC über den Hash → ein neues Kennwort macht alle Freigaben ungültig.
+// Frei bleiben nur die Wartungsseite selbst, ihre Schriften/Logos, das Favicon und sw.js (damit der Service Worker
+// aktualisieren kann). API-Aufrufe ohne Freigabe bekommen 503.
+// Ein- und ausschalten: Admin → System, oder auf dem Server  node tools/wartung.mjs an <kennwort> | aus | status
+// ---------------------------------------------------------------------------
+const WARTUNG_COOKIE = 'fs_zugang';
+const WARTUNG_TAGE = 30;
+const WARTUNG_FREI = new Set(['/__wartung', '/favicon.ico', '/sw.js']);
+const WARTUNG_FREI_PREFIX = ['/img/brand/', '/fonts/'];
+const wartungAktiv = () => !!(settings.wartung?.aktiv && settings.wartung?.hash && settings.wartung?.secret);
+const wartungToken = () => crypto.createHmac('sha256', settings.wartung.secret).update(`zugang|${settings.wartung.hash}`).digest('base64url');
+function cookieWert(req, name) {
+  for (const teil of String(req.headers.cookie || '').split(';')) {
+    const i = teil.indexOf('=');
+    if (i > 0 && teil.slice(0, i).trim() === name) { try { return decodeURIComponent(teil.slice(i + 1).trim()); } catch { return ''; } }
+  }
+  return '';
+}
+function wartungFreigegeben(req) {
+  const c = Buffer.from(cookieWert(req, WARTUNG_COOKIE));
+  const t = Buffer.from(wartungToken());
+  return c.length === t.length && crypto.timingSafeEqual(c, t);
+}
+/** Kennwort → 'scrypt$salt$hash' (auch tools/wartung.mjs nutzt dieses Format) */
+function wartungHash(kennwort) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `scrypt$${salt}$${crypto.scryptSync(String(kennwort), salt, 32).toString('hex')}`;
+}
+function wartungKennwortStimmt(kennwort) {
+  const [art, salt, hex] = String(settings.wartung?.hash || '').split('$');
+  if (art !== 'scrypt' || !salt || !hex) return false;
+  const a = crypto.scryptSync(String(kennwort), salt, 32), b = Buffer.from(hex, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+// HTTPS direkt oder hinter dem eigenen Reverse-Proxy (TRUST_PROXY) → Cookie mit Secure
+const istHttps = (req) => !!req.socket?.encrypted || (TRUST_PROXY > 0 && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
+const wartungCookie = (req) => `${WARTUNG_COOKIE}=${wartungToken()}; Path=/; Max-Age=${WARTUNG_TAGE * 86400}; HttpOnly; SameSite=Lax${istHttps(req) ? '; Secure' : ''}`;
+// Ziel nach dem Freischalten: nur Pfade dieser Seite (kein //host, kein Schema)
+const wartungZiel = (z) => (typeof z === 'string' && /^\/(?![/\\])/.test(z) && z.length < 500 && !z.startsWith('/__wartung') ? z : '/');
+let wartungLogo = '';
+try { wartungLogo = readFileSync(path.join(PUBLIC, 'img/brand/formsam-logo.svg'), 'utf8').replace(/<title>.*?<\/title>/, '').replace('<svg ', '<svg class="logo" aria-label="formsam" '); } catch { /* Logo fehlt → nur Text */ }
+function wartungSeite(res, code, { fehler = '', ziel = '/' } = {}) {
+  const html = `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>formsam – bald für dich da</title><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#f4efe7">
+<link rel="icon" href="/img/brand/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="any">
+<style>
+@font-face{font-family:Fraunces;src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:300 900;font-display:swap}
+@font-face{font-family:Inter;src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
+:root{color-scheme:light dark;--bg:#f4efe7;--ink:#211d18;--soft:#6b6258;--line:#e2d9cb;--card:#fbf8f2;--acc:#c86f4a;--acc-t:#9e4f2c}
+@media (prefers-color-scheme:dark){:root{--bg:#17130f;--ink:#f0e9dc;--soft:#b9ad9c;--line:#3a332b;--card:#211c17;--acc-t:#e3a07f}.logo path[fill="#211d18"]{fill:#f0e9dc}}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%}
+body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:28px 20px;background:var(--bg);color:var(--ink);font:400 15px/1.6 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:100%;max-width:440px;text-align:center}
+.logo{width:210px;height:auto;display:block;margin:0 auto 34px}
+h1{font:500 32px/1.15 Fraunces,Georgia,serif;letter-spacing:-.02em;margin:0 0 12px}
+h1 em{color:var(--acc-t);font-style:italic}
+p{margin:0 0 26px;color:var(--soft)}
+form{display:flex;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px}
+input{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);font:500 16px Inter,system-ui,sans-serif;padding:10px 14px;outline:none}
+button{border:0;border-radius:999px;background:var(--ink);color:var(--bg);font:600 14px Inter,system-ui,sans-serif;padding:10px 20px;cursor:pointer}
+input:focus{outline:none}form:focus-within{border-color:var(--acc);box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 25%,transparent)}button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.err{color:#b3261e;font-size:13px;margin:12px 0 0}
+@media (prefers-color-scheme:dark){.err{color:#ffb4ad}}
+small{display:block;margin-top:34px;color:var(--soft);font-size:12px;letter-spacing:.04em}
+</style></head><body><main>
+${wartungLogo || '<div style="font:600 34px Fraunces,Georgia,serif;margin-bottom:30px">formsam</div>'}
+<h1>Gleich geht’s los.<br><em>Ich arbeite noch an der Seite.</em></h1>
+<p>formsam ist bald für dich da: Vasen, die du selbst gestaltest. Mit dem Zugangskennwort kannst du schon jetzt hineinsehen.</p>
+<form method="post" action="/__wartung" autocomplete="off">
+<input type="hidden" name="ziel" value="${esc(ziel)}">
+<label for="kw" style="position:absolute;left:-9999px">Zugangskennwort</label>
+<input id="kw" name="kennwort" type="password" inputmode="text" placeholder="Zugangskennwort" required autofocus>
+<button type="submit">Ansehen</button>
+</form>
+${fehler ? `<p class="err" role="alert">${esc(fehler)}</p>` : ''}
+<small>Sorgsam geformt. Auf dich zugeschnitten.</small>
+</main></body></html>`;
+  res.writeHead(code, {
+    'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow',
+    'X-Formsam-Wartung': '1', ...(code === 503 ? { 'Retry-After': '3600' } : {}),
+  });
+  res.end(html);
+}
+/** Vor jeder Anfrage: true = beantwortet (Wartungsseite, Login, Sperre), false = normal weiter */
+async function wartungTor(req, res, p, url) {
+  if (!wartungAktiv()) {
+    if (p === '/__wartung') { res.writeHead(303, { Location: '/' }); res.end(); return true; }
+    return false;
+  }
+  if (p === '/__wartung' && req.method === 'POST') {
+    const body = new URLSearchParams((await readBody(req, 8 * 1024)).toString('utf8'));
+    const ziel = wartungZiel(body.get('ziel'));
+    const key = `wartung:${clientIp(req)}`;
+    if (rateLimitReached(key, 10)) { wartungSeite(res, 429, { fehler: 'Zu viele Versuche – bitte in 15 Minuten noch einmal.', ziel }); return true; }
+    if (!wartungKennwortStimmt(body.get('kennwort') || '')) {
+      forgotLimited(key, 10); // nur Fehlgriffe zählen
+      wartungSeite(res, 401, { fehler: 'Das Kennwort stimmt nicht.', ziel });
+      return true;
+    }
+    res.writeHead(303, {
+      Location: ziel, 'Cache-Control': 'no-store',
+      'Set-Cookie': wartungCookie(req),
+    });
+    res.end();
+    return true;
+  }
+  if (WARTUNG_FREI.has(p) || WARTUNG_FREI_PREFIX.some((x) => p.startsWith(x)) || wartungFreigegeben(req)) {
+    if (p === '/__wartung') { res.writeHead(303, { Location: '/' }); res.end(); return true; }
+    return false;
+  }
+  if (p.startsWith('/api/')) {
+    res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1' });
+    res.end(JSON.stringify({ ok: false, error: 'Wartungsmodus – bitte später noch einmal versuchen.' }));
+    return true;
+  }
+  const seite = (req.method === 'GET' || req.method === 'HEAD') && (/text\/html/.test(String(req.headers.accept || '')) || !path.extname(p));
+  if (seite) { wartungSeite(res, 503, { ziel: wartungZiel(p + url.search) }); return true; }
+  res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1', 'Retry-After': '3600' });
+  res.end('Wartungsmodus');
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // E-Mail-Versand (lib/mailer.js + lib/mail-templates.js) — Protokoll in data/mail-outbox.json
 //   Hooks (unten): Bestellbestätigung + Admin-Kopie, Status-Mails, Willkommensmail.
 //   Jede aus einer Bestellung heraus in den Versand gegebene Mail wird in order.mailsSent[key] = Zeitpunkt
@@ -791,6 +918,7 @@ const adminSettingsView = () => {
     ...rest,
     mail: { ...settings.mail, pass: '', passSet: !!settings.mail?.pass },
     paypal: { ...settings.paypal, secret: '', secretSet: !!settings.paypal?.secret },
+    wartung: { aktiv: !!settings.wartung?.aktiv, kennwortGesetzt: !!settings.wartung?.hash }, // Hash/Schlüssel bleiben auf dem Server
   };
 };
 
@@ -2389,6 +2517,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    // --- Wartungsmodus: ohne Freigabe nur die Wartungsseite
+    if (await wartungTor(req, res, p, url)) return;
+
     // --- öffentliche API
     if (p === '/api/pricing') {
       const pr = settings.pricing;
@@ -2844,6 +2975,21 @@ const server = http.createServer(async (req, res) => {
         if (patch.invoicePrefix !== undefined) invoicePrefix = belegPraefixAusPatch('invoicePrefix', patch.invoicePrefix, 'Rechnungspräfix');
         if (patch.creditPrefix !== undefined) creditPrefix = belegPraefixAusPatch('creditPrefix', patch.creditPrefix, 'Gutschriftpräfix');
       } catch (err) { return send(res, err.httpCode || 400, { ok: false, error: err.message }); }
+      // Wartungsmodus: { aktiv, kennwort? } — Kennwort nur als Hash speichern; neues Kennwort = alle Freigaben ungültig
+      let wartungNeu = null;
+      if (patch.wartung !== undefined) {
+        const w = patch.wartung;
+        if (!w || typeof w !== 'object' || Array.isArray(w)) return send(res, 400, { ok: false, error: 'Wartungsmodus: ungültiges Format' });
+        const neu = { ...DEFAULT_SETTINGS.wartung, ...(settings.wartung || {}) };
+        if (w.kennwort !== undefined && w.kennwort !== '') {
+          if (typeof w.kennwort !== 'string' || w.kennwort.trim().length < 6 || w.kennwort.length > 100) return send(res, 400, { ok: false, error: 'Zugangskennwort: 6 bis 100 Zeichen' });
+          neu.hash = wartungHash(w.kennwort.trim());
+          neu.secret = crypto.randomBytes(32).toString('base64url');
+        }
+        if (w.aktiv !== undefined) neu.aktiv = !!w.aktiv;
+        if (neu.aktiv && !neu.hash) return send(res, 400, { ok: false, error: 'Wartungsmodus: bitte zuerst ein Zugangskennwort setzen' });
+        wartungNeu = neu;
+      }
       const prevPricing = settings.pricing;
       // Nur bekannte Wurzel-Schlüssel übernehmen (Gutscheine gesondert, siehe mergeCoupons)
       for (const k of ['pricing', 'colors', 'printing']) {
@@ -2873,6 +3019,7 @@ const server = http.createServer(async (req, res) => {
       // Farbaufpreis je Farbe: Zahl ≥ 0 erzwingen
       if (Array.isArray(settings.colors)) for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
       // PayPal: Secret-Maske wie beim SMTP-Passwort — leer = gespeichertes behalten, null = löschen
+      if (wartungNeu) settings.wartung = wartungNeu;
       if (patch.paypal && typeof patch.paypal === 'object') {
         const prev = settings.paypal || {};
         const next = { ...DEFAULT_SETTINGS.paypal, ...prev };
@@ -2892,6 +3039,8 @@ const server = http.createServer(async (req, res) => {
         settings.mail = mailSettings(next);
       } else settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
       await saveSettings();
+      // Wartungsmodus gerade eingeschaltet oder neues Kennwort: der Admin sperrt sich nicht selbst aus — Freigabe-Cookie gleich mit
+      if (wartungNeu && wartungAktiv()) res.setHeader('Set-Cookie', wartungCookie(req));
       // Preise, Farbaufpreise oder Aktionen geändert → Momentaufnahme für den 30-Tage-Tiefstpreis (§ 11 PAngV)
       await notePreisHistorie().catch((err) => console.error('Preis-Historie konnte nicht gespeichert werden:', err?.message || err));
       // hinweis: nicht übernommene Angaben (z. B. Präfix aus einem Tab von vor dem Jahreswechsel) — der Admin zeigt ihn an

@@ -1781,6 +1781,10 @@ function fillSettings() {
   $('#p-min-egg').value = p.minutesEgg ?? 75; $('#p-g-egg').value = p.gramsEgg ?? 22;
   $('#p-min-vase').value = p.minutesVase ?? 210; $('#p-g-vase').value = p.gramsVase ?? 110;
   $('#s-adminkey').value = '';
+  $('#s-wartung').checked = !!s.wartung?.aktiv; $('#s-wartung-kw').value = '';
+  $('#s-wartung-hint').textContent = s.wartung?.kennwortGesetzt
+    ? 'Besucher sehen eine Wartungsseite; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.'
+    : 'Noch kein Zugangskennwort gesetzt — zum Einschalten bitte eines eintragen.';
   const info = DATA.info || {};
   $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(naechsteBelegNr(s.invoicePrefix || 'RE-2026-', s.nextInvoice))}</dd><dt>Nächste Gutschrift</dt><dd>${esc(naechsteBelegNr(s.creditPrefix || 'GS-2026-', s.nextCredit))}</dd><dt>Produkte im Shop</dt><dd>${produktAn('eierbecher') ? 'Vasen, Eierbecher' : 'Vasen'}</dd>`;
   $('#side-foot').textContent = `Node ${info.node || ''} · seit ${info.startedAt ? fmtDT(info.startedAt) : '—'}`;
@@ -1873,11 +1877,21 @@ async function saveSettings() {
   };
   const produktWechsel = patch.produkte.eierbecher !== produktAn('eierbecher');
   if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
+  // Wartungsmodus nur mitschicken, wenn sich etwas geändert hat (Kennwort nie zurück an die Oberfläche)
+  if ($('#s-wartung').checked !== !!DATA.settings.wartung?.aktiv || $('#s-wartung-kw').value) {
+    patch.wartung = { aktiv: $('#s-wartung').checked, ...($('#s-wartung-kw').value ? { kennwort: $('#s-wartung-kw').value } : {}) };
+  }
   $('#save-btn').disabled = true;
   try {
     const r = await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
     if (!r.ok) throw new Error(r.error || 'Speichern fehlgeschlagen');
     if (patch.adminKey) { localStorage.setItem('ovju-admin-key', patch.adminKey); $('#s-adminkey').value = ''; }
+    if (patch.wartung) {
+      const neuesKw = !!patch.wartung.kennwort;
+      $('#s-wartung-kw').value = '';
+      patch.wartung = { aktiv: patch.wartung.aktiv, kennwortGesetzt: neuesKw || !!DATA.settings.wartung?.kennwortGesetzt };
+      if (neuesKw) toast('Neues Zugangskennwort gesetzt — dieser Browser ist schon freigeschaltet, alle anderen brauchen das neue Kennwort.', 'info', 7000);
+    }
     // Gutscheine: gespeicherter Stand des Servers (enthält auch Guthaben-Codes, die dieser Tab noch nicht kannte)
     if (Array.isArray(r.coupons)) { coupons = structuredClone(r.coupons); for (const c of coupons) c.mitAktion = !!c.mitAktion; }
     if (r.couponRest && typeof r.couponRest === 'object') DATA.couponRest = r.couponRest;

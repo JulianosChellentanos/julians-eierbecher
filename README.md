@@ -171,6 +171,19 @@ docs/rechtstexte.md        Notiz zu den Rechtstexten (Annahmen, offene Punkte)
 docs/marketing.md          Marketing-Plan (Stand der Eierbecher-Zeit, damals OVJU)
 ```
 
+## Wartungsmodus
+
+Vor dem ganzen Shop steht dann eine Wartungsseite mit Zugangskennwort; wer es eingibt, sieht den Shop 30 Tage lang
+normal (Cookie). Schalten im Admin unter System oder auf dem Server (Shop-Server vorher stoppen, danach starten):
+
+```
+node tools/wartung.mjs an <kennwort>   # einschalten (neues Kennwort sperrt alle bisherigen Freigaben)
+node tools/wartung.mjs aus             # Shop für alle sichtbar
+node tools/wartung.mjs status
+```
+
+Gespeichert wird nur ein scrypt-Hash (settings.wartung); nach 10 Fehlversuchen je IP 15 Minuten Pause.
+
 ## Flüssige Bedienung auf dem Handy
 
 Eine Gravur-Vorschau kostet auf Handys 0,5–2 s Rechenzeit. Deshalb rechnet der Konfigurator in einem Web Worker
