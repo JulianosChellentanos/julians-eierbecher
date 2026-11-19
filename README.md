@@ -171,6 +171,15 @@ docs/rechtstexte.md        Notiz zu den Rechtstexten (Annahmen, offene Punkte)
 docs/marketing.md          Marketing-Plan (Stand der Eierbecher-Zeit, damals OVJU)
 ```
 
+## Test- und Produktivserver
+
+- **Testserver** (dieser Ordner, `node server.js` auf Port 4488): Hier wird jede Änderung zuerst gemacht und geprüft.
+- **Produktivserver** (www.formsam.com, 178.254.22.240): `/srv/formsam`, systemd-Dienst `formsam` (Node intern auf
+  127.0.0.1:4488), davor nginx mit Let's-Encrypt-Zertifikat (`deploy/nginx-formsam.conf`, `deploy/formsam.service`).
+  Übernahme erst nach Prüfung bzw. Freigabe: Code nach GitHub pushen, dann auf dem Produktivserver
+  `bash /srv/formsam/deploy/prod-update.sh` (sichert vorher, holt main, startet neu). Daten (`data/`, `orders/`,
+  Galerie) liegen nur auf dem jeweiligen Server; tägliche Sicherung nach `/var/backups/formsam` (14 Tage).
+
 ## Wartungsmodus
 
 Vor dem ganzen Shop steht dann eine Wartungsseite mit Zugangskennwort; wer es eingibt, sieht den Shop 30 Tage lang

@@ -1,0 +1,25 @@
+# formsam — Shop-Server als systemd-Dienst (Produktivserver). Liegt nach dem Einrichten unter /etc/systemd/system/formsam.service
+[Unit]
+Description=formsam Shop (Node)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=formsam
+Group=formsam
+WorkingDirectory=/srv/formsam
+# Nur intern (nginx davor macht HTTPS); TRUST_PROXY=1 → echte Besucher-IP und https für Rate-Limits und Secure-Cookies
+Environment=NODE_ENV=production PORT=4488 HOST=127.0.0.1 TRUST_PROXY=1
+ExecStart=/usr/local/bin/node server.js
+Restart=always
+RestartSec=3
+# Härtung: nur der eigene Ordner ist beschreibbar
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/formsam/data /srv/formsam/orders /srv/formsam/public/img/gallery
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

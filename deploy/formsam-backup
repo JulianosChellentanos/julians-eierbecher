@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# formsam — tägliche Sicherung von Einstellungen, Bestellungen, Konten und Galerie (14 Tage aufbewahrt).
+# Liegt unter /usr/local/sbin/formsam-backup, läuft per /etc/cron.d/formsam-backup um 3:15 Uhr.
+set -euo pipefail
+ZIEL=/var/backups/formsam
+mkdir -p "$ZIEL"
+chmod 700 "$ZIEL"
+STAMP=$(date +%F-%H%M)
+tar -C /srv/formsam -czf "$ZIEL/formsam-$STAMP.tar.gz" data orders public/img/gallery 2>/dev/null
+find "$ZIEL" -name 'formsam-*.tar.gz' -mtime +14 -delete
