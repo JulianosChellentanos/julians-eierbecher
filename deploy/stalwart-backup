@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# formsam — tägliche Sicherung des Mailservers Stalwart (Postfächer, Konten, Konfiguration, DKIM-Schlüssel; 14 Tage).
+# Liegt unter /usr/local/sbin/stalwart-backup, läuft per /etc/cron.d/stalwart-backup um 3:40 Uhr.
+# RocksDB lässt sich laut Stalwart-Doku nur angehalten konsistent kopieren → Dienst kurz stoppen (wenige Sekunden;
+# einliefernde Mailserver versuchen es dann einfach erneut). apps/ wird beim Start neu entpackt und fehlt deshalb.
+# Wiederherstellen: systemctl stop stalwart; tar -C / -xzf <Sicherung>; systemctl start stalwart
+set -euo pipefail
+ZIEL=/var/backups/stalwart
+mkdir -p "$ZIEL"
+chmod 700 "$ZIEL"
+STAMP=$(date +%F-%H%M)
+trap 'systemctl start stalwart' EXIT
+systemctl stop stalwart
+tar -C / --exclude=var/lib/stalwart/apps -czf "$ZIEL/stalwart-$STAMP.tar.gz" var/lib/stalwart etc/stalwart
+systemctl start stalwart
+trap - EXIT
+find "$ZIEL" -name 'stalwart-*.tar.gz' -mtime +14 -delete

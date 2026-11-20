@@ -180,6 +180,39 @@ docs/marketing.md          Marketing-Plan (Stand der Eierbecher-Zeit, damals OVJ
   `bash /srv/formsam/deploy/prod-update.sh` (sichert vorher, holt main, startet neu). Daten (`data/`, `orders/`,
   Galerie) liegen nur auf dem jeweiligen Server; tägliche Sicherung nach `/var/backups/formsam` (14 Tage).
 
+## Mailserver (nur Produktivserver)
+
+Stalwart 1.1 (Rust; SMTP, IMAP, JMAP, Spamfilter, Admin-Oberfläche) läuft auf dem Produktivserver als Dienst
+`stalwart` (Benutzer `stalwart`, Binärdatei `/usr/local/bin/stalwart`, Daten RocksDB in `/var/lib/stalwart`,
+Umgebung `/etc/stalwart/stalwart.env`). Mail-Host ist **mx.formsam.com**.
+
+- **Ports:** 25 (Empfang, STARTTLS), 465 (Versand, TLS), 587 (Versand, STARTTLS), 993 (IMAP, TLS) bedient Stalwart
+  direkt. Die Web-Dienste (Admin `/admin`, Konto `/account`, JMAP, Autokonfiguration, MTA-STS) laufen nur intern auf
+  127.0.0.1:8080; nginx macht davor HTTPS (`deploy/nginx-formsam-mail.conf`) und gibt die Besucher-IP per
+  X-Forwarded-For weiter (Sperren/Rate-Limits). POP3, ManageSieve und Port 443 von Stalwart sind bewusst aus.
+- **Webmail:** https://webmail.formsam.com → https://mx.formsam.com/webmail/ — Bulwark Lite 1.21.2, von Stalwart selbst
+  ausgeliefert (Application-Objekt, Paket als `file://` in `/var/lib/stalwart/bundles`, Prüfsumme geprüft; in
+  `config.json` des Pakets `noThirdPartyTraffic: true` → keine Telemetrie/externen Icons). Anmeldung über den
+  registrierten OAuth-Client `bulwark-webmail` (Scopes mail/contacts/calendars/files/security/settings, kein `full`).
+  Update: neues Paket laden, `sha256sum -c`, config.json wie oben anpassen, `resourceUrl` umstellen,
+  `stalwart-cli create Action/UpdateApps`.
+- **Konfiguration:** `deploy/stalwart-plan.ndjson` (Domain, Zertifikat, Listener, Log ins Journal, Konten, OAuth-Client,
+  Apps, HTTP, Systemeinstellungen; Passwörter als Platzhalter). Eingespielt mit `stalwart-cli apply` im
+  Recovery-Modus (dann Port 8080 per iptables von außen sperren und nginx-Site `formsam-mail` vorübergehend
+  abschalten — der Recovery-Listener hat keinen Brute-Force-Schutz). CLI auf dem Server: `. /root/.stalwart-cli.env`.
+- **Konten:** admin@ (Verwaltung), hallo@ (Hauptpostfach; Aliase postmaster@, abuse@), shop@ (Versand der Shop-Mails).
+  Erstzugänge in `/root/formsam-mail-zugaenge.txt` (nur root). Ein Konto darf nur mit eigener Adresse senden.
+- **Zertifikat:** certbot `mx.formsam.com` (+ webmail, autodiscover, mta-sts); `deploy/stalwart-zertifikat.sh` als
+  Deploy-Hook kopiert es nach `/etc/stalwart/tls` und startet Stalwart neu.
+- **DKIM:** RSA + Ed25519 (Selektoren `v1-rsa-20261120`, `v1-ed25519-20261120`); bei manueller DNS-Pflege rotiert
+  Stalwart die Schlüssel nicht, die DNS-Einträge bleiben also gültig. DMARC-/TLS-Berichte an postmaster@ wertet
+  Stalwart selbst aus (nicht ins Postfach, `inboundReportForwarding: false`).
+- **DNS prüfen:** `bash deploy/mail-dns-pruefen.sh` (MX, SPF, DKIM, DMARC, PTR, Autokonfiguration).
+- **Sicherung:** `deploy/stalwart-backup` täglich 3:40 Uhr nach `/var/backups/stalwart` (14 Tage); hält den Dienst
+  dafür ein paar Sekunden an (RocksDB lässt sich nur angehalten konsistent kopieren).
+- **Shop:** SMTP mx.formsam.com:465, Benutzer shop@formsam.com, Antwort an hallo@formsam.com — eingetragen, aber erst
+  einschalten, wenn MX/SPF/DKIM/DMARC und Reverse-DNS stehen.
+
 ## Wartungsmodus
 
 Vor dem ganzen Shop steht dann eine Wartungsseite mit Zugangskennwort; wer es eingibt, sieht den Shop 30 Tage lang
