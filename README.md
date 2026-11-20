@@ -202,7 +202,7 @@ Umgebung `/etc/stalwart/stalwart.env`). Mail-Host ist **mx.formsam.com**.
   abschalten — der Recovery-Listener hat keinen Brute-Force-Schutz). CLI auf dem Server: `. /root/.stalwart-cli.env`.
 - **Konten:** admin@ (Verwaltung), hallo@ (Hauptpostfach; Aliase postmaster@, abuse@), shop@ (Versand der Shop-Mails).
   Erstzugänge in `/root/formsam-mail-zugaenge.txt` (nur root). Ein Konto darf nur mit eigener Adresse senden.
-- **Zertifikat:** certbot `mx.formsam.com` (+ webmail, autodiscover, mta-sts); `deploy/stalwart-zertifikat.sh` als
+- **Zertifikat:** certbot `mx.formsam.com` (+ webmail, autodiscover, autoconfig, mta-sts); `deploy/stalwart-zertifikat.sh` als
   Deploy-Hook kopiert es nach `/etc/stalwart/tls` und startet Stalwart neu.
 - **DKIM:** RSA + Ed25519 (Selektoren `v1-rsa-20261120`, `v1-ed25519-20261120`); bei manueller DNS-Pflege rotiert
   Stalwart die Schlüssel nicht, die DNS-Einträge bleiben also gültig. DMARC-/TLS-Berichte an postmaster@ wertet

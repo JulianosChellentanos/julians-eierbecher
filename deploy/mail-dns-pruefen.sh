@@ -17,7 +17,7 @@ pruef "DKIM Ed25519"                  "$(q v1-ed25519-20261120._domainkey.formsa
 pruef "DMARC"                         "$(q _dmarc.formsam.com TXT)"              "^v=DMARC1; p=(quarantine|reject)"
 pruef "PTR $IP → mx.formsam.com"      "$(dig +short -x $IP)"                     "^mx\.formsam\.com\.$"
 echo "— empfohlen —"
-pruef "autoconfig.formsam.com → Mailserver" "$(dig +short autoconfig.formsam.com A | tail -1)" "^$IP$"
+pruef "autoconfig.formsam.com → Mailserver" "$(dig +short "@$NS" autoconfig.formsam.com A | tail -1)" "^$IP$"
 pruef "SRV _imaps._tcp"               "$(q _imaps._tcp.formsam.com SRV)"         "993 mx\.formsam\.com\.$"
 pruef "SRV _submissions._tcp"         "$(q _submissions._tcp.formsam.com SRV)"   "465 mx\.formsam\.com\.$"
 echo "$ok in Ordnung, $fehler fehlen noch"
