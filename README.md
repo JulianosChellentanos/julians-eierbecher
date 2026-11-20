@@ -210,8 +210,8 @@ Umgebung `/etc/stalwart/stalwart.env`). Mail-Host ist **mx.formsam.com**.
 - **DNS prüfen:** `bash deploy/mail-dns-pruefen.sh` (MX, SPF, DKIM, DMARC, PTR, Autokonfiguration).
 - **Sicherung:** `deploy/stalwart-backup` täglich 3:40 Uhr nach `/var/backups/stalwart` (14 Tage); hält den Dienst
   dafür ein paar Sekunden an (RocksDB lässt sich nur angehalten konsistent kopieren).
-- **Shop:** SMTP mx.formsam.com:465, Benutzer shop@formsam.com, Antwort an hallo@formsam.com — eingetragen, aber erst
-  einschalten, wenn MX/SPF/DKIM/DMARC und Reverse-DNS stehen.
+- **Shop:** SMTP mx.formsam.com:465, Benutzer shop@formsam.com, Antwort und Admin-Kopie an hallo@formsam.com — seit
+  20.11.2026 eingeschaltet (DNS und Reverse-DNS bei 1blu gesetzt, Gmail nimmt an).
 
 ## Wartungsmodus
 
