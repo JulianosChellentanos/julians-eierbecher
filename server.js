@@ -22,6 +22,9 @@ const PORT = process.env.PORT || 4488;
 // HOST=127.0.0.1 hinter einem Reverse-Proxy (Produktivserver: nginx mit HTTPS) — der Shop-Port ist dann nicht von außen erreichbar
 const HOST = process.env.HOST || '0.0.0.0';
 const SERVER_STARTED = new Date().toISOString();
+// Dateirechte: alles, was der Shop anlegt (data/: Einstellungen mit Passwörtern, Konten, Sitzungen; orders/: Kundendaten), nur für
+// den Dienst-Benutzer — Dateien 0600, Ordner 0700. Bestehende Dateien bleiben, wie sie sind (README: einmal chmod)
+process.umask(0o077);
 const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
 const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
 

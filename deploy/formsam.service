@@ -20,6 +20,8 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/srv/formsam/data /srv/formsam/orders /srv/formsam/public/img/gallery
 PrivateTmp=true
+# Neue Dateien (Einstellungen mit Passwörtern, Konten, Sitzungen, Bestellungen) nur für den Dienst-Benutzer (Dateien 0600, Ordner 0700)
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
