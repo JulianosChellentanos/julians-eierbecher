@@ -840,6 +840,16 @@ function userFromReq(req) {
 }
 // emailVerified: Adresse per Link bestätigt (user.emailVerifiedAt) — erst dann zeigt das Konto Gastbestellungen mit dieser Adresse
 const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address || null, emailVerified: !!u.emailVerifiedAt });
+/**
+ * Kontoname für Mails an die Kontoadresse (Willkommen, Passwort vergessen/geändert, Bestätigungslink: Anrede, Betreff, Empfängername):
+ * nur, wenn er wie ein Name aussieht — bis 6 Wörter aus Buchstaben, Bindestrich, Apostroph, höchstens ein Punkt am Ende („Dr.“).
+ * Sonst leer (→ „Hallo!“): Wer ein Konto mit fremder Adresse anlegt, darf darüber keinen eigenen Text (Links, Domains) verschicken.
+ */
+function kontoMailName(name) {
+  const s = String(name || '').trim().replace(/ {2,}/g, ' ');
+  const woerter = s.split(' ');
+  return s.length <= 80 && woerter.length <= 6 && woerter.every((w) => /^\p{L}[\p{L}\p{M}'’-]*\.?$/u.test(w)) ? s : '';
+}
 
 // --- Passwort vergessen: Token nur als SHA-256-Hash im Konto, 60 Minuten gültig. user.reset = [{ hash, exp }, …] — die letzten
 //   RESET_LINKS verschickten Links gelten (eine verspätete Mail oder ein Dritter, der neue Links anfordert, entwertet keinen gerade
@@ -893,15 +903,20 @@ async function kontoLoeschen(u, wer) {
   console.log(`🗑️  Kundenkonto ${u.id} gelöscht (${wer}) – ${n} Bestellung(en) ohne Kontobezug`);
   return n;
 }
-/** Datenauskunft zu einem Kundenkonto (Admin, Art. 15 DSGVO): Konto ohne Passwort-Hash, Anmeldungen, Bestellungen (Konto oder gleiche
- *  E-Mail, ohne Zugriffsschlüssel), Widerrufe und Einträge im Mail-Protokoll an diese Adresse */
+/** Datenauskunft zu einem Kundenkonto (Admin, Art. 15 DSGVO): Konto ohne Passwort-Hash, Anmeldungen, Bestellungen, Widerrufe und
+ *  Einträge im Mail-Protokoll an diese Adresse. Was nur über die E-Mail-Adresse zugeordnet ist (Gastbestellungen, Widerrufe, Mails dazu),
+ *  gehört nur bei bestätigter Adresse dazu — wie im Konto; sonst könnte es jemand anderem gehören, der die Adresse wirklich hat. */
 async function kontoExport(u) {
   const { salt, hash, reset, verify, ...konto } = u;
-  const bestellungen = (await listOrders()).filter((o) => o.userId === u.id || String(o.customer?.email || '').trim().toLowerCase() === u.email).map(ohneSchluessel);
-  const widerrufe = await withWiderrufe((l) => ({ result: l.filter((w) => w.email === u.email) })).catch(() => []);
+  const bestaetigt = !!u.emailVerifiedAt;
+  const bestellungen = (await listOrders())
+    .filter((o) => o.userId === u.id || (bestaetigt && String(o.customer?.email || '').trim().toLowerCase() === u.email)).map(ohneSchluessel);
+  const eigene = new Set([u.id, ...bestellungen.map((o) => o.orderId)]);
+  const widerrufe = await withWiderrufe((l) => ({ result: l.filter((w) => w.email === u.email && (bestaetigt || eigene.has(w.orderId))) })).catch(() => []);
+  for (const w of widerrufe) eigene.add(w.ref);
   let mails = [];
   try {
-    mails = (await mailer.list({ limit: 100000 })).filter((m) => String(m.to || '').toLowerCase().split(/,\s*/).includes(u.email))
+    mails = (await mailer.list({ limit: 100000 })).filter((m) => String(m.to || '').toLowerCase().split(/,\s*/).includes(u.email) && (bestaetigt || eigene.has(m.ref)))
       .map(({ createdAt, sentAt, subject, kind, status }) => ({ createdAt, sentAt, subject, kind, status }));
   } catch { /* Protokoll nicht lesbar → ohne Mails */ }
   return {
@@ -1009,11 +1024,13 @@ function clientIp(req) {
 // Weitere Bremsen (Richtwerte; über der Grenze 429 mit Meldung, außer beim Widerruf — siehe dort)
 const LOGIN_FEHL_KONTO = 10;    // falsche Passwörter je IP + Konto in 15 Minuten (kein Sperren des Kontos selbst: Fremde können
 const LOGIN_FEHL_IP = 30;       //   den Inhaber nicht aussperren) — und je IP über alle Konten
+const PW_WECHSEL_MAX = 5;       // Passwortwechsel je Konto und Stunde (jeder schickt eine Hinweis-Mail — die ist zusätzlich gedeckelt)
 const REG_IP_MAX = 5;           // Registrierungen je IP und Stunde
 const REG_MAIL_MAX = 3;         // Konten (= Willkommensmails) je Empfängeradresse und Tag
 const REG_ALLE_MAX = 30;        // Registrierungen insgesamt je Stunde
 const WIDERRUF_MAIL_MAX = 3;    // Eingangsbestätigungen je Empfänger und Tag
-const WIDERRUF_ALLE_MAX = 30;   // Eingangsbestätigungen insgesamt je Stunde
+const WIDERRUF_ALLE_MAX = 30;   // Eingangsbestätigungen insgesamt je Stunde (beides nur für nicht zugeordnete Widerrufe)
+const WIDERRUF_BESTELLUNG_MAX = 5;   // Eingangsbestätigungen zugeordneter Widerrufe je Bestellung und Tag
 const KASSE_IP_MAX = 20;        // neue Kassen (Bestellungen, PayPal-Zahlungen) je IP und Stunde
 const DESIGN_IP_MAX = 300;      // neue Design-Codes je IP und Stunde — der Konfigurator speichert bei jeder Code-Anzeige, normaler
 const DESIGN_ALLE_MAX = 5000;   //   Gebrauch bleibt weit darunter; insgesamt je Stunde
@@ -3040,9 +3057,10 @@ const server = http.createServer(async (req, res) => {
       users.push(user);
       await saveUsers();
       send(res, 200, { ok: true, token: createSession(user.id), user: publicUser(user) });
-      return runHook('userRegistered', { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
+      return runHook('userRegistered', { id: user.id, name: kontoMailName(user.name), email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
     }
-    // Anmeldung: Fehlversuche je IP + Konto (10) und je IP (30) in 15 Minuten → 429; das Konto selbst wird nie gesperrt
+    // Anmeldung: Fehlversuche je IP + Konto (10) und je IP (30) in 15 Minuten → 429; das Konto selbst wird nie gesperrt. Jeder Versuch
+    // belegt seinen Platz vor der Prüfung (anmeldePlatz) — auch parallel abgeschickte zählen; ein richtiges Passwort gibt ihn frei
     if (req.method === 'POST' && p === '/api/auth/login') {
       const { email, password } = JSON.parse((await readBody(req)).toString('utf8'));
       const mail = String(email || '').trim().toLowerCase().slice(0, 254);
@@ -3080,8 +3098,8 @@ const server = http.createServer(async (req, res) => {
         const frueher = [].concat(u.reset || []).filter((r) => r && Number(r.exp) > Date.now()).slice(-(RESET_LINKS - 1));
         u.reset = [...frueher, { hash: sha256(token), exp: Date.now() + RESET_TTL }];
         await saveUsers();
-        const m = passwordReset({ user: { name: u.name, email: u.email }, link: `${baseUrlFor(settings)}/?reset=${token}`, settings });
-        await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-reset', ref: u.id });
+        const m = passwordReset({ user: { name: kontoMailName(u.name), email: u.email }, link: `${baseUrlFor(settings)}/?reset=${token}`, settings });
+        await mailer.queue({ to: { name: kontoMailName(u.name), email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-reset', ref: u.id });
       } catch (err) { console.error('Passwort-Reset-Mail fehlgeschlagen:', err?.message || err); }
       return;
     }
@@ -3130,8 +3148,8 @@ const server = http.createServer(async (req, res) => {
       await saveUsers();
       send(res, 200, { ok: true });
       try {
-        const m = emailBestaetigung({ user: { name: u.name, email: u.email }, link: verifyLinkFor(token), settings, baseUrl: baseUrlFor(settings) });
-        await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'email-bestaetigung', ref: u.id });
+        const m = emailBestaetigung({ user: { name: kontoMailName(u.name), email: u.email }, link: verifyLinkFor(token), settings, baseUrl: baseUrlFor(settings) });
+        await mailer.queue({ to: { name: kontoMailName(u.name), email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'email-bestaetigung', ref: u.id });
       } catch (err) { console.error('Bestätigungsmail fehlgeschlagen:', err?.message || err); }
       return;
     }
@@ -3189,6 +3207,10 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, { ok: true, beendet: n });
       }
       let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
+      // Passwortwechsel je Konto höchstens PW_WECHSEL_MAX je Stunde (jeder verschickt eine Mail, siehe unten)
+      if (p === '/api/auth/password' && forgotLimited(`pw-wechsel:${u.id}`, PW_WECHSEL_MAX, STUNDE_MS)) {
+        return send(res, 429, { ok: false, error: 'Du hast dein Passwort gerade mehrmals geändert – bitte versuch es in einer Stunde noch einmal.' });
+      }
       const platz = anmeldePlatz(clientIp(req), u.email);
       if (!platz) return send(res, 429, LOGIN_GEBREMST);
       const altes = p === '/api/auth/password' ? body?.altesPasswort : body?.passwort;
@@ -3214,9 +3236,13 @@ const server = http.createServer(async (req, res) => {
       await saveUsers();
       await saveSessions();
       send(res, 200, { ok: true, beendet });
+      // Hinweis-Mail an die Kontoadresse: je Adresse und Tag höchstens 3, solange sie nicht bestätigt ist nur 1 — wer ein Konto mit
+      // fremder Adresse anlegt, kann darüber keine Mail-Flut an Dritte auslösen
+      if (forgotLimited(`pw-mail:${u.email}`, u.emailVerifiedAt ? 3 : 1, TAG_MS)) return console.log(`🔐 Passwort von Konto ${u.id} geändert – Hinweis-Mail heute schon verschickt, keine weitere`);
       try {
-        const m = passwortGeaendert({ user: { name: u.name, email: u.email }, settings, baseUrl: baseUrlFor(settings) });
-        await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-geaendert', ref: u.id });
+        const name = kontoMailName(u.name);
+        const m = passwortGeaendert({ user: { name, email: u.email }, settings, baseUrl: baseUrlFor(settings) });
+        await mailer.queue({ to: { name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-geaendert', ref: u.id });
       } catch (err) { console.error('Mail „Passwort geändert“ fehlgeschlagen:', err?.message || err); }
       return;
     }
@@ -3242,9 +3268,13 @@ const server = http.createServer(async (req, res) => {
       if (orderId) { try { order = await readOrder(orderId); } catch { order = null; } }
       const orderMatched = !!order && String(order.customer?.email || '').trim().toLowerCase() === email;
       // Eingangsbestätigung je Empfänger höchstens 3 am Tag und insgesamt 30 je Stunde — darüber wird die Erklärung trotzdem gespeichert
-      // und dem Shop gemeldet (ein Widerruf geht nie verloren), nur die Mail an die angegebene Adresse entfällt (bestaetigungGebremst)
-      const gebremst = rateLimitReached(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS) || rateLimitReached('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS);
-      if (!gebremst) { forgotLimited(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS); forgotLimited('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS); }
+      // und dem Shop gemeldet (ein Widerruf geht nie verloren), nur die Mail an die angegebene Adresse entfällt (bestaetigungGebremst).
+      // Zugeordnete Widerrufe (Bestellnummer UND Adresse passen) zählen dort nicht mit und werden immer bestätigt — Spam ohne echte
+      // Bestellung kann ihnen die Bestätigung nicht nehmen; nur je Bestellung höchstens WIDERRUF_BESTELLUNG_MAX am Tag (Wiederholungen)
+      const gebremst = orderMatched
+        ? forgotLimited(`widerruf-bestellung:${orderId}`, WIDERRUF_BESTELLUNG_MAX, TAG_MS)
+        : rateLimitReached(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS) || rateLimitReached('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS);
+      if (!gebremst && !orderMatched) { forgotLimited(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS); forgotLimited('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS); }
       const entry = await withWiderrufe((list) => {
         const w = { ref: newWiderrufRef(list), at: new Date().toISOString(), orderId: orderId || '', name, email, nachricht, orderMatched, status: 'offen', notiz: '', ...(gebremst ? { bestaetigungGebremst: true } : {}) };
         list.push(w);
