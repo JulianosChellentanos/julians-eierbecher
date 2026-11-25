@@ -532,6 +532,16 @@
           </div>
           <div class="img-list" id="img-list"></div>
         </div>
+        <div class="card">
+          <h2>🖼️ Vorschaubild eines Design-Codes</h2>
+          <p class="muted">Design-Listen zeigen zu jedem Code das erste hochgeladene Vorschaubild; spätere Uploads ändern es nicht. Passt es nicht zum Design, hier entfernen — das nächste Speichern des Designs im Shop (Design-Code anzeigen, zur Liste hinzufügen) erzeugt ein neues.</p>
+          <div class="row" style="margin-top:12px">
+            <input type="text" id="thumb-code" placeholder="z. B. K7P-3QX" maxlength="40" aria-label="Design-Code" style="max-width:200px;text-transform:uppercase" onkeydown="if(event.key==='Enter')thumbZeigen()">
+            <button class="ghost" onclick="thumbZeigen()">Anzeigen</button>
+            <button class="ghost" id="thumb-reset" onclick="thumbEntfernen()" disabled>🗑 Vorschaubild entfernen</button>
+          </div>
+          <div class="img-list" id="thumb-vorschau" hidden></div>
+        </div>
       </section>
 
       <!-- 💰 Preise & Gutscheine -->

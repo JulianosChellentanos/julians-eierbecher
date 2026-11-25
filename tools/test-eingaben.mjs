@@ -292,6 +292,14 @@ for (const [cfg, k] of UNGUELTIG.filter(([c]) => c && !Array.isArray(c) && c.pro
   const g = await fetch(`${BASE}/api/design/${code}/thumb`);
   check(g.status === 200 && g.headers.get('content-type') === 'image/jpeg' && g.headers.get('x-content-type-options') === 'nosniff', 'Vorschaubild mit nosniff');
   check((await req('PUT', '/api/design/ZZZZZZ/thumb', jpeg(3), { 'content-type': 'text/plain' })).status === 404, 'unbekannter Code → 404');
+  // Admin setzt ein vorab belegtes/verunglücktes Bild zurück, danach gilt wieder das nächste Bild
+  check((await req('DELETE', `/api/design/${code}/thumb`)).status === 401 && existsSync(path.join(DATA, 'thumbs', `${code}.jpg`)), 'Vorschaubild entfernen ohne Admin → 401, Bild bleibt');
+  const weg = await req('DELETE', `/api/design/${code}/thumb`, null, ADMIN);
+  check(weg.status === 200 && weg.json?.entfernt === true && (await req('GET', `/api/design/${code}/thumb`)).status === 404, 'Admin entfernt Vorschaubild → 200, danach 404', weg.json);
+  check((await req('DELETE', `/api/design/${code}/thumb`, null, ADMIN)).json?.entfernt === false, 'erneutes Entfernen → entfernt: false');
+  check((await req('DELETE', '/api/design/ZZZZZZ/thumb', null, ADMIN)).status === 404, 'Entfernen bei unbekanntem Code → 404');
+  check((await req('PUT', `/api/design/${code}/thumb`, jpeg(2), { 'content-type': 'text/plain' })).status === 200
+    && readFileSync(path.join(DATA, 'thumbs', `${code}.jpg`))[10] === 2, 'nach dem Entfernen gilt das nächste Bild');
   const l = await req('POST', '/api/list', { name: 'Hochzeit\u0000 Anna', note: { x: 1 }, items: [{ code, qty: 2 }] });
   check(l.status === 200 && /^Hochzeit +Anna$/.test(l.json?.list?.name || '') && l.json?.list?.note === '', 'Liste: Steuerzeichen raus, Notiz nur Text', l.json?.list);
 }

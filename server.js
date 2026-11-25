@@ -2919,6 +2919,15 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=3600' });
         return res.end(await readFile(file));
       }
+      // Admin (Produktfotos & Galerie → Vorschaubild eines Design-Codes): verunglücktes oder vorab fremd belegtes Bild entfernen —
+      // das nächste Speichern des Designs im Shop (Code anzeigen, Liste, Warenkorb) lädt ein neues hoch
+      if (req.method === 'DELETE') {
+        if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+        if (!designs[code]) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht' });
+        const entfernt = existsSync(file);
+        await rm(file, { force: true });
+        return send(res, 200, { ok: true, entfernt });
+      }
     }
 
     // --- Design-Listen

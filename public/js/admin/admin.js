@@ -1139,6 +1139,29 @@ async function deleteImage(name) {
   loadImages();
 }
 
+// Vorschaubild eines Design-Codes: anzeigen und bei Bedarf entfernen (der Server behält sonst immer das erste Bild)
+let thumbCode = null;
+function thumbZeigen() {
+  const code = String($('#thumb-code').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^OVJU/, '').slice(0, 40);
+  const box = $('#thumb-vorschau');
+  thumbCode = null; $('#thumb-reset').disabled = true; box.textContent = ''; box.hidden = true;
+  if (code.length < 4) return toast('Bitte einen Design-Code eingeben', 'err');
+  const it = document.createElement('div'); it.className = 'it';
+  const img = document.createElement('img'); img.alt = `Vorschaubild ${code}`;
+  const p = document.createElement('p'); p.className = 'muted'; p.textContent = '…';
+  img.onload = () => { thumbCode = code; $('#thumb-reset').disabled = false; p.textContent = `Code ${code}`; };
+  img.onerror = () => { img.remove(); p.textContent = `Zu Code ${code} gibt es kein Vorschaubild.`; };
+  img.src = `/api/design/${code}/thumb?v=${Date.now()}`;   // am Browser-Cache vorbei: zeigt, was wirklich auf dem Server liegt
+  it.append(img, p); box.append(it); box.hidden = false;
+}
+async function thumbEntfernen() {
+  if (!thumbCode || !confirm(`Vorschaubild für Code ${thumbCode} entfernen?\nDas nächste Speichern des Designs im Shop erzeugt ein neues.`)) return;
+  const r = await api(`/api/design/${thumbCode}/thumb`, { method: 'DELETE' });
+  if (!r.ok) return toast('❌ ' + (r.error || 'Entfernen fehlgeschlagen'), 'err');
+  toast(r.entfernt ? `Vorschaubild für ${thumbCode} entfernt` : 'Es gab kein Vorschaubild', 'ok');
+  thumbZeigen();
+}
+
 // ---------------------------------------------------------------------------
 // Preise, Rabatte, Gutscheine
 // ---------------------------------------------------------------------------
