@@ -1,14 +1,20 @@
-// formsam — Selbsttest für lib/html-pdf.js, Teil 1: HTML einlesen, CSS-Kaskade für den Druck, sichtbarer Text (ohne Fremdpakete)
+// formsam — Selbsttest für lib/html-pdf.js (ohne Fremdpakete): Teil 1 HTML einlesen, CSS-Kaskade für den Druck, sichtbarer Text;
+// Teil 2 Satz (htmlToPdf/layoutDocument: Zeilen, Tabellen, Flex, Seiten, Selbstprüfung, Fehlerfälle)
 //
 //   node tools/test-html-pdf.mjs        → eine Zeile je Prüfung; Exit 0 = alles gut, 1 = Fehler
 //
 // Testbelege: tools/fixtures/pdf/*.html — im Testshop erzeugt, nur erfundene Daten (Erika/Max Mustermann, Teststraße …).
-// Die Sollwerte unter „Chrome-Sollwerte“ stammen aus getComputedStyle in Chrome (Druckansicht, Fensterbreite = Seiteninhalt).
+// rechnung-45pos.html ist aus einer 20-Positionen-Rechnung zusammengesetzt (die Kasse erlaubt höchstens 20 Positionen).
+// Die Sollwerte unter „Chrome-Sollwerte“ stammen aus Chrome (getComputedStyle in der Druckansicht bzw. Lage der Wörter in
+// Chromes Druck-PDF). pdftotext (poppler) wird zusätzlich benutzt, wenn es installiert ist — ohne poppler entfällt nur diese Prüfung.
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   parseHtml, parseCss, computeStyles, styleTree, visibleText, decodeEntities, parseColor, matches, mediaMatches, applyTransform, IGNORED_PROPS,
+  htmlToPdf, layoutDocument,
 } from '../lib/html-pdf.js';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'pdf');
@@ -430,7 +436,7 @@ for (const f of fixtures) {
     ok(/^(Rechnung|Gutschrift|Stornorechnung) \S+ · formsam$/.test(t.title), `Titel „${t.title}“`);
     eq(st(t, '.leiste').display, 'none', '.leiste im Druck'); eq(st(t, 'body').paddingTop, 0, 'body im Druck ohne Innenabstand');
     const text = visibleText(t.root);
-    ok(!/Drucken/.test(text) && /formsam · Max Mustermann/.test(text) && /Erika Mustermann/.test(text), 'Text');
+    ok(!/Drucken/.test(text) && /formsam · Max/.test(text) && /Erika |Ελένη /.test(text), 'Text');
     ok(!/<|&amp;|&lt;/.test(text.replace(/<3/, '')), 'keine rohen Verweise im Text');
   });
 }
@@ -479,6 +485,214 @@ check('ältere Aufmachung (ohne @page, style-Attribute, @media print): Standardr
   eq([st(t, 'p.muted').marginTop, st(t, '.noprint').display], [26, 'none'], 'style-Attribut, noprint');
   eq(visibleText(t.root), 'Rechnung\nGesamt\nDanke', 'Text ohne Knopf');
 });
+
+// ---------------------------------------------------------------------------
+// Teil 2: Satz (htmlToPdf, layoutDocument)
+// ---------------------------------------------------------------------------
+const PT = 0.75;
+const fixture = (n) => fs.readFileSync(path.join(FIX, n + '.html'), 'utf8');
+const SEITEN = { 'rechnung-ust': 1, 'rechnung-lang': 2, storno: 1, 'storno-rest': 1, 'gutschrift-gutschein': 1, 'rechnung-guthaben': 1,
+  'rechnung-45pos': 3, 'rechnung-lange-anschrift': 1, 'rechnung-griechisch': 1 };
+const frags = (f, out = []) => { out.push(f); for (const k of f.kids) frags(k, out); return out; };
+const fragOf = (lay, sel) => { const f = frags(lay.top).find((g) => g.el && matches(g.el, sel)); if (!f) throw new Error(`kein Kasten zu ${sel}`); return f; };
+const lines = (lay) => frags(lay.top).filter((f) => f.kind === 'line');
+const lineText = (ln) => ln.runs.map((r) => r.s).join('');
+const shiftAt = (lay, y) => lay.breaks.filter((b) => b.y <= y + 1e-6).reduce((a, b) => a + b.d, 0);
+const pageOfFrag = (lay, f) => Math.floor((f.ay + shiftAt(lay, f.ay) + 0.01) / lay.page.contentHeight) + 1;
+/** Anfang (x) und Grundlinie des ersten Textlaufs, der mit word beginnt — in pt auf dem Blatt */
+function wordAt(lay, word) {
+  const H = lay.page.contentHeight;
+  for (const f of lines(lay)) for (const r of f.runs) if (r.s.startsWith(word)) {
+    const y = f.ay + shiftAt(lay, f.ay), p = Math.floor((y + 0.01) / H);
+    return { x: (lay.page.margin[3] + f.ax + r.x) * PT, base: (lay.page.margin[0] + y - p * H + f.base - r.dy) * PT, page: p + 1 };
+  }
+  throw new Error(`Wort „${word}“ nicht gefunden`);
+}
+const small = (body, css = '', page = '@page{size:A4;margin:10mm}') =>
+  `<!DOCTYPE html><html lang="de"><head><title>Probe</title><style>${page}body{margin:0;font:12px/1.5 Inter}${css}</style></head><body>${body}</body></html>`;
+function throwsCode(fn, code) {
+  try { fn(); } catch (e) { if (e.code !== code) throw new Error(`Code ${e.code} statt ${code}: ${e.message}`); return e; }
+  throw new Error(`kein Fehler (erwartet ${code})`);
+}
+
+check('Satz: alle Testbelege → PDF ohne Warnung, Seitenzahl, Selbstprüfung bestanden, Tempo < 150 ms', () => {
+  const out = [];
+  for (const [n, pages] of Object.entries(SEITEN)) {
+    const html = fixture(n), r = htmlToPdf(html);
+    eq([r.pages, r.warnings], [pages, []], `${n}: Seiten, Warnungen`);
+    ok(r.buffer.subarray(0, 9).toString('latin1') === '%PDF-1.7\n' && r.buffer.subarray(-7).toString('latin1').includes('%%EOF'), `${n}: Dateirahmen`);
+    eq(r.text, visibleText(styleTree(html).root, { transform: true }), `${n}: sichtbarer Text`);
+    htmlToPdf(html);
+    const ts = [];
+    for (let i = 0; i < 5; i++) { const t0 = process.hrtime.bigint(); htmlToPdf(html); ts.push(Number(process.hrtime.bigint() - t0) / 1e6); }
+    ts.sort((a, b) => a - b);
+    ok(ts[2] < 150, `${n}: ${ts[2].toFixed(1)} ms je Beleg`);
+    out.push(`${n} ${pages} S./${Math.round(r.buffer.length / 1024)} KB/${ts[2].toFixed(0)} ms`);
+  }
+  return out.join(', ');
+});
+check('Satz: gleiche Eingabe → gleiche Bytes; Datum nur mit createdAt; Fußzeile abschaltbar', () => {
+  const html = fixture('rechnung-45pos'), h = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  const a = htmlToPdf(html), b = htmlToPdf(html);
+  eq(h(a.buffer), h(b.buffer), 'zweimal dieselben Bytes');
+  ok(!a.buffer.includes('/CreationDate'), 'ohne createdAt kein Datum in der Datei');
+  ok(htmlToPdf(html, { createdAt: '2026-11-25T10:00:00Z', author: 'formsam' }).buffer.includes('/CreationDate (D:20261125100000Z)'), 'createdAt');
+  const c = htmlToPdf(html, { pageFooter: false });
+  eq(c.pages, 3, 'Seiten ohne Fußzeile');
+  ok(c.buffer.length < a.buffer.length, 'Fußzeile fehlt');
+  eq(htmlToPdf(fixture('storno')).buffer.length, htmlToPdf(fixture('storno'), { pageFooter: false }).buffer.length, 'eine Seite: keine Fußzeile');
+});
+check('Satz: Lage der Wörter wie in Chromes Druck-PDF (rechnung-ust, ≤ 0,5 pt)', () => {
+  const lay = layoutDocument(fixture('rechnung-ust'));
+  // Chrome-Sollwerte: x des Wortanfangs und Grundlinie in pt (Chromes PDF, ausgelesen mit PyMuPDF); Chrome rastet auf ganze CSS-px ein
+  const SOLL = { formsam: [351.56, 49.50], Rechnungsnummer: [352.04, 124.50], Erika: [39.75, 141.00], 'Teststraße': [39.75, 154.50],
+    Zwischensumme: [208.50, 330.75], Gesamtbetrag: [208.50, 368.25], Alle: [39.75, 430.50], Bitte: [52.50, 458.25], Kontoinhaber: [52.50, 474.00],
+    Danke: [39.75, 528.75], Produkthinweise: [39.75, 558.00] };
+  let max = 0;
+  for (const [w, [x, b]] of Object.entries(SOLL)) {
+    const p = wordAt(lay, w), d = Math.max(Math.abs(p.x - x), Math.abs(p.base - b));
+    max = Math.max(max, d);
+    ok(d <= 0.5, `${w}: (${p.x.toFixed(2)}, ${p.base.toFixed(2)}) statt (${x}, ${b})`);
+  }
+  return `größte Abweichung ${max.toFixed(2)} pt bei ${Object.keys(SOLL).length} Wörtern`;
+});
+check('Satz: Kopf, Anschrift, Tabellen, Zahlungskasten (Kastenmaße wie im Browser)', () => {
+  const lay = layoutDocument(fixture('rechnung-ust')), W = lay.page.contentWidth;
+  eq(W, 687.87, 'Seiteninhalt (A4, 14 mm)');
+  const logo = fragOf(lay, 'svg.logo');
+  eq([logo.kind, logo.w, logo.h, logo.ay], ['svg', 34 * 377.6 / 100, 34, 2], 'Logo: Höhe aus CSS, Breite aus viewBox, margin-top');
+  const kopf = fragOf(lay, '.kopf'), abs = fragOf(lay, '.absender');
+  eq([kopf.isUnit, kopf.w, abs.ax + abs.w], [true, W, W], 'Kopf: Flex-Zeile, Absender rechtsbündig (space-between)');
+  const meta = fragOf(lay, 'table.meta'), pos = fragOf(lay, 'table.pos'), summen = fragOf(lay, 'table.summen');
+  eq([meta.ax + meta.w, pos.w, pos.kids.length, summen.w, summen.ax], [W, W, 4, 470, W - 470], 'Tabellen: meta rechts, pos 100 %, summen max-width + margin-left:auto');
+  const z = fragOf(lay, '.zahlung');
+  eq([z.w, z.st.borderLeftWidth], [W, 3], 'Zahlungskasten');
+  const rows = pos.kids;
+  ok(rows.every((r) => r.isUnit && r.segs.length), 'Tabellenzeilen sind Umbrucheinheiten mit Rahmen (border-collapse)');
+  eq(rows[0].segs.filter((s) => s.h === 1 && s.w > s.h).length > 0, true, 'Kopfzeile: 1,5px-Linie wird wie Chrome 1 px');
+});
+check('Satz: Zeilenhöhe und Grundlinie wie Chrome (Ober-/Unterlänge gerundet, halber Durchschuss abgerundet)', () => {
+  const lay = layoutDocument(small('<p style="margin:0">Hallo <b>fett</b> <small>klein</small></p><h1 style="margin:0;font:500 22px/1.15 Fraunces,serif">Rechnung</h1><p style="margin:0;line-height:normal">n</p>'));
+  const [a, b, c] = lines(lay);
+  eq([a.h, a.base, b.h, b.base, c.h, c.base], [18, 13, 25.3, 20, 15, 12], 'Inter 12px/1.5, Fraunces 22px/1.15, Inter normal');
+  eq(a.runs.map((r) => r.s), ['Hallo ', 'fett', ' ', 'klein'], 'Läufe je Stil');
+});
+check('Satz: Außenabstände fallen zusammen; margin auto, max-width, Prozent', () => {
+  const lay = layoutDocument(small('<div id="a" style="margin-bottom:20px">a</div><div id="b" style="margin-top:30px">b</div><div id="c"><p id="d" style="margin:25px 0 5px">d</p></div>'
+    + '<div style="margin:12px 0"></div><div id="e" style="margin-top:8px">e</div><div id="f" style="max-width:200px;margin:0 auto">f</div><div id="g" style="width:100px;margin-left:auto">g</div>'
+    + '<div id="h" style="width:50%;padding:0 10%;border-left:4px solid red">h</div>'));
+  const W = lay.page.contentWidth, f = (s) => fragOf(lay, s);
+  eq([f('#a').ay, f('#b').ay, f('#c').ay, f('#d').ay, f('#c').h, f('#e').ay], [0, 48, 91, 91, 18, 121], 'Geschwister 20/30 → 30, Kind 25 tritt aus, leerer Block 12 mit 5 und 8 → 12');
+  eq([f('#f').w, f('#f').ax, f('#g').ax, f('#h').w], [200, (W - 200) / 2, W - 100, W / 2 + 0.2 * W + 4], 'zentriert, rechtsbündig, Prozent');
+});
+check('Satz: Zeilenumbruch (Leerraum, Bindestrich, NBSP, <br>, pre-line, nowrap zu breit, überlange Wörter, text-align)', () => {
+  const lay = layoutDocument(small('<div id="hy" style="width:150px">Mustermann-Beispielhausen-Probe Text</div><div id="nb" style="width:70px">xx aaaa&nbsp;bbbb</div>'
+    + '<div id="br">a<br>b<br><br>c</div><div id="pl" style="white-space:pre-line">eins\nzwei   drei</div>'
+    + '<div id="nw" style="width:100px;white-space:nowrap">eins zwei drei vier fünf</div><div id="lw" style="width:50px">Donaudampfschifffahrtsgesellschaft</div>'
+    + '<div id="ra" style="text-align:right;width:300px">rechts</div><div id="ce" style="text-align:center;width:300px">mitte</div>'));
+  const L = (sel) => frags(fragOf(lay, sel)).filter((g) => g.kind === 'line');
+  eq(L('#hy').map(lineText)[0].endsWith('-'), true, 'Umbruch nach Bindestrich');
+  eq(L('#nb').map(lineText), ['xx', 'aaaa bbbb'], 'geschütztes Leerzeichen trennt nicht');
+  eq(L('#br').map(lineText), ['a', 'b', '', 'c'], '<br> (auch leere Zeile)');
+  eq(L('#pl').map(lineText), ['eins', 'zwei drei'], 'pre-line');
+  const nw = L('#nw'), lw = L('#lw');
+  ok(nw.length >= 2 && nw.every((ln) => ln.runs.every((r) => r.x + r.w <= 100.01)), 'nowrap breiter als der Kasten: lieber umbrochen als über den Rand');
+  ok(lw.length >= 3 && lw.every((ln) => ln.runs.every((r) => r.x + r.w <= 50.01)) && lw.map(lineText).join('') === 'Donaudampfschifffahrtsgesellschaft', 'überlanges Wort mitten im Wort getrennt, kein Zeichen verloren');
+  const ra = L('#ra')[0].runs[0], ce = L('#ce')[0].runs[0];
+  eq([ra.x + ra.w, ce.x * 2 + ce.w], [300, 300], 'rechts- und mittig ausgerichtet');
+});
+check('Satz: Tabellen (Spaltenbreiten aus Inhalt, nowrap, colspan, vertical-align, border-collapse)', () => {
+  const lay = layoutDocument(small('<table id="t" style="width:400px;border-collapse:collapse"><tr><td id="a" style="padding:0">ein recht langer Text, der umbrechen muss, weil er auch bei vierhundert Pixeln Tabellenbreite nicht in eine Zeile passt</td>'
+    + '<td id="b" style="padding:0;white-space:nowrap">12,50 €</td></tr><tr><td colspan="2" id="c" style="padding:0;border-top:2px solid #000">beide Spalten</td></tr>'
+    + '<tr><td id="d" style="vertical-align:middle;padding:0">x<br>y<br>z</td><td id="e" style="vertical-align:bottom;padding:0">u</td></tr></table>'
+    + '<table id="s"><tr><td>kurz</td><td>auch kurz</td></tr></table>'));
+  const f = (s) => fragOf(lay, s);
+  const bw = f('#b').w;
+  eq([f('#t').w, Math.round(bw), f('#a').w + bw, f('#c').w], [400, Math.round(lines(lay).find((ln) => lineText(ln) === '12,50 €').runs[0].w), 400, 400], 'nowrap-Spalte = Inhaltsbreite, Rest für Text, colspan');
+  ok(frags(f('#a')).filter((g) => g.kind === 'line').length >= 2, 'langer Text umbrochen');
+  const ye = lines(lay).find((ln) => lineText(ln) === 'u'), yd = lines(lay).find((ln) => lineText(ln) === 'x');
+  eq([ye.ay + ye.h, yd.ay - f('#d').ay], [f('#e').ay + f('#e').h, 0], 'bottom: unten in der Zeile; die höchste Zelle bestimmt die Zeile');
+  ok(f('#t').kids[0].segs.some((s) => s.h === 2), 'colspan-Zelle: 2px-Kante oben');
+  ok(f('#s').w < 200, 'Tabelle ohne Breite schrumpft auf ihren Inhalt');
+});
+check('Satz: Flex (space-between, gap, Schrumpfen bis min-width, flex:1, Spalte)', () => {
+  const lay = layoutDocument(small('<div id="r" style="display:flex;justify-content:space-between;gap:20px"><div id="r1">links</div><div id="r2">rechts</div></div>'
+    + '<div id="s" style="display:flex;gap:10px;width:300px"><div id="s1" style="min-width:0">sehr langer Text der schrumpfen darf und umbricht wenn nötig</div><div id="s2" style="white-space:nowrap">fest bleibt</div></div>'
+    + '<div id="g" style="display:flex;width:300px"><div id="g1" style="flex:1">a</div><div id="g2" style="flex:2">b</div></div>'
+    + '<div id="c" style="display:flex;flex-direction:column;align-items:flex-start;gap:5px"><div id="c1">eins</div><div id="c2">zwei</div></div>'));
+  const f = (s) => fragOf(lay, s), W = lay.page.contentWidth;
+  eq([f('#r1').ax, f('#r2').ax + f('#r2').w], [0, W], 'space-between');
+  eq([f('#s1').w + 10 + f('#s2').w, f('#s2').ax + f('#s2').w], [300, 300], 'erstes Element schrumpft (min-width:0), nowrap bleibt');
+  eq([f('#g1').w, f('#g2').w], [100, 200], 'flex 1:2');
+  eq([f('#c2').ay - f('#c1').ay, f('#c1').w < 100], [18 + 5, true], 'Spalte mit gap, Breite nach Inhalt');
+});
+check('Satz: Seitenumbruch (Zeilen, Schusterjunge/Hurenkind, Überschrift, erzwungen, <thead> wiederholt, Kästen zusammen)', () => {
+  // A4 mit 10 mm Rand: 1046,93 px Inhalt → 58 Zeilen zu 18 px je Seite
+  const p = (n, t = 'Zeile') => Array.from({ length: n }, (_, i) => `<p style="margin:0">${t} ${i + 1}</p>`).join('');
+  eq(layoutDocument(small(p(120))).pages, 3, '120 Zeilen → 3 Seiten');
+  const w = layoutDocument(small(p(57) + '<p id="w" style="margin:0;width:60px">eins zwei drei vier fünf</p>'));
+  eq(pageOfFrag(w, frags(fragOf(w, '#w')).find((g) => g.kind === 'line')), 2, 'Absatz mit 1 Zeile Platz rutscht ganz auf Seite 2 (orphans)');
+  const h = layoutDocument(small(p(57) + '<h2 id="h" style="margin:0;font-size:12px;line-height:18px">Überschrift</h2>' + p(3, 'Text')));
+  eq(pageOfFrag(h, frags(fragOf(h, '#h')).find((g) => g.kind === 'line')), 2, 'Überschrift nie allein am Seitenende');
+  eq(layoutDocument(small('<p>a</p><p style="break-before:page">b</p><p style="page-break-before:always">c</p>')).pages, 3, 'erzwungener Umbruch');
+  const rows = Array.from({ length: 150 }, (_, i) => `<tr><td>${i + 1}</td></tr>`).join('');
+  const t = layoutDocument(small(`<table><thead><tr><th>Kopf</th></tr></thead><tbody>${rows}</tbody></table>`));
+  ok(t.pages >= 3 && t.repeats.length === t.pages - 1 && t.repeats.every((r, i) => r.p === i + 1), `<thead> auf jeder Folgeseite wiederholt (${t.pages} Seiten, ${t.repeats.length}× wiederholt)`);
+  const k = layoutDocument(small(p(55) + '<div id="k" style="background:#eee;padding:5px">eins<br>zwei<br>drei<br>vier</div>'));
+  eq(pageOfFrag(k, fragOf(k, '#k')), 2, 'hinterlegter Kasten bleibt zusammen');
+  const pdf = htmlToPdf(fixture('rechnung-45pos'));
+  eq(pdf.pages, 3, 'Rechnung mit 45 Positionen: 3 Seiten');
+  const l45 = layoutDocument(fixture('rechnung-45pos'));
+  const first = (pg) => lines(l45).find((ln) => pageOfFrag(l45, ln) === pg && /^\d+$/.test(lineText(ln)));
+  eq([lineText(first(2)), lineText(first(3))], ['19', '43'], 'Seitenanfänge wie Chrome (Position 19 und 43)');
+});
+check('Satz: Fehlerfälle brechen sauber und schnell ab (Zeichen, Bilder, Aufbau, Grenzen, Angaben)', () => {
+  const t0 = process.hrtime.bigint();
+  eq(throwsCode(() => htmlToPdf(small('<p>Danke 🙂</p>')), 'GLYPH_MISSING').codePoint, 0x1F642, 'Emoji');
+  eq(throwsCode(() => htmlToPdf(small('<p>Erika 谢谢</p>')), 'GLYPH_MISSING').codePoint, 0x8C22, 'chinesisch');
+  throwsCode(() => htmlToPdf(small('<p>Logo <img src="logo.png"></p>')), 'UNSUPPORTED');
+  throwsCode(() => htmlToPdf(small('<table><tr><td rowspan="2">a</td></tr></table>')), 'UNSUPPORTED');
+  throwsCode(() => htmlToPdf(small('<svg viewBox="0 0 10 10" width="10" height="10"><text>x</text></svg>')), 'UNSUPPORTED');
+  throwsCode(() => htmlToPdf('x'.repeat(5e6)), 'TOO_LARGE');
+  throwsCode(() => htmlToPdf(small('<div>'.repeat(400) + 'x')), 'TOO_LARGE');
+  throwsCode(() => htmlToPdf(small('<b>x</b>'.repeat(40000))), 'TOO_LARGE');
+  throwsCode(() => htmlToPdf(small('<p style="break-after:page">x</p>'.repeat(80))), 'TOO_LARGE');
+  throwsCode(() => htmlToPdf(small('<p>x</p>'.repeat(200)), { maxPages: 2 }), 'TOO_LARGE');
+  throwsCode(() => htmlToPdf(small('<table><tr><td>' + 'Zeile<br>'.repeat(200) + '</td></tr></table>')), 'LAYOUT');
+  throwsCode(() => htmlToPdf(small('<div style="width:20px;margin-left:-60px">außerhalb</div>')), 'SELF_CHECK');
+  throwsCode(() => htmlToPdf(small('<p>x</p>'), { colour: 'red' }), 'BAD_OPTION');
+  throwsCode(() => htmlToPdf(42), 'BAD_TEXT');
+  throwsCode(() => htmlToPdf(small('<blink>x</blink>'), { strict: true }), 'UNSUPPORTED');
+  const r = htmlToPdf(small('<blink>alter Text</blink>'));
+  ok(r.warnings.some((x) => /unbekanntes Element <blink>/.test(x)) && r.text === 'alter Text', 'unbekanntes Element: gesetzt und gemeldet');
+  const k = htmlToPdf('<table><td>a<tr><p>b</table></div></span><<>>&&#;');
+  ok(k.pages === 1 && k.warnings.length > 0, 'kaputtes HTML: gesetzt, mit Warnungen');
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  ok(ms < 3000, `${ms.toFixed(0)} ms für alle Fehlerfälle`);
+  return `${ms.toFixed(0)} ms`;
+});
+if (!spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error) {
+  check('pdftotext: Zeichen-Bilanz HTML ↔ PDF für alle Testbelege; Fußzeile nur „Seite n von m“ + Titel', () => {
+    const count = (s) => { const m = new Map(); for (const ch of s.normalize('NFC')) if (!/[\s­​]/u.test(ch)) m.set(ch, (m.get(ch) || 0) + 1); return m; };
+    const diff = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter((k) => (a.get(k) || 0) !== (b.get(k) || 0));
+    const text = (buf) => { const r = spawnSync('pdftotext', ['-raw', '-enc', 'UTF-8', '-', '-'], { input: buf, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); ok(r.status === 0 && !r.stderr.trim(), `pdftotext: ${r.stderr}`); return r.stdout; };
+    let n = 0;
+    for (const name of Object.keys(SEITEN)) {
+      const html = fixture(name), want = count(visibleText(styleTree(html).root, { transform: true }));
+      const got = count(text(htmlToPdf(html, { pageFooter: false }).buffer));
+      const d = diff(want, got);
+      ok(!d.length, `${name}: Zeichen ${d.slice(0, 5).map((c) => `„${c}“ ${want.get(c) || 0}/${got.get(c) || 0}`).join(', ')}`);
+      n += [...want.values()].reduce((a, b) => a + b, 0);
+    }
+    const r = htmlToPdf(fixture('rechnung-45pos')), title = styleTree(fixture('rechnung-45pos')).title;
+    const full = text(r.buffer), extra = count(text(htmlToPdf(fixture('rechnung-45pos'), { pageFooter: false }).buffer));
+    for (let i = 1; i <= 3; i++) ok(full.includes(`Seite ${i} von 3`) && full.split(title).length - 1 >= 3, `Fußzeile Seite ${i}`);
+    const plus = count(full);
+    for (const [c, k] of count([1, 2, 3].map((i) => `${title}Seite ${i} von 3`).join(''))) plus.set(c, (plus.get(c) || 0) - k);
+    ok(!diff(extra, plus).length, `Fußzeile fügt nur Seitenzahl und Titel hinzu: ${diff(extra, plus).join('')}`);
+    return `${n} Zeichen in ${Object.keys(SEITEN).length} Belegen`;
+  });
+} else console.log('—       pdftotext fehlt: Prüfung der Zeichen-Bilanz über poppler übersprungen');
 
 console.log(`\n${total - failed}/${total} Prüfungen bestanden`);
 process.exit(failed ? 1 : 0);
