@@ -2030,6 +2030,35 @@ function stornoBetraege(order) {
   const gutschrift = r?.status === 'erledigt' && r.art !== 'nachdruck' && r.gutschriftNo ? euro(r.betrag) : 0;
   return { entgelt, gutschrift, betrag: Math.max(0, Math.round((entgelt - gutschrift) * 100) / 100), guth };
 }
+/**
+ * Darf eine stornierte Bestellung wieder aufleben („Storno aufheben“)? → null oder Meldung (409). Nicht mehr, sobald eine
+ * Stornorechnung existiert oder die Rechnung schon vollständig gutgeschrieben ist (die Rechnung ist aufgehoben — ein neuer Vorgang
+ * braucht eine neue Bestellung), und nicht, wenn ihr Guthaben inzwischen anderweitig eingelöst ist (sonst wäre es über seinen Wert
+ * eingelöst). Ohne Rechnung (nie abgeschlossene Kasse) bleibt das Aufheben als Korrekturweg erlaubt.
+ */
+function stornoAufhebenSperre(order) {
+  if (order.storno?.nr) return `Zu dieser Bestellung gibt es die Stornorechnung ${order.storno.nr} – die Rechnung ${order.invoiceNo} ist damit aufgehoben, das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
+  if (order.invoiceNo && stornoBetraege(order).betrag <= 0) return `Die Rechnung ${order.invoiceNo} ist vollständig gutgeschrieben – das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
+  const gc = order.coupon ? couponByCode(order.coupon.code) : null;
+  if (gc && isGuthaben(gc)) {
+    const rest = couponRest(gc, { ohne: order.orderId });
+    if (rest + 0.005 < euro(order.coupon.off)) return `Das Guthaben „${gc.code}“ dieser Bestellung ist inzwischen anderweitig eingelöst (frei: ${money(rest)}) – das Storno lässt sich nicht zurücknehmen. Bitte eine neue Bestellung anlegen.`;
+  }
+  return null;
+}
+/**
+ * Höchstbetrag einer Gutschrift/Erstattung (Reklamation): bezahlter Betrag minus frühere Gutschriften. Bezahlt ist bei
+ * „bezahlt“ der Rechnungsbetrag samt Guthaben-Anteil (Guthaben ist Geld der Kundschaft), sonst nur der Guthaben-Anteil;
+ * per PayPal lässt sich höchstens zurückgeben, was per PayPal gezahlt wurde. Ohne Rechnung oder nach Storno: 0.
+ */
+function reklaMax(order, art) {
+  if (!order?.invoiceNo || order.status === 'storniert' || order.storno?.nr) return 0;
+  const { entgelt, gutschrift, guth } = stornoBetraege(order);
+  const bezahlt = order.paymentStatus === 'bezahlt';
+  let max = bezahlt ? entgelt : (guth?.off || 0);
+  if (art === 'paypal') max = Math.min(max, bezahlt ? euro(order.total) : 0);
+  return Math.max(0, Math.round((max - gutschrift) * 100) / 100);
+}
 function stornoHTML(order) {
   const co = settings.company || {};
   // Steuer wie in der aufgehobenen Rechnung (order.steuer); die berichtigte USt = USt der Rechnung − USt einer früheren Gutschrift,
@@ -3217,6 +3246,15 @@ const server = http.createServer(async (req, res) => {
       try {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
+        // Storno aufheben nur ohne Stornorechnung und mit noch verfügbarem Guthaben (stornoAufhebenSperre)
+        if (status !== undefined && status !== 'storniert' && order.status === 'storniert') {
+          const sperre = stornoAufhebenSperre(order);
+          if (sperre) return send(res, 409, { ok: false, code: 'storno', error: sperre });
+        }
+        // Status „Bezahlt“ mit offener Zahlung wäre widersprüchlich (Druckwarteschlange, Rechnung, Mails) — erst den Status ändern
+        if (paymentStatus === 'offen' && (status ?? order.status) === 'bezahlt') {
+          return send(res, 400, { ok: false, error: 'Status „Bezahlt“ und Zahlung „offen“ passen nicht zusammen – bitte die Bestellung dafür zurück auf „Neu“ setzen.' });
+        }
         const now = new Date().toISOString();
         // „Zahlung verbuchen“ schickt paymentStatus UND status 'bezahlt' — dann nur ein Historieneintrag (über setOrderStatus)
         const paidViaStatus = status === 'bezahlt' && order.status !== 'bezahlt';
@@ -3319,15 +3357,19 @@ const server = http.createServer(async (req, res) => {
             const art = String(body.art || '');
             if (!REKLA_ART[art]) return bad('Unbekannte Art (nachdruck | gutschein | ueberweisung | paypal)');
             if (!grund) return bad('Bitte einen Grund angeben');
+            // Nach einem Storno ist die Rechnung aufgehoben (Stornorechnung) — weder Nachdruck noch Geld für eine stornierte Bestellung
+            if (order.status === 'storniert' || order.storno?.nr) return bad('Die Bestellung ist storniert – eine Reklamation ist nicht mehr möglich (die Stornorechnung hebt die Rechnung schon auf).');
             if (art === 'paypal' && !(order.payment === 'paypal' && order.paypalOrderId)) return bad('Erstattung per PayPal geht nur bei Bestellungen, die per PayPal bezahlt wurden');
-            const total = euro(order.total);
-            let betrag = total;
-            if (body.betrag !== undefined && body.betrag !== null && body.betrag !== '') {
+            // Gutschrift/Erstattung nur zu einer Rechnung und höchstens bis zum bezahlten Betrag (inkl. Guthaben-Anteil) minus frühere Gutschriften
+            if (art !== 'nachdruck' && !order.invoiceNo) return bad('Gutschrift/Erstattung geht nur zu einer ausgestellten Rechnung – diese Kasse wurde nie abgeschlossen. Bitte stattdessen stornieren.');
+            const max = art === 'nachdruck' ? 0 : reklaMax(order, art);
+            if (art !== 'nachdruck' && max <= 0) return bad('Für diese Bestellung ist nichts bezahlt, das sich erstatten ließe – eine Gutschrift/Erstattung gibt es erst nach Zahlungseingang.');
+            let betrag = art === 'nachdruck' ? euro(order.total) : max;   // Nachdruck: Betrag nur informativ (wie bisher die Bestellsumme)
+            if (art !== 'nachdruck' && body.betrag !== undefined && body.betrag !== null && body.betrag !== '') {
               const n = Number(body.betrag);
-              if (!Number.isFinite(n) || n < 0 || n > total + 1e-9) return bad(`Betrag muss zwischen 0 und ${money(total)} (Bestellsumme) liegen`);
+              if (!Number.isFinite(n) || n < 0.01 || n > max + 1e-9) return bad(`Betrag muss zwischen 0,01 € und ${money(max)} (bezahlter Betrag${stornoBetraege(order).gutschrift ? ' abzüglich früherer Gutschriften' : ''}) liegen`);
               betrag = Math.round(n * 100) / 100;
             }
-            if (art !== 'nachdruck' && betrag <= 0) return bad('Für eine Gutschrift/Erstattung muss der Betrag größer als 0 sein');
             const ruecksendung = !!body.ruecksendung;
             order.reklamation = { status: ruecksendung ? 'ruecksendung' : 'offen', art, grund, betrag, ruecksendung, createdAt: now, updatedAt: now };
             if (art === 'ueberweisung' && iban) order.reklamation.iban = iban;
@@ -3357,6 +3399,12 @@ const server = http.createServer(async (req, res) => {
             if (!REKLA_OPEN.includes(r.status)) return bad(`Erledigen ist im Status „${REKLA_STATUS[r.status] || r.status}“ nicht möglich`);
             if (r.art === 'ueberweisung' && iban) r.iban = iban;
             if (r.art === 'ueberweisung' && !r.iban) return bad('Für die Erstattung per Überweisung fehlt die IBAN des Kunden');
+            // Inzwischen storniert, nie abgeschlossen oder Zahlung zurückgesetzt: keine Gutschrift über den bezahlten Betrag hinaus
+            if (r.art !== 'nachdruck') {
+              if (order.status === 'storniert' || order.storno?.nr) return bad('Die Bestellung wurde inzwischen storniert – die Stornorechnung hebt die Rechnung schon auf. Bitte die Reklamation ablehnen oder zurücknehmen.');
+              if (!order.invoiceNo) return bad('Gutschrift/Erstattung geht nur zu einer ausgestellten Rechnung – bitte die Reklamation zurücknehmen und die Bestellung stornieren.');
+              if (!r.refundId && euro(r.betrag) > reklaMax(order, r.art) + 1e-9) return bad(`Der Betrag ${money(euro(r.betrag))} ist höher als der bezahlte Betrag (${money(reklaMax(order, r.art))}) – bitte die Reklamation zurücknehmen und neu anlegen.`);
+            }
             if (note) r.note = note;
             if (r.art === 'paypal' && !r.refundId) {
               try {
@@ -3481,8 +3529,12 @@ const server = http.createServer(async (req, res) => {
         if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
         return `"${s.replace(/"/g, '""')}"`;
       };
-      const rows = [['Bestellung', 'Datum', 'Status', 'Zahlart', 'Rechnung', 'Name', 'E-Mail', 'Straße', 'PLZ', 'Ort', 'Positionen', 'Gutschein', 'Aktion', 'Summe', 'Tracking', 'Versender', 'Bezahlt am', 'Versendet am', 'Reklamation'].join(';')];
+      // „Summe“ = zu zahlender Betrag (wie bisher, damit vorhandene Importe nicht verrutschen); hinten angehängt: Rechnungsbetrag
+      // (Gesamtbetrag der Rechnung, Guthaben zählt als Zahlung), davon Guthaben, Gutschriftbetrag (erledigte Erstattung)
+      const eur = (v) => euro(v).toFixed(2).replace('.', ',');
+      const rows = [['Bestellung', 'Datum', 'Status', 'Zahlart', 'Rechnung', 'Name', 'E-Mail', 'Straße', 'PLZ', 'Ort', 'Positionen', 'Gutschein', 'Aktion', 'Summe', 'Tracking', 'Versender', 'Bezahlt am', 'Versendet am', 'Reklamation', 'Rechnungsbetrag', 'davon Guthaben', 'Gutschriftbetrag'].join(';')];
       for (const o of orders) {
+        const sb = stornoBetraege(o);
         rows.push([
           csvEsc(o.orderId), csvEsc(dtCsv(o.createdAt)), csvEsc(o.status || 'neu'),
           csvEsc(o.payment || ''), csvEsc(o.invoiceNo ? `${o.invoiceNo}${o.storno?.nr ? ` (storniert: ${o.storno.nr})` : ''}` : ''), csvEsc(o.customer?.name || o.name || ''),
@@ -3497,6 +3549,7 @@ const server = http.createServer(async (req, res) => {
           csvEsc(dtCsv(o.paidAt)),
           csvEsc(dtCsv(o.shippedAt)),
           csvEsc(o.reklamation ? `${REKLA_STATUS[o.reklamation.status] || o.reklamation.status} / ${REKLA_ART[o.reklamation.art] || o.reklamation.art} / ${euro(o.reklamation.betrag).toFixed(2).replace('.', ',')}` : ''),
+          csvEsc(o.invoiceNo ? eur(sb.entgelt) : ''), csvEsc(sb.guth ? eur(sb.guth.off) : ''), csvEsc(refundAmount(o) ? eur(refundAmount(o)) : ''),
         ].join(';'));
       }
       res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="formsam-bestellungen.csv"' });
@@ -3513,6 +3566,8 @@ const server = http.createServer(async (req, res) => {
       try {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
+        const sperre = status !== 'storniert' && order.status === 'storniert' ? stornoAufhebenSperre(order) : null;
+        if (sperre) return send(res, 409, { ok: false, code: 'storno', error: sperre });
         setOrderStatus(order, status, null, 'admin');
         if (order.status === 'storniert') await stornoBeleg(order, { nachholen: prevStatus === 'storniert' });
         await writeOrder(order);
