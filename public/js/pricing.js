@@ -301,8 +301,9 @@ function partsWith(item, pr, farbe) {
   const p = pr?.products?.[item?.product];
   if (!p) return null;
   const c = item.config || {};
-  // Gravur zählt nur mit sichtbaren Zeichen — Steuer-/Formatzeichen lässt die Druckdatei weg (wie gravurSichtbar() im Server)
-  const hasText = !!String(c.text || '').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '').trim() && gravurAllowed(c, item?.product);
+  // Gravur zählt nur mit sichtbaren Zeichen — Steuer-/Formatzeichen lässt die Druckdatei weg (wie gravurSichtbar() im Server);
+  // das weiche Trennzeichen (U+00AD) graviert sie dagegen als Strich
+  const hasText = !!String(c.text || '').replace(/\u00ad/g, '-').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '').trim() && gravurAllowed(c, item?.product);
   // jeder Bestandteil auf Cent wie im Server (euro()) — sonst rechneten Browser und Server bei Preisen mit 3 Nachkommastellen verschieden
   return {
     grund: eu(p.single),

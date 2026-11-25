@@ -1226,6 +1226,7 @@ const PW_WECHSEL_MAX = 5;       // Passwortwechsel je Konto und Stunde (jeder sc
 const REG_IP_MAX = 5;           // Registrierungen je IP und Stunde
 const REG_MAIL_MAX = 3;         // Konten (= Willkommensmails) je Empfängeradresse und Tag
 const REG_ALLE_MAX = 30;        // Willkommensmails insgesamt je Stunde (darüber entsteht das Konto ohne Mail)
+const VERIFY_ALLE_MAX = 30;     // „Link erneut senden“ insgesamt je Stunde (darüber 429)
 const WIDERRUF_MAIL_MAX = 3;    // Eingangsbestätigungen je Empfänger und Tag
 const WIDERRUF_ALLE_MAX = 30;   // Eingangsbestätigungen insgesamt je Stunde (beides nur für nicht zugeordnete Widerrufe)
 const WIDERRUF_BESTELLUNG_MAX = 5;   // Eingangsbestätigungen zugeordneter Widerrufe je Bestellung und Tag
@@ -1797,6 +1798,9 @@ hooks.orderCompleted = async (order) => {
 hooks.statusChanged = async (order, prevStatus, { notify = true } = {}) => {
   const status = order.status;
   if (!notify || !mailSettings(settings.mail).autoStatusMails || !statusMailAllowed(status)) return;
+  // Storno einer nie abgeschlossenen, unbezahlten Kasse: Die Kundschaft hat keine Bestätigung bekommen und schuldet nichts — eine
+  // Stornomail („Falls du bereits überwiesen hast …“) verwirrte nur. Bezahlt (PayPal) geht sie weiter raus.
+  if (status === 'storniert' && !order.completedAt && !order.invoiceNo && order.paymentStatus !== 'bezahlt') return;
   if (order.mailsSent?.[status]) return;
   const cust = customerAddress(order);
   if (!isEmail(cust.email)) return;
@@ -1866,9 +1870,11 @@ function discountFor(product, qty) {
 /**
  * Gravurtext ohne Steuer- und Formatzeichen (Cc: C0/C1, Cf: Bidi-Marken, Null-Breiten-Zeichen …, dazu U+2028/2029): Die
  * Druckdatei kennt für sie keine Glyphe und lässt sie weg (textrelief.js) — Preis (priceItem, wie pricing.js), Bestellung und
- * Belege (positionSauber) sehen so genau den gedruckten Text; nur unsichtbare Zeichen = keine Gravur, kein Aufpreis
+ * Belege (positionSauber) sehen so genau den gedruckten Text; nur unsichtbare Zeichen = keine Gravur, kein Aufpreis.
+ * Ausnahme weiches Trennzeichen (U+00AD, formal Cf): Die Gravurschriften (und die Ersatzschrift) haben dafür einen sichtbaren
+ * Strich, die Druckdatei graviert ihn — Bestellung, Beleg und Preis tragen ihn deshalb als „-“ (pricing.js gleich).
  */
-const gravurSichtbar = (t) => String(t ?? '').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '');
+const gravurSichtbar = (t) => String(t ?? '').replace(/\u00ad/g, '-').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '');
 /** Gravur-Regel (Spiegel von public/js/pricing.js und geometry.js): Die Geometrie schaltet die Gravur ab,
  * sobald die WIRKSAME Mustertiefe über 2,5 mm (Vase) bzw. 2,0 mm (Eierbecher) liegt — dann darf
  * auch kein Gravur-Aufpreis berechnet werden. Wirksam = Wunschtiefe, begrenzt durch die
@@ -1995,7 +2001,7 @@ function computeTotals(items, couponCode, { email = null } = {}) {
     else if (c && !isGuthaben(c) && subtotal < (c.minOrder || 0)) couponError = `Gutschein „${c.code}“ gilt erst ab einem Bestellwert von ${money(c.minOrder)}.`;
     else if (c) {
       // Guthaben-Gutschein (Gutschrift): höchstens der noch offene Restwert
-      const rest = isGuthaben(c) ? couponRest(c) : null;
+      const rest = isGuthaben(c) ? couponRest(c, { email }) : null;
       if (rest !== null && rest <= 0) {
         couponError = `Gutschein „${c.code}“ ist bereits vollständig eingelöst.`;
       } else if (aktion && !c.mitAktion) {
@@ -2436,7 +2442,10 @@ const kasseNieAbgeschlossen = (o) => !o.completedAt && !o.invoiceNo && (o.status
 function kasseOffenSperre(order, status, paymentStatus) {
   if (!kasseNieAbgeschlossen(order)) return '';
   if (paymentStatus !== 'bezahlt' && (status === undefined || status === 'neu' || status === 'storniert')) return '';
-  return 'Die Kasse dieser Bestellung wurde nie abgeschlossen (keine Rechnung, keine Bestätigung an die Kundschaft) – sie lässt sich nicht als bezahlt buchen oder weiterbearbeiten. Bitte stornieren; für einen echten Auftrag bestellt die Kundschaft neu.';
+  return 'Die Kasse dieser Bestellung wurde nie abgeschlossen (keine Rechnung, keine Bestätigung an die Kundschaft) – sie lässt sich nicht als bezahlt buchen oder weiterbearbeiten. ' +
+    (order.paymentStatus === 'bezahlt'
+      ? 'Sie ist schon bezahlt (PayPal): bitte stornieren und die Zahlung erstatten; für einen echten Auftrag bestellt die Kundschaft neu.'
+      : 'Ohne Zahlung ist nichts zu tun: Der Shop löscht sie nach 14 Tagen selbst (Druckdateien nach 48 Stunden). Für einen echten Auftrag bestellt die Kundschaft neu.');
 }
 // ---------------------------------------------------------------------------
 // Admin aus veralteten Tabs (Handy und Rechner gleichzeitig): Jede Bestelländerung des Admins schickt den Stand mit, auf dem sie
@@ -2543,12 +2552,18 @@ const couponByCode = (code) => (settings.coupons || []).find((x) => String(x?.co
 /**
  * Restwert eines Guthaben-Gutscheins: Wert − Summe der zählenden Einlösungen (fest oder jünger als das Reservierungsfenster),
  * auf Cent, nie negativ. ohne = orderId, deren eigene Einlösung nicht mitzählt (Nachprüfung beim Abschluss).
+ * email = Kundin der Kasse (Quote, Checkout, Abschluss): Ihre eigenen, nie abgeschlossenen Kassen (gleiche Adresse, nicht fest,
+ * keine PayPal-Zahlung) zählen nicht — ein Abschluss ohne Antwort mit anschließender Änderung oder eine abgebrochene Kasse sperrte
+ * ihr Guthaben sonst 2 Stunden. Doppelt einlösen kann sie es trotzdem nicht: Der Abschluss (einloesungGesperrt) zählt feste
+ * Einlösungen, Kassen anderer Kundinnen und laufende PayPal-Zahlungen (auch eigene, die werden ohne Abschlussprüfung fest) und
+ * vermerkt die eigene im selben Schritt als fest — die zweite eigene Kasse sieht sie dann. email = null (Admin, Storno aufheben): alle.
  */
-function couponRest(c, { ohne = null } = {}) {
-  const now = Date.now();
+function couponRest(c, { ohne = null, email = null } = {}) {
+  const now = Date.now(), mail = String(email || '').trim().toLowerCase();
   let used = 0;
   for (const [id, e] of couponUse.get(String(c?.code || '').trim().toUpperCase()) || []) {
-    if (id !== ohne && (e.fest || now - e.at < GUTHABEN_RESERVIERUNG_MS)) used += e.off;
+    const eigeneOffene = !!mail && e.email === mail && !id.startsWith('paypal:');
+    if (id !== ohne && (e.fest || (now - e.at < GUTHABEN_RESERVIERUNG_MS && !eigeneOffene))) used += e.off;
   }
   return Math.max(0, Math.round(((Number(c?.value) || 0) - used) * 100) / 100);
 }
@@ -2582,7 +2597,7 @@ function einloesungGesperrt(order) {
   const gc = couponByCode(order.coupon.code);
   if (!gc) return null;
   if (isGuthaben(gc)) {
-    if (couponRest(gc, { ohne: order.orderId }) + 0.005 >= euro(order.coupon.off)) return null;
+    if (couponRest(gc, { ohne: order.orderId, email: order.customer?.email }) + 0.005 >= euro(order.coupon.off)) return null;
     return { code: 'guthaben', note: `Kasse abgebrochen: Guthaben „${gc.code}“ wurde inzwischen anderweitig eingelöst`,
       error: `Dein Guthaben „${gc.code}“ wurde inzwischen eingelöst – bitte starte die Kasse neu.` };
   }
@@ -4191,7 +4206,7 @@ async function handleCheckout(req, res) {
   // Guthaben-Gutschein: zwei gleichzeitige Bestellungen dürfen den Restwert nicht doppelt ausgeben — Prüfung und
   // Reservierung passieren ohne await dazwischen (PayPal ist schon bezahlt → dann nicht mehr abbrechen)
   const gc = totals.coupon ? couponByCode(totals.coupon.code) : null;
-  if (gc && isGuthaben(gc) && !paypalCap && couponRest(gc) + 0.005 < totals.coupon.off) {
+  if (gc && isGuthaben(gc) && !paypalCap && couponRest(gc, { email: customer.email }) + 0.005 < totals.coupon.off) {
     return send(res, 400, { ok: false, code: 'gutschein', error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst – bitte prüf den Betrag in der Kasse.` });
   }
   if (!paypalCap) forgotLimited(kasseKey, KASSE_IP_MAX, STUNDE_MS);
@@ -4643,6 +4658,12 @@ const server = http.createServer(async (req, res) => {
       if (u.emailVerifiedAt) return send(res, 200, { ok: true, schon: true });
       if (forgotLimited(`verify-ip:${clientIp(req)}`, FORGOT_IP_MAX) || forgotLimited(`verify-mail:${u.email}`)) {
         return send(res, 429, { ok: false, error: 'Zu viele Anfragen – bitte in 15 Minuten noch einmal versuchen.' });
+      }
+      // Gesamtgrenze je Stunde (wie die Willkommensmails der Registrierung): Sonst wüchse die Mailmenge mit der Zahl der Konten,
+      // die jemand über viele Adressen anlegt (je Konto 3 Links je 15 Minuten)
+      if (forgotLimited('verify-alle', VERIFY_ALLE_MAX, STUNDE_MS)) {
+        if (!forgotLimited('verify-alle-warn', 1, STUNDE_MS)) console.warn(`⚠️  Bestätigungslinks: ${VERIFY_ALLE_MAX} in der letzten Stunde – weitere erst später`);
+        return send(res, 429, { ok: false, error: 'Gerade kann ich keinen Bestätigungslink senden – bitte versuch es später noch einmal.' });
       }
       const token = newVerifyToken(u);
       await saveUsers();
@@ -5325,11 +5346,14 @@ const server = http.createServer(async (req, res) => {
         prevStatus = order.status;
         wasPrinted = order.status === 'gedruckt';   // Nachdruck: aus „gedruckt“ zurück nach „im Druck“
         const allDone = () => order.lines.every((l) => l.print?.status === 'fertig');
-        if (status === 'druckt' && (orderIsPaid(order) || wasPrinted)) {
+        // Nie abgeschlossene Kasse (z. B. per PayPal bezahlt, Upload abgebrochen): keine Rechnung, kein Vertrag — der Druckstatus der
+        // Position wird vermerkt, der Bestellstatus bleibt (kein „Im Druck“/„Gedruckt“, keine Kundenmail; wie order-update → 409)
+        const automatik = !kasseNieAbgeschlossen(order);
+        if (automatik && status === 'druckt' && (orderIsPaid(order) || wasPrinted)) {
           setOrderStatus(order, 'im-druck', wasPrinted ? 'Automatisch: Nachdruck gestartet' : 'Automatisch: erster Druck gestartet', 'system');
-        } else if (status === 'fertig' && allDone() && (orderIsPaid(order) || order.status === 'im-druck')) {
+        } else if (automatik && status === 'fertig' && allDone() && (orderIsPaid(order) || order.status === 'im-druck')) {
           setOrderStatus(order, 'gedruckt', 'Automatisch: alle Positionen gedruckt', 'system');
-        } else if (status === 'offen' && wasPrinted && !allDone()) {
+        } else if (automatik && status === 'offen' && wasPrinted && !allDone()) {
           setOrderStatus(order, 'im-druck', 'Automatisch: Position zurückgesetzt (Nachdruck)', 'system');
         }
         await writeOrder(order);

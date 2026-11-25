@@ -25,7 +25,9 @@ export const apiFehler = (status, text) => Object.assign(new Error(text), { stat
 export async function loadDesign(code) {
   const c = normalizeCode(code);
   if (c.length < 4) throw apiFehler(400, 'Bitte einen Design-Code eingeben (z. B. K7P-3QX).');
-  const res = await fetch(`/api/design/${encodeURIComponent(c)}`);
+  let res;
+  // Netz weg: deutscher Satz statt „Failed to fetch“ (Code-Dialog, Link, „Original-Design laden“) — status 0 = vorübergehend
+  try { res = await fetch(`/api/design/${encodeURIComponent(c)}`); } catch { throw apiFehler(0, 'Der Design-Code ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.'); }
   const r = await res.json().catch(() => null);
   if (!r?.ok) throw apiFehler(res.status, r?.error || (res.status === 404 ? 'Diesen Design-Code gibt es nicht – bitte prüfen.' : 'Der Design-Code ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.'));
   return { code: r.code, config: r.config };
@@ -105,8 +107,11 @@ async function loadFromInput() {
   try {
     const raw = normalizeCode($('#dc-input').value);
     if (/^L[A-Z0-9]{6}$/.test(raw) && onListCode) { // Listen-Code → Liste öffnen
+      // Dialog erst nach dem Laden schließen — sonst stünde ein Fehler (Liste unbekannt, kein Netz) im geschlossenen Dialog
+      try { await onListCode(raw); } catch (e) {
+        throw apiFehler(e?.status ?? 0, e?.status ? e.message : 'Die Liste ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.');
+      }
       $('#code-modal').close();
-      await onListCode(raw);
     } else {
       const { code, config } = await loadDesign(raw);
       await applyConfig(config, code);

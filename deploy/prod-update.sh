@@ -33,10 +33,13 @@ laeuft() {
   done
   return 1
 }
-# Syntax aller Server-Module prüfen, bevor der laufende Dienst angehalten wird
+# Syntax aller Server-Module prüfen, bevor der laufende Dienst angehalten wird (pricing.js lädt der Server mit — gemeinsame Preislogik)
 syntax_ok() {
   local f
-  for f in server.js lib/*.js; do als_formsam node --check "$f" || { echo "   ↳ $f"; return 1; }; done
+  for f in server.js lib/*.js public/js/pricing.js; do
+    [ -f "$f" ] || continue
+    als_formsam node --check "$f" || { echo "   ↳ $f"; return 1; }
+  done
 }
 neustart_auf() { als_formsam git reset --quiet --hard "$1"; systemctl restart formsam; }
 

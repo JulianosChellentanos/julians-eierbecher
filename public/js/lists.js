@@ -37,10 +37,15 @@ let view = 'home';
 
 // --- API --------------------------------------------------------------------
 async function api(path, method = 'GET', body) {
-  const r = await fetch(path, {
-    method, headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch(path, {
+      method, headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {   // Netz weg: deutscher Satz statt „Failed to fetch“ (status 0 = vorübergehend)
+    throw apiFehler(0, 'Keine Verbindung zum Shop – bitte versuch es gleich noch einmal.');
+  }
   const j = await r.json().catch(() => ({ ok: false, error: 'Der Server antwortet gerade nicht – bitte versuch es gleich noch einmal.' }));
   if (!j.ok) throw apiFehler(r.status, j.error || 'Fehler');
   return j;

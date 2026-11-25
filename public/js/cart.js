@@ -310,6 +310,9 @@ const ausKonto = {};
 // die Zahlung schon der ersten zugeordnet) — { sig, payment, body (gesendete Kassendaten), orderId (null: PayPal bezahlt, Anlegen
 // ohne Antwort), accessKey, paypalOrderId, total, hochgeladen, abschlussUnklar (Abschluss ohne Antwort), abgeschlossen }
 let offeneKasse = null;
+// Laufende Kassen (submitOrder): ein weiterer Klick — z. B. ein Doppelklick auf den PayPal-Knopf beim Fortsetzen — startet keinen
+// zweiten Checkout mit derselben Zahlung (der meldete sonst kurz „bereits einer Bestellung zugeordnet“, während der erste noch hochlädt)
+let kasseLaeuft = 0;
 
 /** Kasse: Versandfreigrenze am Warenwert VOR Gutschein/Guthaben, danach der Abzug laut Server (pricing.js summen, wie computeTotals) */
 function checkoutTotals() {
@@ -521,6 +524,7 @@ function setupPayPal() {
       // wäre bezahlt, aber die Bestellung könnte nicht angelegt werden. Ist eine bezahlte Bestellung noch nicht abgeschlossen
       // (Upload fehlgeschlagen), setzt der Klick dort fort, statt ein zweites Mal zu kassieren.
       onClick: async (data, actions) => {
+        if (kasseLaeuft) return actions.reject();   // die Kasse läuft schon (Upload/Abschluss) — nichts Neues beginnen
         kassenMeldung('');
         if (offeneKasse?.paypalOrderId) { submitOrder('paypal', offeneKasse.paypalOrderId); return actions.reject(); }
         // Überweisungs-Bestellung von eben, deren Abschluss ohne Antwort blieb: ist sie schon da, gilt sie (keine Zahlung per PayPal)
@@ -621,6 +625,9 @@ async function bestellen() {
 }
 
 async function submitOrder(payment, paypalOrderId = null) {
+  // Nur eine Kasse zur Zeit — außer eine neue PayPal-Zahlung kommt herein (onApprove): die darf nie verloren gehen
+  if (kasseLaeuft && (!paypalOrderId || paypalOrderId === offeneKasse?.paypalOrderId)) return;
+  kasseLaeuft++;
   const btn = $('#co-submit');
   const prog = $('#co-progress');
   btn.disabled = true;
@@ -662,11 +669,15 @@ async function submitOrder(payment, paypalOrderId = null) {
         body: JSON.stringify(body),
       });
       if (!r.ok) {
-        // PayPal: das Geld ist schon eingezogen — ohne Antwort fragt der nächste Klick mit derselben Zahlung noch einmal (eine dabei
-        // schon angelegte Bestellung gibt der Server zurück); nie beginnt eine zweite Zahlung
-        if (payment === 'paypal' && body.paypalOrderId && (r.netz || r.kaputt)) {
+        // PayPal: das Geld ist schon eingezogen — ohne Antwort oder bei einer vorübergehenden Ablehnung (Wartung 503, Serverfehler,
+        // 429; nicht erstattet = ohne r.bezahlt) fragt der nächste Klick mit derselben Zahlung noch einmal (eine dabei schon angelegte
+        // Bestellung gibt der Server zurück); nie beginnt eine zweite Zahlung und nie entsteht daneben eine Vorkasse-Bestellung
+        const voruebergehend = r.httpStatus >= 500 || r.httpStatus === 429;
+        if (payment === 'paypal' && body.paypalOrderId && !r.bezahlt && (r.netz || r.kaputt || voruebergehend)) {
           merken(null);
-          return kassenMeldung(paypalOhneBestellung(r.netz ? 'aber danach ist die Verbindung zum Shop abgebrochen' : 'aber der Shop antwortet gerade nicht', r.kaputt));
+          const grund = r.netz ? 'aber danach ist die Verbindung zum Shop abgebrochen' : r.kaputt ? 'aber der Shop antwortet gerade nicht'
+            : r.httpStatus === 503 ? 'aber der Shop wird gerade gewartet' : 'aber der Shop konnte deine Bestellung gerade nicht anlegen';
+          return kassenMeldung(paypalOhneBestellung(grund, r.kaputt || voruebergehend));
         }
         if (r.bezahlt) offeneKasse = null;   // nach der Zahlung abgelehnt: der Shop erstattet sie (steht in der Meldung des Servers)
         // Ohne Antwort ist keine Bestellung entstanden, die gilt: ohne Abschluss gibt es weder Rechnung noch Vertrag
@@ -711,6 +722,12 @@ async function submitOrder(payment, paypalOrderId = null) {
         if (offeneKasse) offeneKasse.abschlussUnklar = true;
         return kassenMeldung(abschlussOffen(done, payment));
       }
+      // Vorübergehend abgelehnt (Wartung, Serverfehler, zu viele Anfragen): dieselbe Bestellung bleibt offen, der nächste Klick setzt
+      // dort fort (bei PayPal mit derselben Zahlung). Nach einem Serverfehler kann der Abschluss trotzdem durch sein → erst nachfragen
+      if (done.httpStatus >= 500 || done.httpStatus === 429) {
+        if (offeneKasse) offeneKasse.abschlussUnklar = done.httpStatus >= 500;
+        return kassenMeldung(nichtAbgeschlossen(done.error || 'der Shop antwortet gerade nicht', payment));
+      }
       if (offeneKasse) offeneKasse.abschlussUnklar = false;   // der Shop hat geantwortet: nicht abgeschlossen
       // Druckdatei fehlt/unvollständig: dieselbe Bestellung, Dateien beim nächsten Versuch noch einmal hochladen
       if (done.code === 'dateien' && offeneKasse) { offeneKasse.hochgeladen = []; return kassenMeldung(nichtAbgeschlossen(done.error, payment)); }
@@ -723,7 +740,10 @@ async function submitOrder(payment, paypalOrderId = null) {
     const gesamt = offeneKasse?.total ?? body.expectedTotal;
     offeneKasse = null;
 
-    cart = [];
+    // Warenkorb leeren — nach einer fortgesetzten, inzwischen geänderten Kasse nur um die bestellten Positionen kürzen (was nicht in
+    // der Bestellung ist, z. B. eine danach dazugelegte Vase, bleibt liegen)
+    cart = geaendert ? ohneBestellte(cart, body.items) : [];
+    const restImKorb = cart.length > 0;
     coupon = null;
     if ($('#co-beschaffenheit')) $('#co-beschaffenheit').checked = false;   // gilt je Bestellung
     $('#co-coupon').value = '';
@@ -746,7 +766,8 @@ async function submitOrder(payment, paypalOrderId = null) {
       : nichtsZuZahlen
         ? `Es ist nichts zu zahlen – dein Gutschein bzw. Guthaben deckt den Gesamtbetrag. Ich starte jetzt den Druck. Lieferzeit: ${lieferzeit}. ${fristOhneZahlung}`
         : `${mitBank ? 'Die Bankverbindung steht auch auf deiner Rechnung und in deiner Bestellbestätigung.' : 'Alle Zahlungsdaten (IBAN & Betrag) findest du auf deiner Rechnung.'} Sobald dein Geld da ist, starte ich den Druck. Lieferzeit: ${lieferzeit}. ${frist}`;
-    $('#confirm-pay-hint').textContent = geaendert ? `${hinweis} ${AENDERUNG_NICHT_DRIN}` : hinweis;
+    $('#confirm-pay-hint').textContent = geaendert
+      ? `${hinweis} ${AENDERUNG_NICHT_DRIN}${restImKorb ? ' Was nicht in dieser Bestellung ist, liegt weiter in deinem Warenkorb.' : ''}` : hinweis;
     $('#confirm-modal').showModal();
     refreshOrders(); // Bestellhistorie im Konto aktualisieren
   } catch (err) {
@@ -758,9 +779,25 @@ async function submitOrder(payment, paypalOrderId = null) {
       kassenMeldung(paypalOhneBestellung('aber danach ist etwas schiefgegangen'));
     } else kassenMeldung('Die Bestellung hat gerade nicht geklappt – bitte versuch es noch einmal.');
   } finally {
+    kasseLaeuft = Math.max(0, kasseLaeuft - 1);
     btn.disabled = false;
     prog.textContent = '';
   }
+}
+/**
+ * Warenkorb ohne die bestellten Positionen (gleiches Produkt, Design, Untersetzer und gleiche Farbe; die bestellte Menge wird
+ * abgezogen) — nach einer fortgesetzten Kasse, deren Warenkorb nach dem ersten Klick noch geändert wurde
+ */
+function ohneBestellte(liste, bestellt) {
+  const key = (it) => JSON.stringify([it.product, !!it.saucer, it.config, it.color || null]);
+  const offen = new Map();
+  for (const b of bestellt || []) offen.set(key(b), (offen.get(key(b)) || 0) + (Number(b.qty) || 0));
+  return liste.map((it) => {
+    const n = Math.min(offen.get(key(it)) || 0, it.qty);
+    if (!n) return it;
+    offen.set(key(it), (offen.get(key(it)) || 0) - n);
+    return { ...it, qty: it.qty - n };
+  }).filter((it) => it.qty > 0);
 }
 /**
  * Danke-Ansicht: Gesamtbetrag (mit Guthaben: auch „Zu zahlen“), bei 0 € „Nichts zu zahlen“, bei offener Vorkasse Bankverbindung und

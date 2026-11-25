@@ -194,7 +194,12 @@ check(kontrast('#ffb4ad', tok(dunkel, 'card')) >= 4.5, 'Dunkelmodus-Fehlertext �
 // ---------------------------------------------------------------------------
 console.log('E Entwurf und Link-Codes');
 check(/ENTWURF_TAGE = 30/.test(app) && /entwurfLoeschen\(\); return null;/.test(app), 'Entwurf: abgelaufener/unlesbarer Stand wird gelöscht (30 Tage)');
-check(/sig === entwurfSig\(startConfig\)\) \{ entwurfLoeschen\(\); return; \}/.test(app), 'Entwurf: Grundzustand wird nicht gesichert (kein Eintrag ohne eigene Gestaltung)');
+check(/sig === entwurfSig\(startConfig\)\) \{ if \(entwurfHier\) entwurfLoeschen\(\); return; \}/.test(app), 'Entwurf: Grundzustand wird nicht gesichert und löscht nur einen Entwurf aus diesem Tab (nie einen von früher beim Start)');
+check(/entwurfLoeschen\(\);\s+\/\/ „Zurücksetzen“/.test(app), 'Entwurf: „Zurücksetzen“/„Neu beginnen“ löscht ihn ausdrücklich');
+check(/if \(!linkWartet\) entwurfAn = true;/.test(app) && /if \(linkWartet\) \{\s+entwurfAn = true;\s+if \(!linkGeladen\) entwurfAnbieten\(\);/.test(app),
+  'Entwurf: solange ein Link-Code lädt, wird nichts gesichert/gelöscht; lädt er nicht, wird der Entwurf angeboten');
+check(/entwurfSig\(alt\.cfg\) === sig && \(alt\.von \|\| null\) === \(entwurfVon \|\| null\)\) \{ entwurfHier = true; return; \}/.test(app), 'Entwurf: unveränderter Stand wird nicht neu geschrieben (30 Tage ab der letzten Änderung, nicht ab dem letzten Besuch)');
+check(/codeStand = \{ code: normalizeCode\(code\), sig: entwurfSig\(entwurfDaten\(\)\) \}/.test(app), 'Entwurf: Referenzstand eines Codes entsteht beim Laden (Änderung gleich danach wird gesichert)');
 check(/if \(sig === codeStand\.sig\) return;/.test(app) && /stripURLParam\('d'\);\s+\/\/ weitergestaltet/.test(app), 'Entwurf: Code-Design unverändert → nichts gesichert; weitergestaltet → Code raus aus der Adresse');
 check(/code && e\.von !== code/.test(app) && /'Original-Design laden'/.test(app), 'Entwurf aus demselben Link-Code: Entwurf statt Code, mit „Original-Design laden“');
 check(/\$\('#confirm-id'\)/.test(app) && /bestelltSig = entwurfSig/.test(app), 'Entwurf nach abgeschlossener Bestellung gelöscht');
@@ -227,6 +232,12 @@ check(/30 Tagen ohne Änderung/.test(lies('lib/legal.js')), 'Datenschutzerkläru
   await fall('502-Fehlerseite von nginx', () => new Response('<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>', { status: 502, headers: { 'content-type': 'text/html' } }), (r, t, a) => r === false && /ließ sich gerade nicht laden – bitte versuch es gleich noch einmal/.test(t) && !/Unexpected|JSON|token/i.test(t) && a.includes('d=QWERTZ'));
   await fall('Netz weg', 'netz', (r, t, a) => r === false && /ließ sich gerade nicht laden/.test(t) && a.includes('d=QWERTZ'));
   await fall('503 Wartung (JSON)', json(503, { ok: false, error: 'Wartung' }), (r, t, a) => r === false && /ließ sich gerade nicht laden/.test(t) && a.includes('d=QWERTZ'));
+  // Code-Dialog und „Original-Design laden“ nutzen loadDesign: Netz weg → deutscher Satz (status 0), kein „Failed to fetch“
+  antwort = 'netz';
+  const netzFehler = await dc.loadDesign('QWERTZ').then(() => null, (e) => e);
+  check(netzFehler?.status === 0 && /ließ sich gerade nicht laden/.test(netzFehler.message) && !/fetch/i.test(netzFehler.message), `loadDesign ohne Netz: „${netzFehler?.message}“`);
+  check(/try \{ await onListCode\(raw\); \} catch/.test(lies('public/js/designcode.js')) && /throw apiFehler\(0, 'Keine Verbindung zum Shop/.test(lies('public/js/lists.js')),
+    'Listen-Code im Code-Dialog: Dialog schließt erst nach dem Laden, Netzfehler deutsch');
   check(dc.linkUnbrauchbar({ status: 404 }) && dc.linkUnbrauchbar({ endgueltig: true }) && !dc.linkUnbrauchbar(new TypeError('x')) && !dc.linkUnbrauchbar({ status: 502 }), 'linkUnbrauchbar: nur 400/404 bzw. endgültig');
   const listen = lies('public/js/lists.js');
   check(/if \(linkUnbrauchbar\(e\)\) stripURLParam\('l'\)/.test(listen) && /throw apiFehler\(r\.status/.test(listen), 'Listen-Link: Code nur bei endgültigem Fehler aus der Adresse, Status wird mitgegeben');

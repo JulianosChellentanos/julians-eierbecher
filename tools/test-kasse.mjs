@@ -213,6 +213,25 @@ try {
     check(st === '200/409' && rechnungen === 1 && [ca, cb].some((c) => c.json?.code === 'gutschein'), `${code}: zwei gleichzeitige Abschlüsse (max. 1) → 200 + 409 „gutschein“, genau eine Rechnung`, { st, rechnungen });
   }
 
+  // Guthaben: eine eigene, nie abgeschlossene Kasse (Abschluss ohne Antwort, danach in der Kasse geändert) sperrt es nicht — die
+  // einer anderen Kundin schon; doppelt eingelöst wird es nie (Nachprüfung beim Abschluss, fest im selben Schritt)
+  const g20 = await guthaben(20);
+  const qMail = async (items, email) => (await req('POST', '/api/quote', { items, couponCode: g20, email })).json;
+  const kasseMit = async (items, kunde) => {
+    const q = await qMail(items, kunde.email);
+    return (await req('POST', '/api/checkout', { customer: kunde, items, payment: 'vorkasse', couponCode: g20, beschaffenheit: true, mitSchluessel: true, kasseStand: 2, expectedTotal: q.total })).json;
+  };
+  const ga = await kasseMit([V(1)], KUNDE);
+  check(ga?.ok && near(lies(ga.orderId).coupon?.off, 20), 'Guthaben 20 €: erste Kasse angelegt (nicht abgeschlossen)', ga);
+  check(/vollständig eingelöst/.test((await qMail([V(1)], 'andere@example.test')).couponError || ''), 'andere Kundin während der Reservierung: Guthaben gilt als eingelöst');
+  const gb = await kasseMit([V(1)], { ...KUNDE, note: 'Bitte als Geschenk verpacken' });
+  check(gb?.ok && near(lies(gb.orderId).coupon?.off, 20), 'dieselbe Kundin, geänderte Kasse (erste nie abgeschlossen) → neue Kasse mit vollem Guthaben', gb);
+  const gbFertig = await abschluss(gb.orderId, gb.accessKey);
+  check(gbFertig.complete.status === 200 && gbFertig.invoiceNo, 'neue Kasse abschließen → Rechnung', gbFertig.complete.json);
+  const gaFertig = await abschluss(ga.orderId, ga.accessKey);
+  check(gaFertig.complete.status === 409 && gaFertig.complete.json?.code === 'guthaben' && !lies(ga.orderId).invoiceNo,
+    'erste Kasse danach abschließen → 409 „guthaben“, keine Rechnung (nie doppelt eingelöst)', gaFertig.complete.json);
+
   console.log('5) Storno aufheben, Reklamationsgrenzen');
   const g60 = await guthaben(60);
   const k1 = await bestelle([V(1)], g60), k2 = await bestelle([V(1)], g60);   // 29,80 + 29,80 = 59,60 (Guthaben deckt Ware + Versand)

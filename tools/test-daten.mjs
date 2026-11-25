@@ -138,6 +138,9 @@ try {
     'orders/FS-261101-AAAA10/modell-2-vase.stl.upload-1-a.tmp': stl(),
     'orders/FS-261101-AAAA11/order.json': alt('FS-261101-AAAA11', { createdAt: tage(1 / 24) }),                          // 1 Stunde → bleibt
     'orders/FS-261101-AAAA11/modell-1-vase.stl': stl(),
+    // per PayPal bezahlt, Kasse nie abgeschlossen (Upload abgebrochen) — mit einer Position für den Druckstatus
+    'orders/FS-261101-AAAA12/order.json': alt('FS-261101-AAAA12', { createdAt: tage(1), payment: 'paypal', paypalOrderId: 'PAYPAL999999', paymentStatus: 'bezahlt', paidAt: tage(1),
+      lines: [{ product: 'vase', qty: 1, saucer: false, config: { product: 'vase', preset: 'flasche', height: 150 }, color: 'elfenbein', colorName: 'Elfenbein', unit: 24.9, line: 24.9, stlFile: 'modell-1-vase.stl' }] }),
   });
   utimesSync(path.join(dir, 'orders/FS-261101-AAAA10/modell-2-vase.stl.upload-1-a.tmp'), new Date(Date.now() - 3600e3), new Date(Date.now() - 3600e3));
   const s = await starte(dir);
@@ -161,6 +164,18 @@ try {
   const r0b = await s.req('POST', '/api/admin/order-status', { orderId: 'FS-261101-AAAA05', status: 'im-druck' }, admin('test-admin-123'));
   pruefe('nie abgeschlossene Kasse: „bezahlt“ bzw. weiterer Status → 409 (keine Rechnung), Bestellung unverändert', r0.status === 409 && r0.json?.code === 'kasse-offen' && r0b.status === 409
     && JSON.parse(readFileSync(path.join(dir, 'orders/FS-261101-AAAA05/order.json'), 'utf8')).paymentStatus === 'offen', [r0.status, r0b.status]);
+  // Per PayPal bezahlte, nie abgeschlossene Kasse: der Druckstatus der Position wird vermerkt, der Bestellstatus bleibt (keine Rechnung,
+  // kein „Im Druck“/„Gedruckt“, keine Statusmail) — wie order-update (409)
+  const lp1 = await s.req('POST', '/api/admin/line-print', { orderId: 'FS-261101-AAAA12', idx: 0, status: 'druckt', vorher: 'offen' }, admin('test-admin-123'));
+  const lp2 = await s.req('POST', '/api/admin/line-print', { orderId: 'FS-261101-AAAA12', idx: 0, status: 'fertig', vorher: 'druckt' }, admin('test-admin-123'));
+  const o12 = JSON.parse(readFileSync(path.join(dir, 'orders/FS-261101-AAAA12/order.json'), 'utf8'));
+  pruefe('nie abgeschlossene PayPal-Kasse: Druckstatus der Position gespeichert, Bestellstatus bleibt „neu“ (kein Automatik-Wechsel)',
+    lp1.status === 200 && lp2.status === 200 && o12.status === 'neu' && o12.lines[0].print?.status === 'fertig' && !(o12.history || []).some((h) => h.by === 'system' && /Automatisch/.test(h.note || '')), { lp: [lp1.status, lp2.status], status: o12.status });
+  // Storno einer nie abgeschlossenen, unbezahlten Kasse: keine Stornomail (die Kundschaft hat nie eine Bestätigung bekommen)
+  const sto = await s.req('POST', '/api/admin/order-update', { orderId: 'FS-261101-AAAA05', status: 'storniert' }, admin('test-admin-123'));
+  await sleep(300);
+  const stoMails = (await mails(s, 'test-admin-123')).filter((m) => m.orderId === 'FS-261101-AAAA05');
+  pruefe('Storno einer nie abgeschlossenen, unbezahlten Kasse: 200, keine Mail an die Kundschaft', sto.status === 200 && sto.json?.order?.status === 'storniert' && stoMails.length === 0, { status: sto.status, mails: stoMails.map((m) => m.kind) });
   pruefe('Druckdateien einer jungen Kasse und einer Bestellung mit Rechnung bleiben', inOrdner('FS-261101-AAAA11') === 'modell-1-vase.stl,order.json' && inOrdner('FS-261101-AAAA02') === 'modell-1-vase.stl,order.json', [inOrdner('FS-261101-AAAA11'), inOrdner('FS-261101-AAAA02')]);
 
   // Admin-Bremse: IPv6 /64 teilt sich einen Zähler, andere Netze kommen durch; IPv4-mapped = IPv4
@@ -443,6 +458,12 @@ try {
     const vr = await s.req('POST', '/api/auth/verify-resend', {}, { 'x-auth': spaet?.token, ...von('10.22.6.1') });
     await sleep(300);
     pruefe('Registrierung ohne Willkommensmail: Bestätigungslink lässt sich im Konto anfordern', vr.status === 200 && (await mails(s, 'test-admin-123')).some((m) => m.kind === 'email-bestaetigung' && m.to === 'grenze34@example.invalid'), vr.json);
+    // „Link erneut senden“: Gesamtgrenze 30 je Stunde — über viele Konten und Adressen wächst die Mailmenge nicht mit (1 eben + 29)
+    const vrs = [];
+    for (let i = 0; i < 34; i++) vrs.push((await s.req('POST', '/api/auth/verify-resend', {}, { 'x-auth': reg[i]?.token, ...von(`10.23.${i}.1`) })).status);
+    await sleep(300);
+    const bestaetigt = (await mails(s, 'test-admin-123')).filter((m) => m.kind === 'email-bestaetigung').length;
+    pruefe('„Link erneut senden“: höchstens 30 insgesamt je Stunde, darüber 429 (aus wechselnden Adressen)', vrs.slice(0, 29).every((c) => c === 200) && vrs.slice(29).every((c) => c === 429) && bestaetigt === 30, { vrs: zaehle(vrs), bestaetigt });
     const meld = await s.req('POST', '/api/auth/register', { name: 'Gina Grenze', email: 'grenze0@example.invalid', password: 'grenze-passwort' }, von('10.22.9.1'));
     pruefe('Registrierung: bestehende Adresse weiter 400 (keine irreführende „dein Anschluss“-Meldung)', meld.status === 400, meld.json);
 

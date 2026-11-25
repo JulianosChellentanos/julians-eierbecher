@@ -327,6 +327,16 @@ async function main() {
   const hHtml = readFileSync(datei(h.orderId, 'rechnung.html'), 'utf8');
   check(order(h.orderId).lines[0].config.text === '' && order(h.orderId).lines[0].parts?.gravur === 0 && !/Gravur/.test(hHtml) && existsSync(datei(h.orderId, 'rechnung.pdf')),
     'Bestellung mit unsichtbarer Gravur: ohne Gravur und ohne Gravur-Aufpreis, PDF entsteht', { text: order(h.orderId).lines[0].config.text, parts: order(h.orderId).lines[0].parts });
+  // weiches Trennzeichen (U+00AD): die Gravurschriften haben einen sichtbaren Strich, die Druckdatei graviert ihn — Bestellung,
+  // Beleg und Preis tragen ihn als „-“; nur U+00AD ist also eine Gravur mit Aufpreis (Server und pricing.js gleich)
+  const shy = U(0xad);
+  const qShy = (await req('POST', '/api/quote', { items: [mit(shy)] })).json?.total;
+  check(qShy === (await req('POST', '/api/quote', { items: [mit('-')] })).json?.total && qShy > qLeer && P.unitParts(mit(shy)).gravur > 0,
+    'Gravur nur aus U+00AD: Gravur-Aufpreis wie für „-“ (Server und pricing.js gleich)', { shy: qShy, leer: qLeer, browser: P.unitParts(mit(shy)).gravur });
+  const sh = await bestellung({ name: 'Sina Silbentrennung', items: [{ config: { text: `Anna${shy}Tom` } }] });
+  await warte(() => existsSync(datei(sh.orderId, 'rechnung.pdf')));
+  check(order(sh.orderId).lines[0].config.text === 'Anna-Tom' && readFileSync(datei(sh.orderId, 'rechnung.html'), 'utf8').includes('Gravur „Anna-Tom“') && existsSync(datei(sh.orderId, 'rechnung.pdf')),
+    '„Anna\u00adTom“: Bestellung und Beleg tragen „Anna-Tom“ wie die Druckdatei, PDF entsteht', { text: order(sh.orderId).lines[0].config.text });
 
   console.log('\n— Platzhalter-Firmendaten (wie im Auslieferungszustand): Rechtstexte als HTML');
   await stop();

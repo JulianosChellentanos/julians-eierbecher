@@ -285,7 +285,8 @@ const shortId = (id) => String(id || '').replace(/^(OV|FS)-/, '');
 const custName = (o) => o.customer?.name || o.name || '';
 const custEmail = (o) => (o.customer?.email || o.email || '').trim().toLowerCase();
 const isPaid = (o) => st(o) === 'bezahlt' || (st(o) === 'neu' && o.paymentStatus === 'bezahlt');
-const inQueue = (o) => ['bezahlt', 'im-druck'].includes(st(o)) || (st(o) === 'neu' && o.paymentStatus === 'bezahlt');
+// Nie abgeschlossene Kassen (kasseAbgebrochen, z. B. per PayPal bezahlt, Upload abgebrochen) gehören nicht in die Druckwarteschlange
+const inQueue = (o) => ['bezahlt', 'im-druck'].includes(st(o)) || (st(o) === 'neu' && o.paymentStatus === 'bezahlt' && !kasseAbgebrochen(o));
 const pieces = (o) => (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0);
 function progress(o) {
   const ls = o.lines || [];
@@ -741,7 +742,7 @@ function renderDrawer() {
   $('#drawer-body').innerHTML = `${konflikt}${widerrufCard(o)}
     <div class="sect">
       <h3>Status <span class="right">${fmtDT(o.createdAt)}${o.invoiceNo ? ` · <a href="${esc(docUrl(o, 'rechnung.html'))}" target="_blank">🧾 ${esc(o.invoiceNo)}</a> <a href="${esc(docUrl(o, 'rechnung.pdf'))}" target="_blank" title="Rechnung als PDF">PDF</a>` : ''}${o.storno?.nr ? ` · <a href="${esc(docUrl(o, 'storno.html'))}" target="_blank" title="Stornorechnung">↩ ${esc(o.storno.nr)}</a> <a href="${esc(docUrl(o, 'storno.pdf'))}" target="_blank" title="Stornorechnung als PDF">PDF</a>` : ''}</span></h3>
-      ${kasseAbgebrochen(o) ? `<p class="hint">${Date.now() - Date.parse(o.createdAt) > 30 * 60e3 ? '⚠️ Kasse abgebrochen: Die Bestellung wurde angelegt, aber nie abgeschlossen — keine Rechnung, keine Bestätigungsmail an die Kundschaft. Am besten stornieren (ein eingelöstes Guthaben wird dabei wieder frei).' : '⏳ Die Kundschaft ist gerade in der Kasse — die Druckdateien werden hochgeladen.'}</p>` : ''}
+      ${kasseAbgebrochen(o) ? `<p class="hint">${Date.now() - Date.parse(o.createdAt) > 30 * 60e3 ? `⚠️ Kasse abgebrochen: Die Bestellung wurde angelegt, aber nie abgeschlossen — keine Rechnung, keine Bestätigungsmail an die Kundschaft. ${o.paymentStatus === 'bezahlt' ? 'Sie ist schon bezahlt (PayPal): bitte stornieren und die Zahlung erstatten.' : 'Nichts zu tun: Der Shop löscht sie nach 14 Tagen selbst (Druckdateien nach 48 Stunden). Stornieren ist nicht nötig — es ginge ohne Mail an die Kundschaft, die Bestellung bliebe dann aber als Storno stehen.'}` : '⏳ Die Kundschaft ist gerade in der Kasse — die Druckdateien werden hochgeladen.'}</p>` : ''}
       <div class="stepper">${stepper}</div>
       <div class="row" style="margin-top:10px">
         <button class="ghost mini" onclick="openDruckzettel('${esc(o.orderId)}')">🖨️ Druckzettel</button>
@@ -1103,6 +1104,9 @@ async function reklaAnlegen(id) {
   const r = await reklaApi(body);
   if (!r) return;
   RK_NEW = false;
+  // Formular vor dem Neuzeichnen entfernen: seine Felder gälten sonst als Entwurf für die neue Reklamationskarte — dort trägt das
+  // Häkchen „Kunde per E-Mail informieren“ dieselbe id, und „aus“ beim Anlegen schaltete die Mail beim Erledigen still ab
+  $('#rk-form')?.remove();
   applyOrder(r.order);
   toast(`Reklamation für ${id} angelegt${art === 'nachdruck' ? ' — Positionen wieder in der Druckwarteschlange' : ''}`, 'ok');
 }
@@ -2298,6 +2302,12 @@ const akPayload = (a) => ({
   start: a.start, ende: a.ende, produkte: AK_PRODUKTE[a.produkte] ? a.produkte : 'alle', muster: akMusterNorm(a.muster),
   mengenrabatt: !!a.mengenrabatt, hinweis: String(a.hinweis || '').trim().slice(0, 120), aktiv: !!a.aktiv,
 });
+/** Preisfelder, die nicht leer sein dürfen: [id, Bezeichnung, Hinweis zur 0] */
+const PFLICHT_ZAHLEN = [
+  ['s-vase-single', 'Vase (€/Stück)'], ['s-egg-single', 'Eierbecher (€/Stück)'], ['s-egg-saucer', 'Untersetzer (€/Stück)'],
+  ['s-gravur', 'Gravur-Aufpreis (€/Stück)', '0 = ohne Aufpreis'], ['s-vol-pct', 'Größenaufschlag %', '0 = ohne'], ['s-vol-eur', 'Größenaufschlag €', '0 = ohne'],
+  ['s-ship-flat', 'Versand pauschal (€)', '0 = Versand immer kostenlos'], ['s-ship-free', 'Versandfrei ab (€)', '0 = immer versandkostenfrei'],
+];
 async function saveSettings() {
   // Aktionen vor dem Senden prüfen (der Server lehnt mit 400 ab, ohne etwas zu übernehmen) — zur fehlerhaften Karte springen
   const bad = aktionen.findIndex((a) => akError(a));
@@ -2306,6 +2316,14 @@ async function saveSettings() {
     akRefresh(bad);
     $(`#ak-card-${bad}`)?.scrollIntoView?.({ block: 'center' });
     return toast(`Aktion „${String(aktionen[bad].name || '').trim() || bad + 1}“: ${akError(aktionen[bad])}`, 'err', 5000);
+  }
+  // Pflicht-Zahlen: Ein leeres Feld ergäbe sonst still 0 (+'' === 0) — z. B. „Versandfrei ab“ leer = immer versandkostenfrei,
+  // „Versand pauschal“ leer = Versand umsonst. 0 gilt nur, wenn sie dasteht (Aufpreise je Muster/Farbschrift: leer = 0, wie angezeigt)
+  const leer = PFLICHT_ZAHLEN.find(([id]) => { const el = $(`#${id}`); return el && (el.value.trim() === '' || !Number.isFinite(Number(el.value))); });
+  if (leer) {
+    show('pricing');
+    $(`#${leer[0]}`).focus();
+    return toast(`Preise: „${leer[1]}“ ist leer – bitte eine Zahl eintragen${leer[2] ? ` (${leer[2]})` : ''}. Gespeichert wurde nichts.`, 'err', 7000);
   }
   // Farbaufpreis je Farbe immer als Zahl ≥ 0 mitschicken (ältere Farben ohne Feld → 0)
   for (const c of colors) c.aufpreis = euro(c.aufpreis);

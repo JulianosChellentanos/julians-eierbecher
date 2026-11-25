@@ -885,6 +885,7 @@ let hinweisStand = null, hinweisAktion = null;
 let codeStand = null;     // gerade aus einem Code geladen: { code, sig } (sig = Stand nach dem Laden, beim ersten Sichern ermittelt)
 let entwurfVon = null;    // Code, aus dem der aktuelle Entwurf weitergestaltet wurde
 let bestelltSig = null;   // Stand bei der letzten Bestellung (danach erst wieder sichern, wenn sich etwas ändert)
+let entwurfHier = false;  // der gesicherte Entwurf stammt aus diesem Tab (hier gesichert oder hier wiederhergestellt)
 /** Was ein Entwurf festhält: das Design wie ein Design-Code, aber mit dem getippten Gravurtext (auch wenn eine Regel ihn gerade sperrt) */
 const entwurfDaten = () => ({ ...designConfig(), text: state.text, textColor: state.textColor });
 const ENTWURF_FELDER = ['product', 'preset', 'height', 'width', 'rim', 'pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves', 'text', 'textSize', 'textPos', 'textStyle', 'font', 'textColor', 'color', 'customPoints', 'saucer'];
@@ -902,8 +903,16 @@ const entwurfMerkenJetzt = debounce(() => {
   }
   if (sig === bestelltSig) return;                     // gerade bestellt, seitdem nichts geändert
   bestelltSig = null;
-  if (startConfig && sig === entwurfSig(startConfig)) { entwurfLoeschen(); return; } // Grundzustand: nichts Eigenes zu sichern
-  try { localStorage.setItem(ENTWURF_KEY, JSON.stringify({ v: 1, t: Date.now(), cfg: d, ...(entwurfVon ? { von: entwurfVon } : {}) })); } catch { /* privater Modus, Speicher voll – egal */ }
+  // Grundzustand: nichts Eigenes zu sichern. Gelöscht wird nur ein Entwurf aus diesem Tab (zurückgestellt) — einen Entwurf von
+  // früher löscht der Grundzustand beim Start nie (z. B. solange ein Link-Code noch lädt oder sich nicht laden ließ)
+  if (startConfig && sig === entwurfSig(startConfig)) { if (entwurfHier) entwurfLoeschen(); return; }
+  // Unverändert gegenüber dem gesicherten Stand (bloßer Besuch): nicht neu schreiben — sonst begänne die Frist „30 Tage ohne
+  // Änderung“ bei jedem Aufruf neu
+  try {
+    const alt = JSON.parse(localStorage.getItem(ENTWURF_KEY) || 'null');
+    if (alt?.v === 1 && alt.cfg && entwurfSig(alt.cfg) === sig && (alt.von || null) === (entwurfVon || null)) { entwurfHier = true; return; }
+  } catch { /* unlesbar → neu schreiben */ }
+  try { localStorage.setItem(ENTWURF_KEY, JSON.stringify({ v: 1, t: Date.now(), cfg: d, ...(entwurfVon ? { von: entwurfVon } : {}) })); entwurfHier = true; } catch { /* privater Modus, Speicher voll – egal */ }
 }, 600);
 function entwurfMerken() { if (entwurfAn) entwurfMerkenJetzt(); }
 /** Gesicherter Entwurf { cfg, von } oder null — ein unlesbarer oder abgelaufener Stand wird dabei gelöscht */
@@ -927,6 +936,7 @@ function entwurfWiederherstellen(code) {
   if (code) stripURLParam('d'); // loadFromURL lädt den Code dann nicht mehr
   applyDesign(e.cfg, null, { still: true, von: e.von }).then((ok) => {
     if (ok === false) return;
+    entwurfHier = true;
     if (code) zeigeEntwurfHinweis('Dein letzter Entwurf ist wieder da.', 'Original-Design laden', () => originalLaden(code));
     else zeigeEntwurfHinweis('Dein letzter Entwurf ist wieder da.', 'Neu beginnen', () => zuruecksetzen('Neu begonnen.'));
   }).catch(() => {});
@@ -956,6 +966,7 @@ function zuruecksetzen(text = 'Alles auf Anfang gesetzt.') {
   const vorher = entwurfDaten(), vorherVon = entwurfVon;
   customByProduct[startConfig.product] = null; // eigene Silhouette verwerfen (Rückgängig bringt sie über vorher.customPoints zurück)
   stripURLParam('d');
+  entwurfLoeschen();   // „Zurücksetzen“/„Neu beginnen“: der gesicherte Entwurf ist verworfen („Rückgängig“ sichert ihn wieder)
   applyDesign(startConfig, null, { still: true }).then(() => {
     userInteracted = false; // neu einrahmen und wieder langsam drehen wie beim ersten Besuch
     zeigeEntwurfHinweis(text, 'Rückgängig', () => applyDesign(vorher, null, { still: true, von: vorherVon }));
@@ -1574,7 +1585,9 @@ async function applyDesign(cfg, code, opts = {}) {
   $('#i-text').value = state.text; $('#c-gravur').checked = !!state.text; $('#gravur-options').hidden = !state.text;
   $('#c-saucer').checked = state.saucer;
   // Herkunft für den Entwurf: aus einem Code geladen → erst sichern, wenn weitergestaltet; sonst gilt die mitgegebene Herkunft (Entwurf)
-  if (code) codeStand = { code: normalizeCode(code), sig: null };
+  // Referenzstand gleich hier (Regler, Farbe und Klemmungen sind gesetzt) — eine Änderung kurz nach dem Laden gilt so schon als
+  // Weitergestalten und wird gesichert (sonst erst beim ersten entprellten Sichern ermittelt und mit ihr verwechselt)
+  if (code) codeStand = { code: normalizeCode(code), sig: entwurfSig(entwurfDaten()) };
   else { codeStand = null; entwurfVon = opts.von || null; }
   rebuild();
   reframeAt = reqSeq; // das geladene Design einrahmen, sobald es berechnet ist (auch wenn die Kamera schon bewegt wurde)
@@ -1805,7 +1818,10 @@ warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noc
   let entwurfStattLink = false;
   if (pendingStudioDesign) { const cfg = pendingStudioDesign; pendingStudioDesign = null; onStudioDesign(cfg); }
   else entwurfStattLink = entwurfWiederherstellen(linkCode) && !!linkCode;
-  entwurfAn = true;
+  // Steht ein Design-Code in der Adresse, der gleich geladen wird: erst danach sichern (loadFromURL unten) — sonst sicherte der beim
+  // Start angestoßene Lauf den Grundzustand, solange die Antwort noch fehlt (langsames Netz, 404, 502)
+  const linkWartet = !!linkCode && !entwurfStattLink && !!adressCode();
+  if (!linkWartet) entwurfAn = true;
   if (renderer) animate(); else zeigeOhne3D();
   initBuildIndicator();
   initKonfAktiv();
@@ -1844,7 +1860,12 @@ warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noc
   });
   $('#cart-to-list')?.addEventListener('click', () => createListFromCart(getCart()).catch((e) => showToast(e.message)));
   // Direktlinks: ?d=CODE → Design laden, ?l=CODE → Liste öffnen
-  if (await loadFromURL() || entwurfStattLink) $('#konfigurator').scrollIntoView();
+  const linkGeladen = await loadFromURL();
+  if (linkWartet) {
+    entwurfAn = true;
+    if (!linkGeladen) entwurfAnbieten();   // Link-Code ließ sich nicht laden: den eigenen Entwurf anbieten (er bleibt ohnehin gesichert)
+  }
+  if (linkGeladen || entwurfStattLink) $('#konfigurator').scrollIntoView();
   await loadListFromURL();
 
   // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
