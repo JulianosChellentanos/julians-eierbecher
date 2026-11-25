@@ -2466,11 +2466,18 @@ function companyOrt(co) {
   const land = String(co.country || '').trim();
   return [[co.zip, co.city].filter(Boolean).join(' '), land && land !== 'Deutschland' ? land : ''].filter(Boolean).join(', ');
 }
+/** Text maskiert, Leerzeichen geschützt (Telefonnummer, IBAN) — bricht nie mitten in der Nummer um */
+const nbspAlle = (v) => esc(v).replace(/ /g, '&nbsp;');
+/**
+ * Geschützte Leerzeichen zwischen Zahl und Einheit („150&nbsp;mm“, „19&nbsp;%“, „14&nbsp;Tagen“, „50&nbsp;°C“) in fertig maskiertem
+ * Beleg-Text — nur neue Belege; der Satz und der Browser-Druck trennen Zahl und Einheit dann nicht mehr
+ */
+const einheitNbsp = (html) => String(html).replace(/(\d) (?=(?:mm|cm|%|€|°C|Stück|Werktag(?:en?)?|Tag(?:en?)?|Wochen?|Monat(?:en?)?)(?![\p{L}\d]))/gu, '$1&nbsp;');
 /** Absenderblock rechts im Kopf (zweispaltig, damit der Kopf flach bleibt): Marke, Inhaber (voller Name), Anschrift | Kontakt, Steuernummer/USt-IdNr. */
 function belegAbsender(co) {
   const adresse = [`<b>${esc(co.name || BRAND)}</b>`, esc(co.owner), esc(co.street), esc(companyOrt(co))].filter(Boolean);
   const kontakt = [
-    co.email ? esc(co.email) : '', co.phone ? `Tel. ${esc(co.phone)}` : '',
+    co.email ? esc(co.email) : '', co.phone ? `Tel.&nbsp;${nbspAlle(co.phone)}` : '',
     co.steuerNr ? `Steuernummer ${esc(co.steuerNr)}` : '', co.ustId ? `USt-IdNr. ${esc(co.ustId)}` : '',
   ].filter(Boolean);
   return `<div class="absender"><div>${adresse.join('<br>')}</div>${kontakt.length ? `<div class="kontakt">${kontakt.join('<br>')}</div>` : ''}</div>`;
@@ -2482,6 +2489,9 @@ function belegFuss(co) {
   const parts = [co.name || BRAND, co.owner, [co.street, companyOrt(co)].filter(Boolean).join(', '), co.email, publicHost()];
   return `<footer class="fuss">${parts.map((x) => String(x || '').trim()).filter(Boolean).map(esc).join(' · ')}</footer>`;
 }
+// Neue Belege: Positionstabelle mit <thead> (wiederholt sich im Druck/PDF auf Folgeseiten), Beträge rechtsbündig (.pos .r). Auf dem
+// Handy (≤ 640 px, nur Bildschirm) stehen die Positionen als Karten — Bezeichnung, darunter „Menge × Einzelpreis · Rabatt · Summe“,
+// nichts ragt über den Rand; den „@media screen“-Block übergeht der PDF-Satz (er setzt für den Druck)
 const BELEG_CSS = `
     @font-face{font-family:'Fraunces';src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:400 700;font-display:swap}
     @font-face{font-family:'Inter';src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
@@ -2501,7 +2511,7 @@ const BELEG_CSS = `
     .absender .kontakt{padding-top:1px}
     .anschrift{display:flex;justify-content:space-between;align-items:flex-start;gap:28px;margin:18px 0 14px}
     .empfaenger{min-width:0;font-size:13px}
-    .ruecksende{font-size:9px;color:#6b6257;border-bottom:1px solid #e6ddd0;padding-bottom:2px;margin-bottom:7px;white-space:nowrap}
+    .ruecksende{font-size:9px;color:#6b6257;border-bottom:1px solid #e6ddd0;padding-bottom:2px;margin-bottom:7px}
     table.meta{border-collapse:collapse;font-size:12px}
     .meta th{text-align:left;font-weight:400;color:#6b6257;padding:1px 16px 1px 0;white-space:nowrap;vertical-align:top}
     .meta td{text-align:right;padding:1px 0;font-weight:600;white-space:nowrap}
@@ -2514,6 +2524,7 @@ const BELEG_CSS = `
     .pos td{font-size:12px}
     .pos td small{font-size:10.5px}
     .r{text-align:right;white-space:nowrap}
+    .pos .r{text-align:right}
     table.summen{width:100%;max-width:470px;margin:0 0 0 auto;border-collapse:collapse}
     .summen td{padding:2px 7px;font-size:12.5px}
     .summen .grand td{font-weight:700;font-size:14.5px;border-top:1.5px solid #211d18;padding-top:6px}
@@ -2531,9 +2542,19 @@ const BELEG_CSS = `
     .fuss{margin-top:14px;padding-top:6px;border-top:1px solid #e6ddd0;font-size:9.5px;color:#6b6257;text-align:center}
     @media print{html{background:none}body{padding:0;font-size:12px}.blatt{max-width:none;padding:0;box-shadow:none;border-radius:0}.leiste{display:none}
       h1{font-size:22px}.empfaenger{font-size:12.5px}.pos td{font-size:11.5px}.pos td small{font-size:10px}.summen td{font-size:12px}.summen .grand td{font-size:14px}.dank{font-size:12px}}
-    @media (max-width:640px){.blatt{padding:18px}.kopf,.anschrift,.absender{flex-direction:column}.absender{gap:6px}.ruecksende{white-space:normal}.zahlung tr{display:flex;flex-wrap:wrap}}`;
-/** Komplettes Beleg-Dokument: Knopfleiste (nur Bildschirm) + Blatt mit Kopf, Inhalt und Fußzeile */
-function belegSeite({ title, co, body, css = '', leiste = '<button type="button" onclick="print()">Drucken / als PDF speichern</button>', logoHeight = 34 }) {
+    @media (max-width:640px){.blatt{padding:18px}.kopf,.anschrift,.absender{flex-direction:column}.absender{gap:6px}.zahlung tr{display:flex;flex-wrap:wrap}}
+    @media screen and (max-width:640px){.posten thead{display:none}.posten,.posten tbody{display:block}
+      .posten tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:7px 0;border-bottom:1px solid #e6ddd0}
+      .posten td{padding:0;border:0}.posten .nr{flex:0 0 1.2em}.posten .art{flex:1 1 calc(100% - 1.2em - 11px);min-width:0;overflow-wrap:anywhere}
+      .posten .menge{margin-left:calc(1.2em + 10px)}.posten .menge::after{content:' ×'}.posten .rabatt::before{content:'Rabatt '}.posten .leer{display:none}
+      .posten .summe{margin-left:auto;font-weight:600}}`;
+/**
+ * Komplettes Beleg-Dokument: Knopfleiste (nur Bildschirm) + Blatt mit Kopf, Inhalt und Fußzeile.
+ * pdf = Datei der PDF-Fassung (rechnung.pdf …): Leiste „Drucken“ + „PDF herunterladen“ — den Zugriffsschlüssel (?k=…) nimmt
+ * der Link aus der Adresse der Seite, in der gespeicherten Datei steht er nie
+ */
+function belegSeite({ title, co, body, css = '', leiste = '<button type="button" onclick="print()">Drucken / als PDF speichern</button>', logoHeight = 34, pdf = '' }) {
+  if (pdf) leiste = `<button type="button" onclick="print()">Drucken</button> <a id="pdf-link" href="${esc(pdf)}">PDF herunterladen</a><script>document.getElementById('pdf-link').search=location.search</script>`;
   return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
   <style>${BELEG_CSS}${css}</style></head><body>
   <div class="leiste noprint">${leiste}</div>
@@ -2707,14 +2728,14 @@ function invoiceHTML(order) {
   const rows = order.lines.map((l, i) => {
     const note = [aktionText(l, settings), surchargeText(l, settings)].filter(Boolean).join(' · ');
     return `
-    <tr><td class="muted">${i + 1}</td><td>${esc(itemLabel(l, { mitAufpreis: false }))}${note ? `<br><small class="muted">${esc(note)}</small>` : ''}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
-    <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`;
+    <tr><td class="muted nr">${i + 1}</td><td class="art">${einheitNbsp(esc(itemLabel(l, { mitAufpreis: false })))}${note ? `<br><small class="muted">${einheitNbsp(esc(note))}</small>` : ''}</td><td class="r menge">${l.qty}</td><td class="r einzel">${money(l.unit)}</td>
+    <td class="r rabatt${l.off ? '' : ' leer'}">${l.off ? `−${l.off}&nbsp;%` : '—'}</td><td class="r summe">${money(l.line)}</td></tr>`;
   }).join('');
   // Ersparnis je betroffener Aktion („Aktion „Name“ −30 % auf Gehämmert: Ersparnis“) — informativ direkt unter der Zwischensumme,
   // als „in den Preisen enthalten“ gekennzeichnet (die Summen entstehen aus den reduzierten Zeilen; nach dem Gesamtbetrag läse
   // sie sich wie ein weiterer Abzug); ältere Bestellungen mit nur order.aktion: eine Zeile
   const aktionRow = aktionSummary(order, settings)
-    .map((a) => `<tr class="fein"><td>${esc(a.label)} <small>(in den Preisen enthalten)</small></td><td class="r">${esc(a.value)}</td></tr>`).join('');
+    .map((a) => `<tr class="fein"><td>${einheitNbsp(esc(a.label))} <small>(in den Preisen enthalten)</small></td><td class="r">${esc(a.value)}</td></tr>`).join('');
   // Guthaben (Gutschrift aus einer Reklamation) ist eine Anrechnung, kein Rabatt: Die Gutschrift hat das Entgelt der ersten
   // Rechnung (samt USt) schon gemindert — hier zählt es als Zahlung. Entgelt und USt beziehen sich deshalb auf den Betrag vor
   // dem Guthaben, danach „abzüglich Guthaben“ und „Zu zahlen“ (= order.total). Ältere Bestellungen ohne Kennzeichen: über den Code.
@@ -2722,14 +2743,14 @@ function invoiceHTML(order) {
   const entgelt = guth ? Math.round((order.total + guth.off) * 100) / 100 : order.total;
   const ust = ku ? null : ustAus(entgelt, satz);
   const ustRows = ust
-    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz} %</td><td class="r">${money(ust.ust)}</td></tr>` : '';
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz}&nbsp;%</td><td class="r">${money(ust.ust)}</td></tr>` : '';
   const guthRows = guth
     ? `<tr><td>abzüglich Guthaben „${esc(guth.code)}“${guth.gutschriftNo ? ` <small class="muted">(aus Gutschrift ${esc(guth.gutschriftNo)})</small>` : ''}</td><td class="r">−${money(guth.off)}</td></tr>
     <tr class="zahl"><td>Zu zahlen</td><td class="r">${money(order.total)}</td></tr>` : '';
   // § 34a UStDV (seit 2025): Hinweis, dass die Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG gilt
   const steuerNote = (ku
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
-    : `Alle Beträge in Euro inklusive ${satz} % Umsatzsteuer.`) +
+    ? 'Steuerbefreiung für Kleinunternehmer nach §&nbsp;19 Abs.&nbsp;1 UStG – es wird keine Umsatzsteuer berechnet.'
+    : `Alle Beträge in Euro inklusive ${satz}&nbsp;% Umsatzsteuer.`) +
     (guth ? ' Dein Guthaben wird wie eine Zahlung angerechnet: Es mindert weder den Gesamtbetrag noch die Versandkostenfreiheit.' : '');
   const bank = [['Kontoinhaber', co.owner || co.name], ['IBAN', co.iban], ['BIC', co.bic], ['Bank', co.bank], ['Verwendungszweck', order.orderId], ['Betrag', money(order.total)]]
     .filter(([, v]) => String(v || '').trim());
@@ -2742,8 +2763,8 @@ function invoiceHTML(order) {
       ? `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
       : order.paymentStatus === 'bezahlt'
         ? `Bezahlt per Überweisung${order.paidAt ? ` am ${esc(dateDE(order.paidAt))}` : ''}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
-        : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von ${ZAHLUNGSFRIST_TAGE} Tagen mit deiner Bestellnummer als Verwendungszweck:
-       <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
+        : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von ${ZAHLUNGSFRIST_TAGE}&nbsp;Tagen mit deiner Bestellnummer als Verwendungszweck:
+       <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${k === 'IBAN' ? nbspAlle(v) : esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
   // Leistungszeitpunkt (§ 14 Abs. 4 Nr. 6 UStG, Kalendermonat genügt nach § 31 Abs. 4 UStDV): schon versandt → Versanddatum,
   // sonst der voraussichtliche Liefermonat (Rechnungsdatum + längste Lieferzeit) — ausdrücklich als „voraussichtlich“
   const leistung = order.shippedAt
@@ -2763,7 +2784,7 @@ function invoiceHTML(order) {
     <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
   </section>
   <h1>Rechnung</h1>
-  <table class="pos"><tr><th>Pos.</th><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
+  <table class="pos posten"><thead><tr><th class="nr">Pos.</th><th class="art">Artikel (individuell 3D-gedruckt)</th><th class="r menge">Menge</th><th class="r einzel">Einzelpreis</th><th class="r rabatt">Rabatt</th><th class="r summe">Summe</th></tr></thead><tbody>${rows}</tbody></table>
   <table class="summen">
     <tr><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
     ${aktionRow}
@@ -2775,9 +2796,9 @@ function invoiceHTML(order) {
   </table>
   <p class="steuer">${steuerNote}</p>
   <div class="zahlung">${payNote}</div>
-  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${esc(lieferzeitText(settings))}. ${esc(fristBeginnKurz(order.payment))}</p>
-  <p class="klein">Produkthinweise: ${esc(produktHinweise(order.lines).join(' '))}</p>`;
-  return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body });
+  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${einheitNbsp(esc(lieferzeitText(settings)))}. ${einheitNbsp(esc(fristBeginnKurz(order.payment)))}</p>
+  <p class="klein">Produkthinweise: ${einheitNbsp(esc(produktHinweise(order.lines).join(' ')))}</p>`;
+  return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body, pdf: 'rechnung.pdf' });
 }
 
 // ---------------------------------------------------------------------------
@@ -2794,11 +2815,11 @@ function creditNoteHTML(order) {
   const { kleinunternehmer: ku, satz } = order.invoiceNo ? steuerDerRechnung(order) : steuerJetzt();
   const ust = ku ? null : ustAus(betrag, satz);
   const vatNote = ku
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
-    : `Im Gutschriftbetrag enthaltene USt (${satz} %): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
+    ? 'Steuerbefreiung für Kleinunternehmer nach §&nbsp;19 Abs.&nbsp;1 UStG – es wird keine Umsatzsteuer berechnet.'
+    : `Im Gutschriftbetrag enthaltene USt (${satz}&nbsp;%): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
   const how = {
     gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> – einlösbar in der Kasse des Shops im Feld „Gutscheincode“, ohne Mindestbestellwert und auch während einer Aktion. Ist die Bestellung kleiner, bleibt der Rest auf dem Code.`,
-    ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${esc(maskIban(r.iban))}` : ''} innerhalb von 5 Werktagen.`,
+    ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${nbspAlle(maskIban(r.iban))}` : ''} innerhalb von 5&nbsp;Werktagen.`,
     paypal: `Erstattung über PayPal auf das Zahlungskonto der Bestellung${r.refundId ? ` (Referenz ${esc(r.refundId)})` : ''}.`,
   }[r.art] || esc(REKLA_ART[r.art] || '');
   const ref = order.invoiceNo ? `Rechnung ${esc(order.invoiceNo)} vom ${esc(dateDE(order.completedAt || order.createdAt))} · Bestellung ${esc(order.orderId)}` : `Bestellung ${esc(order.orderId)} vom ${esc(dateDE(order.createdAt))}`;
@@ -2816,15 +2837,15 @@ function creditNoteHTML(order) {
     <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
   </section>
   <h1>Gutschrift <span class="muted" style="font-size:.62em">(Rechnungskorrektur)</span></h1>
-  <table class="pos"><tr><th>Position</th><th class="r">Betrag</th></tr>
-    <tr><td>Gutschrift zu ${ref}<br><small class="muted">Grund: ${esc(r.grund || '—')}</small></td><td class="r">${money(betrag)}</td></tr></table>
+  <table class="pos"><thead><tr><th>Position</th><th class="r">Betrag</th></tr></thead><tbody>
+    <tr><td>Gutschrift zu ${ref}<br><small class="muted">Grund: ${esc(r.grund || '—')}</small></td><td class="r">${money(betrag)}</td></tr></tbody></table>
   <table class="summen">
     <tr class="grand"><td>Gutschriftbetrag</td><td class="r">${money(betrag)}</td></tr>
   </table>
   <p class="steuer">${vatNote}</p>
   <div class="zahlung"><b>Art der Erstattung:</b> ${how}</div>
   <p class="dank">Diese Gutschrift bezieht sich auf die oben genannte Rechnung bzw. Bestellung${order.invoiceNo ? ' und mindert deren Betrag entsprechend' : ''}. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
-  return belegSeite({ title: `Gutschrift (Rechnungskorrektur) ${r.gutschriftNo || ''} · ${BRAND}`, co, body });
+  return belegSeite({ title: `Gutschrift (Rechnungskorrektur) ${r.gutschriftNo || ''} · ${BRAND}`, co, body, pdf: 'gutschrift.pdf' });
 }
 
 // ---------------------------------------------------------------------------
@@ -2897,9 +2918,9 @@ function stornoHTML(order) {
     ['Bestellnummer', esc(order.orderId)],
   ];
   const ustRows = ust
-    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">−${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz} %</td><td class="r">−${money(ust.ust)}</td></tr>` : '';
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">−${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz}&nbsp;%</td><td class="r">−${money(ust.ust)}</td></tr>` : '';
   const vatNote = ku
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
+    ? 'Steuerbefreiung für Kleinunternehmer nach §&nbsp;19 Abs.&nbsp;1 UStG – es wird keine Umsatzsteuer berechnet.'
     : `Die in Rechnung ${esc(order.invoiceNo)} ausgewiesene Umsatzsteuer wird in dieser Höhe berichtigt.`;
   const bezahlt = order.paymentStatus === 'bezahlt';
   // 0 € zu zahlen (Gutschein/Guthaben deckte alles): kein Geld zu erstatten, nur ein Guthaben wird wieder frei
@@ -2918,9 +2939,9 @@ function stornoHTML(order) {
     <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
   </section>
   <h1>Stornorechnung</h1>
-  <table class="pos"><tr><th>Position</th><th class="r">Betrag</th></tr>
+  <table class="pos"><thead><tr><th>Position</th><th class="r">Betrag</th></tr></thead><tbody>
     <tr><td>Stornierung der Rechnung ${esc(order.invoiceNo)} vom ${esc(rechnungVom)} · Bestellung ${esc(order.orderId)}<br><small class="muted">Die Bestellung wurde storniert.</small></td><td class="r">−${money(entgelt)}</td></tr>
-    ${gutschrift ? `<tr><td>bereits gutgeschrieben mit Gutschrift ${esc(r.gutschriftNo)}</td><td class="r">${money(gutschrift)}</td></tr>` : ''}</table>
+    ${gutschrift ? `<tr><td>bereits gutgeschrieben mit Gutschrift ${esc(r.gutschriftNo)}</td><td class="r">${money(gutschrift)}</td></tr>` : ''}</tbody></table>
   <table class="summen">
     <tr class="grand"><td>Stornobetrag</td><td class="r">−${money(betrag)}</td></tr>
     ${ustRows}
@@ -2928,7 +2949,7 @@ function stornoHTML(order) {
   <p class="steuer">${vatNote}</p>
   <div class="zahlung">${zahlung}</div>
   <p class="dank">Diese Stornorechnung hebt die Rechnung ${esc(order.invoiceNo)} auf. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
-  return belegSeite({ title: `Stornorechnung ${st.nr || ''} · ${BRAND}`, co, body });
+  return belegSeite({ title: `Stornorechnung ${st.nr || ''} · ${BRAND}`, co, body, pdf: 'storno.pdf' });
 }
 /**
  * Beim Wechsel auf „storniert“ (unter der Bestellsperre, vor writeOrder): Stornorechnung zu einer ausgestellten Rechnung
