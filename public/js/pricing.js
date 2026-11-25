@@ -31,6 +31,8 @@ export function getColors() { return colors; }
 export function serverTime() { return Date.now() + timeOffset; }
 
 const r2 = (v) => Math.round(v * 100) / 100;
+/** Betrag ≥ 0 auf Cent — wie euro() im Server, der jeden Preisbestandteil so rundet */
+const eu = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? r2(n) : 0; };
 
 export function fmt(v) {
   return (Number(v) || 0).toLocaleString('de-DE', { style: 'currency', currency: pricing?.currency || 'EUR' });
@@ -41,10 +43,16 @@ export function fmtPlus(v) {
   const s = Number.isInteger(n) ? String(n) : n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `+${s} €`;
 }
-/** "2 Stück −20 % · 4 Stück −35 %" für die Preisbox (geschütztes Leerzeichen vor „%“: nie „−20“ / „%“ auf zwei Zeilen) */
+/** Mehrzahl im Dativ für den Mengenrabatt-Hinweis („ab 2 gleichen Vasen“) */
+const STAFFEL_WORT = { vase: 'Vasen', eierbecher: 'Eierbechern' };
+/**
+ * Mengenrabatt für die Preisbox und das Handy-Detailblatt: „ab 2 gleichen Vasen −10 % · ab 3 −15 %“ — der Rabatt gilt je Design
+ * (gleiche Gestaltung mehrfach im Warenkorb), nicht für verschiedene Vasen zusammen (geschütztes Leerzeichen vor „%“)
+ */
 export function discountTeaser(product) {
-  const tiers = pricing?.products?.[product]?.discounts || [];
-  return tiers.map((t) => `${t.qty} Stück −${t.off}\u00a0%`).join(' · ');
+  const tiers = (pricing?.products?.[product]?.discounts || []).filter((t) => +t.off > 0);
+  // innerhalb einer Stufe geschützte Leerzeichen: umbrochen wird nur zwischen den Stufen („… −10 % ·“ / „ab 3 −15 %“)
+  return tiers.map((t, i) => `ab\u00a0${t.qty}${i ? '' : `\u00a0gleichen\u00a0${STAFFEL_WORT[product] || 'Stück'}`}\u00a0−${t.off}\u00a0%`).join(' · ');
 }
 
 /** Mengenrabatt in % für qty nach einer Staffel [{ qty, off }] — höchster erreichter Satz */
@@ -63,11 +71,13 @@ export function discountFor(product, qty) {
 // ---------------------------------------------------------------------------
 /** Euro kurz: ganze Beträge ohne Nachkommastellen („ab 39 € versandfrei“), sonst wie fmt() („4,90 €“) */
 export function euroKurz(v) { return Number.isInteger(+v) ? `${+v}\u00a0€` : fmt(v); }
+/** Versand immer frei? Ohne Pauschale oder mit Freigrenze ≤ 0 (wie computeTotals() im Server und AGB § 6) */
+const versandFrei = (sh) => !(+sh.flat > 0) || !(+sh.freeFrom > 0);
 /** „zzgl. 4,90 € Versand · ab 39 € versandfrei“ · ohne Versandkosten „Versandkostenfrei“ · ohne geladene Preise '' */
 export function versandText(p = pricing) {
   const sh = p?.shipping;
-  if (!sh || !(+sh.flat > 0)) return p ? 'Versandkostenfrei' : '';
-  return `zzgl. ${euroKurz(sh.flat)} Versand${+sh.freeFrom > 0 ? ` · ab ${euroKurz(sh.freeFrom)} versandfrei` : ''}`;
+  if (!sh || versandFrei(sh)) return p ? 'Versandkostenfrei' : '';
+  return `zzgl. ${euroKurz(sh.flat)} Versand · ab ${euroKurz(sh.freeFrom)} versandfrei`;
 }
 /** Link auf „Versand & Zahlung“ — neuer Tab, damit das Design im Konfigurator offen bleibt */
 const VERSAND_LINK = (txt) => `<a href="/versand" target="_blank" rel="noopener">${txt}</a>`;
@@ -78,13 +88,27 @@ const VERSAND_LINK = (txt) => `<a href="/versand" target="_blank" rel="noopener"
 export function versandHTML({ kurz = false } = {}, p = pricing) {
   const sh = p?.shipping;
   if (!sh) return '';
-  if (!(+sh.flat > 0)) return VERSAND_LINK('Versandkostenfrei');
+  if (versandFrei(sh)) return VERSAND_LINK('Versandkostenfrei');
   if (kurz) return `zzgl. ${VERSAND_LINK('Versand')}`;
-  return `zzgl. ${VERSAND_LINK(`${euroKurz(sh.flat)} Versand`)}${+sh.freeFrom > 0 ? ` · ab ${euroKurz(sh.freeFrom)} versandfrei` : ''}`;
+  return `zzgl. ${VERSAND_LINK(`${euroKurz(sh.flat)} Versand`)} · ab ${euroKurz(sh.freeFrom)} versandfrei`;
 }
-/** Kleinunternehmer (§ 19 UStG, /api/pricing → shop.kleinunternehmer): Hinweis zur Umsatzsteuer beim Preis, sonst '' */
+/**
+ * Versand und Gesamtbetrag wie computeTotals() im Server (AGB § 6): Versand frei, sobald der Warenwert nach Aktion und Mengenrabatt
+ * (subtotal) die Freigrenze erreicht — gemessen VOR Gutschein und Guthaben; couponOff = Abzug laut /api/quote (Rabatt höchstens der
+ * Warenwert, Guthaben auch den Versand); total ≥ 0 (0 = nichts zu zahlen). anzahl = Positionen im Warenkorb (leer → kein Versand).
+ */
+export function summen(subtotal, couponOff = 0, anzahl = 1, p = pricing) {
+  const sh = p?.shipping || {};
+  const shipping = !anzahl || versandFrei(sh) || subtotal >= eu(sh.freeFrom) ? 0 : eu(sh.flat);
+  return { shipping, total: Math.max(0, r2(subtotal + shipping - (Number(couponOff) || 0))) };
+}
+/**
+ * Umsatzsteuer-Hinweis beim Preis (§ 6 Abs. 1 PAngV), aus /api/pricing → shop.kleinunternehmer: Kleinunternehmer „Endpreis, keine
+ * USt. nach § 19 UStG“, Regelbesteuerung „inkl. MwSt.“ — '' nur, wenn der Server die Angabe (noch) nicht liefert
+ */
 export function ustText(p = pricing) {
-  return p?.shop?.kleinunternehmer ? 'Endpreis, keine USt. nach § 19 UStG' : '';
+  if (typeof p?.shop?.kleinunternehmer !== 'boolean') return '';
+  return p.shop.kleinunternehmer ? 'Endpreis, keine USt. nach § 19 UStG' : 'inkl. MwSt.';
 }
 
 // ---------------------------------------------------------------------------
@@ -278,13 +302,14 @@ function partsWith(item, pr, farbe) {
   if (!p) return null;
   const c = item.config || {};
   const hasText = !!String(c.text || '').trim() && gravurAllowed(c, item?.product);
+  // jeder Bestandteil auf Cent wie im Server (euro()) — sonst rechneten Browser und Server bei Preisen mit 3 Nachkommastellen verschieden
   return {
-    grund: p.single,
-    untersetzer: item.product === 'eierbecher' && item.saucer ? (p.untersetzer || 0) : 0,
-    gravur: hasText ? (pr.gravur || 0) : 0,
-    farbschrift: hasText && c.textStyle === 'farbe' ? (pr.farbschrift || 0) : 0,
-    muster: Math.max(0, Number(pr.muster?.[c.pattern]) || 0),
-    farbe,
+    grund: eu(p.single),
+    untersetzer: item.product === 'eierbecher' && item.saucer ? eu(p.untersetzer) : 0,
+    gravur: hasText ? eu(pr.gravur) : 0,
+    farbschrift: hasText && c.textStyle === 'farbe' ? eu(pr.farbschrift) : 0,
+    muster: eu(pr.muster?.[c.pattern]),
+    farbe: eu(farbe),
     groesse: volumeSurchargeWith(pr, item.product, c),
   };
 }
@@ -484,8 +509,10 @@ export function unitPrice(item) { return unitParts(item).unit; }
 /**
  * Zeilenpreis: off = Mengenrabatt (entfällt, wenn die geltende Aktion kein „Mengenrabatt zusätzlich“ hat),
  * line = round2(unit · qty · (1 − off/100)); lineUvp = dieselbe Zeile ohne Aktion, aber mit dem Mengenrabatt, der ohne die
- * Aktion gälte (Normalpreis der Zeile), ersparnis = max(0, lineUvp − line) (wie order.aktionen[].ersparnis auf dem Server,
- * dort je Aktion summiert — ohne „Mengenrabatt zusätzlich“ kann eine Aktion bei 2+ Stück auch nichts sparen).
+ * Aktion gälte (Normalpreis der Zeile). Mit einer Aktion zahlt niemand mehr als ohne: ist lineUvp nicht teurer als der
+ * Aktionspreis der Zeile (z. B. 3 Stück bei −10 % ohne Mengenrabatt), gilt lineUvp und für die Zeile keine Aktion
+ * (aktionProzent 0, unit = uvp, off = Staffel) — wie priceItem() auf dem Server. ersparnis = lineUvp − line (> 0 nur mit Aktion;
+ * wie order.aktionen[].ersparnis auf dem Server, dort je Aktion summiert).
  * ref = referenzpreis(item) | null (Stückpreis-Bezug); lineRef = niedrigster Zeilenpreis der letzten 30 Tage für genau diese
  * Menge (tiefstZeile, mit der damaligen Staffel) — Streichpreis im Warenkorb, null ohne ref, ohne bekannte Staffel oder wenn die
  * Zeile nicht günstiger ist; refProzent = round((1 − line/lineRef)·100) (Badge der Zeile), ersparnisRef = lineRef − line
@@ -494,20 +521,21 @@ export function unitPrice(item) { return unitParts(item).unit; }
 export function linePrice(item) {
   const q = unitParts(item);
   const qty = Math.max(1, Math.min(50, Math.round(Number(item?.qty) || 1)));
-  const a = q.aktionProzent > 0 ? aktionFor(item.product, item.config?.pattern) : null;
+  let a = q.aktionProzent > 0 ? aktionFor(item.product, item.config?.pattern) : null;
   const staffel = discountFor(item.product, qty);
-  const off = a && !a.mengenrabatt ? 0 : staffel;
-  const lineFull = r2(q.unit * qty);
-  const line = r2((q.unit * qty) * (1 - off / 100));
   const lineUvp = r2((q.uvp * qty) * (1 - staffel / 100));
+  let unit = q.unit, off = a && !a.mengenrabatt ? 0 : staffel;
+  let line = r2((unit * qty) * (1 - off / 100));
+  if (a && !(line < lineUvp - 0.004)) { a = null; unit = q.uvp; off = staffel; line = lineUvp; }
+  const lineFull = r2(unit * qty);
   const ref = a ? referenzpreis(item) : null;
   let lineRef = ref ? tiefstZeile(item, a, qty) : null;
   let refProzent = lineRef != null && lineRef > 0 ? Math.round((1 - line / lineRef) * 100) : 0;
   if (lineRef != null && (line >= lineRef - 0.004 || refProzent < 1)) { lineRef = null; refProzent = 0; }
   return {
-    off, line, lineFull, lineUvp, unit: q.unit, uvp: q.uvp,
-    aktionProzent: q.aktionProzent, aktionBetrag: q.aktionBetrag, aktionName: q.aktionName, aktionId: q.aktionId,
-    ersparnis: q.aktionProzent > 0 ? Math.max(0, r2(lineUvp - line)) : 0,
+    off, line, lineFull, lineUvp, unit, uvp: q.uvp,
+    aktionProzent: a ? q.aktionProzent : 0, aktionBetrag: a ? q.aktionBetrag : 0, aktionName: a ? q.aktionName : null, aktionId: a ? q.aktionId : null,
+    ersparnis: a ? Math.max(0, r2(lineUvp - line)) : 0,
     ref, lineRef, refProzent, ersparnisRef: lineRef != null ? Math.max(0, r2(lineRef - line)) : 0,
   };
 }

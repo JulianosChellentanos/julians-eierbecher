@@ -6,7 +6,7 @@
 // #hero-hint (Preisfeed), #mb-price (Live-Preis), Body-Klassen has-mbar / no-scroll der App-Shell (mobile.js).
 import { STUDIO_DESIGNS, designConfig, designImage } from './studio-designs.js';
 import { buzz } from './mobile.js';
-import { unitPrice, aktionFor, onAktionEnde, getPricing, fmt, colorByRef, aktionenActive, aktionTextKurz, referenzpreis, referenzText, aktionProzentGueltig, euroKurz, versandText, versandHTML, ustText } from './pricing.js';
+import { unitPrice, aktionFor, onAktionEnde, getPricing, fmt, colorByRef, aktionenActive, aktionTextKurz, referenzpreis, referenzText, aktionProzentGueltig, euroKurz, versandText, versandHTML, ustText, discountTeaser } from './pricing.js';
 import { openSheet, isSheetOpen, sheetElement } from './mobile-sheet.js';
 import { MOBILE_PATTERNS, patternConfig, patternByKey } from './mobile-patterns.js';
 import { renderPreviewsOffscreen } from './mobile-preview.js';
@@ -204,13 +204,14 @@ function priceHTML(cfg) {
  *  versandText) und bei Kleinunternehmern der USt.-Hinweis; statt des Fachbegriffs „STL-Download“, der steht jetzt im FAQ */
 function factsText() { return [ustText(), versandText()].filter(Boolean).join(' · '); }
 /**
- * Mengenrabatt aus settings.pricing.vase.discounts: „2 Vasen −10 % · 3 Vasen −15 %“ — nur, wenn er für die gezeigte Vase auch gilt
- * (eine laufende Aktion ohne „Mengenrabatt zusätzlich“ ersetzt ihn im Warenkorb, linePrice in pricing.js; dann keine Zeile)
+ * Mengenrabatt aus settings.pricing.vase.discounts: „ab 2 gleichen Vasen −10 % · ab 3 −15 %“ (gilt je Design, pricing.js
+ * discountTeaser) — nur, wenn er für die gezeigte Vase auch gilt (eine laufende Aktion ohne „Mengenrabatt zusätzlich“ ersetzt
+ * ihn im Warenkorb, linePrice in pricing.js; dann keine Zeile)
  */
 function dealText(cfg) {
   const tiers = getPricing()?.products?.vase?.discounts || []; if (!tiers.length) return '';
   try { const a = aktionFor('vase', cfg?.pattern); if (a && !a.mengenrabatt) return ''; } catch { /* egal */ }
-  return tiers.filter((t) => +t.off > 0).map((t) => `${t.qty} Vasen −${t.off}\u00a0%`).join(' · ');
+  return discountTeaser('vase');
 }
 /** Absicherung am Kaufpunkt (unter dem Sheet-Knopf, Linien-Icon): Neudruck + Herkunft; PayPal nur, wenn es in settings.paypal aktiv ist */
 function trustHTML() {

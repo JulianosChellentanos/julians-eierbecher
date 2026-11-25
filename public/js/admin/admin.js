@@ -52,6 +52,48 @@ const rkArtLabel = (a) => DATA?.reklaArt?.[a] || REKLA_ART[a] || a;
 const reklaOpen = (o) => REKLA_OPEN.includes(o.reklamation?.status);
 /** Erstatteter Betrag (erledigte Gutschrift/Erstattung, kein Nachdruck) — gleiche Regel wie refundAmount() im Server */
 const refundAmount = (o) => (o.reklamation?.status === 'erledigt' && o.reklamation.art !== 'nachdruck' ? euro(o.reklamation.betrag) : 0);
+const r2c = (v) => Math.round((Number(v) || 0) * 100) / 100;
+/** Guthaben-Anteil einer Bestellung (Gutschrift-Code als Zahlungsmittel) — neue Bestellungen: coupon.guthaben, ältere über die Gutschein-Liste */
+function guthabenOff(o) {
+  const c = o?.coupon;
+  if (!c || !(Number(c.off) > 0)) return 0;
+  const k = String(c.code || '').trim().toUpperCase();
+  const gc = (DATA?.settings?.coupons || []).find((x) => String(x?.code || '').trim().toUpperCase() === k);
+  return c.guthaben === true || (gc?.guthaben && gc.type === 'fixed') ? euro(c.off) : 0;
+}
+/** Rechnungsbetrag (Gesamtbetrag der Rechnung): zu zahlen + Guthaben-Anteil — Guthaben ist eine Zahlung, kein Rabatt */
+const rechnungsbetrag = (o) => r2c(euro(o.total) + guthabenOff(o));
+/**
+ * Umsatz einer Bestellung für Kennzahlen: nur mit Rechnung (nie abgeschlossene Kassen zählen nicht), storniert = 0,
+ * sonst Rechnungsbetrag minus erledigte Gutschrift/Erstattung — ein eingelöstes Guthaben mindert den Umsatz nur einmal (beim
+ * Ausstellen der Gutschrift), nicht noch einmal bei der Bestellung, in der es eingelöst wird
+ */
+const umsatz = (o) => (!o.invoiceNo || st(o) === 'storniert' ? 0 : Math.max(0, r2c(rechnungsbetrag(o) - refundAmount(o))));
+/** Datum, an dem der Umsatz entsteht: Rechnungsdatum (Abschluss der Kasse), ältere Bestellungen: Bestelldatum */
+const umsatzDatum = (o) => o.completedAt || o.invoiceAt || o.createdAt;
+/**
+ * Höchstbetrag einer Gutschrift/Erstattung wie reklaMax() im Server: bezahlter Betrag (bezahlt: Rechnungsbetrag samt Guthaben,
+ * sonst nur der Guthaben-Anteil) minus frühere Gutschriften; per PayPal höchstens der per PayPal gezahlte Betrag; ohne Rechnung
+ * oder nach Storno 0
+ */
+function reklaMax(o, art) {
+  if (!o.invoiceNo || st(o) === 'storniert' || o.storno?.nr) return 0;
+  const bezahlt = o.paymentStatus === 'bezahlt';
+  let max = bezahlt ? rechnungsbetrag(o) : guthabenOff(o);
+  if (art === 'paypal') max = Math.min(max, bezahlt ? euro(o.total) : 0);
+  const r = o.reklamation;
+  const frueher = r?.status === 'erledigt' && r.art !== 'nachdruck' && r.gutschriftNo ? euro(r.betrag) : 0;
+  return Math.max(0, r2c(max - frueher));
+}
+/** Storno nicht mehr umkehrbar (wie stornoAufhebenSperre() im Server) → Erklärung, sonst '' */
+function stornoEndgueltig(o) {
+  if (o.storno?.nr) return `Stornorechnung ${o.storno.nr} ausgestellt – die Rechnung ${o.invoiceNo || ''} ist aufgehoben, das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
+  const r = o.reklamation, gs = r?.status === 'erledigt' && r.art !== 'nachdruck' && r.gutschriftNo ? euro(r.betrag) : 0;
+  if (o.invoiceNo && gs > 0 && r2c(rechnungsbetrag(o) - gs) <= 0) return `Die Rechnung ${o.invoiceNo} ist mit Gutschrift ${r.gutschriftNo} vollständig gutgeschrieben – das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
+  const g = guthabenOff(o), rest = DATA?.couponRest?.[String(o.coupon?.code || '').trim().toUpperCase()];
+  if (g > 0 && rest != null && rest + 0.005 < g) return `Das Guthaben „${o.coupon.code}“ ist inzwischen anderweitig eingelöst – das Storno lässt sich nicht zurücknehmen.`;
+  return '';
+}
 /** Mail-Phase zur aktuellen Reklamation: offen/ruecksendung → angelegt, sonst = Status */
 const reklaPhase = (r) => ({ offen: 'angelegt', ruecksendung: 'angelegt', eingegangen: 'eingegangen', erledigt: 'erledigt', abgelehnt: 'abgelehnt' }[r?.status] || 'angelegt');
 /** IBAN bis auf die letzten 4 Zeichen maskiert, in Vierergruppen */
@@ -146,7 +188,7 @@ function updateCounters() {
   $('#cnt-queue').textContent = q;
   $('#nav-cnt-orders').textContent = open || '';
   $('#nav-cnt-print').textContent = q || '';
-  const rev = DATA.orders.filter((o) => st(o) !== 'storniert').reduce((s, o) => s + (o.total || 0) - refundAmount(o), 0);   // netto: abzüglich erledigter Erstattungen
+  const rev = DATA.orders.reduce((s, o) => s + umsatz(o), 0);   // Rechnungen abzüglich Gutschriften/Erstattungen (umsatz())
   const rk = DATA.orders.filter(reklaOpen).length;
   const wr = wrOffenCount();   // offene Widerrufe: Zähler an „Übersicht“ (dort steht die Karte)
   $('#nav-cnt-dash').textContent = wr || '';
@@ -279,15 +321,18 @@ function renderDash() {
   const all = DATA.orders;
   const orders = all.filter((o) => st(o) !== 'storniert');
   const now = Date.now(), d30 = 30 * 864e5;
-  const rev = orders.reduce((s, o) => s + (o.total || 0), 0);
-  const rev30 = orders.filter((o) => now - new Date(o.createdAt) < d30).reduce((s, o) => s + (o.total || 0), 0);
+  // Umsatz = Rechnungsbeträge (nur abgeschlossene Kassen, Guthaben zählt als Zahlung) abzüglich Gutschriften/Erstattungen
+  const mitRechnung = orders.filter((o) => o.invoiceNo);
+  const in30 = (o) => now - new Date(umsatzDatum(o)) < d30;
+  const rev = mitRechnung.reduce((s, o) => s + rechnungsbetrag(o), 0);
+  const rev30 = mitRechnung.filter(in30).reduce((s, o) => s + rechnungsbetrag(o), 0);
   // Erledigte Erstattungen/Gutschriften (kein Nachdruck) mindern den Umsatz — Server liefert dasselbe in DATA.kpi.erstattet
-  const refunds = orders.reduce((s, o) => s + refundAmount(o), 0);
-  const refunds30 = orders.filter((o) => now - new Date(o.createdAt) < d30).reduce((s, o) => s + refundAmount(o), 0);
+  const refunds = mitRechnung.reduce((s, o) => s + refundAmount(o), 0);
+  const refunds30 = mitRechnung.filter(in30).reduce((s, o) => s + refundAmount(o), 0);
   const refundLine = (v) => (v > 0 ? `<small class="kpi-sub">− ${money(v)} Erstattungen</small>` : '');
   const open = all.filter((o) => ['neu', 'bezahlt', 'im-druck', 'gedruckt'].includes(st(o))).length;
   const printed = all.flatMap((o) => o.lines || []).filter((l) => l.print?.status === 'fertig').reduce((s, l) => s + (l.qty || 0), 0);
-  const avg = orders.length ? rev / orders.length : 0;
+  const avg = mitRechnung.length ? rev / mitRechnung.length : 0;
   $('#kpis').innerHTML = `
     <div class="kpi"><span>Umsatz gesamt</span><b>${money(rev - refunds)}</b>${refundLine(refunds)}</div>
     <div class="kpi"><span>Umsatz 30 Tage</span><b>${money(rev30 - refunds30)}</b>${refundLine(refunds30)}</div>
@@ -315,10 +360,10 @@ function renderDash() {
   // Umsatz 30 Tage (Inline-SVG-Balken, eine Serie)
   const days = [];
   for (let i = 29; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push({ d, sum: 0, n: 0 }); }
-  for (const o of orders) {
-    const t = new Date(o.createdAt); t.setHours(0, 0, 0, 0);
+  for (const o of mitRechnung) {
+    const t = new Date(umsatzDatum(o)); t.setHours(0, 0, 0, 0);
     const day = days.find((x) => x.d.getTime() === t.getTime());
-    if (day) { day.sum += o.total || 0; day.n++; }
+    if (day) { day.sum += rechnungsbetrag(o); day.n++; }
   }
   const W = 440, H = 160, padL = 44, padB = 22, padT = 10, bw = (W - padL - 6) / 30;
   const max = Math.max(10, ...days.map((x) => x.sum));
@@ -443,7 +488,7 @@ function renderDrawer() {
   // Status-Stepper
   const idx = STATUS_FLOW.indexOf(s);
   const stepper = s === 'storniert'
-    ? `<span class="step cur">✕ Storniert</span><button class="ghost mini" onclick="setStatus('${esc(o.orderId)}','neu')">Storno aufheben → Neu</button>`
+    ? `<span class="step cur">✕ Storniert</span>${stornoEndgueltig(o) ? `<span class="muted" style="font-size:.8rem">${esc(stornoEndgueltig(o))}</span>` : `<button class="ghost mini" onclick="setStatus('${esc(o.orderId)}','neu')">Storno aufheben → Neu</button>`}`
     : STATUS_FLOW.map((x, i) => {
       const cls = i < idx ? 'done' : i === idx ? 'cur' : i === idx + 1 ? 'next' : '';
       const click = cls === 'next' ? ` onclick="setStatus('${esc(o.orderId)}','${x}')" title="Weiter zu „${esc(stLabel(x))}“"` : '';
@@ -685,7 +730,7 @@ const rkNotifyDefault = () => !!DATA.settings.mail?.enabled && DATA.settings.mai
 const rkNotifyBox = () => `<label class="inline"><input type="checkbox" id="rk-notify" ${rkNotifyDefault() ? 'checked' : ''}> Kunde per E-Mail informieren</label>`;
 /** Formular „Reklamation anlegen“ (Art als Radio-Kacheln; PayPal nur bei PayPal-Bestellungen) */
 function reklaForm(o, cancel) {
-  const id = esc(o.orderId), total = euro(o.total);
+  const id = esc(o.orderId), total = reklaMax(o);   // Obergrenze: bezahlter Betrag minus frühere Gutschriften (wie im Server)
   const tiles = RK_TILES.map(([a, ic, tt, sub]) => {
     const off = a === 'paypal' && o.payment !== 'paypal';
     return `<label class="rk-tile ${off ? 'off' : ''} ${a === 'nachdruck' ? 'on' : ''}" ${off ? 'title="Nur bei Bestellungen, die per PayPal bezahlt wurden"' : ''}><input type="radio" name="rk-art" value="${a}" ${a === 'nachdruck' ? 'checked' : ''} ${off ? 'disabled' : ''} onchange="reklaFormSync()"><span class="ic">${ic}</span><span class="tt">${tt}</span><small>${sub}</small></label>`;
@@ -694,7 +739,7 @@ function reklaForm(o, cancel) {
       <label>Grund der Reklamation<textarea id="rk-grund" rows="2" placeholder="z. B. Riss im Boden, falsche Farbe, Gravur unleserlich …"></textarea></label>
       <div class="rk-tiles" id="rk-tiles">${tiles}</div>
       <div class="row" style="margin-top:10px">
-        <label id="rk-betrag-wrap" hidden>Betrag (€) <small>max. ${money(total)}</small><input type="number" id="rk-betrag" min="0" max="${total}" step="0.01" value="${total}" style="width:120px"></label>
+        <label id="rk-betrag-wrap" hidden>Betrag (€) <small>${total > 0 ? `max. ${money(total)} (bezahlt)` : o.invoiceNo ? 'noch nichts bezahlt – nur Nachdruck möglich' : 'ohne Rechnung nur Nachdruck möglich'}</small><input type="number" id="rk-betrag" min="0" max="${total}" step="0.01" value="${total}" style="width:120px"></label>
         <label id="rk-iban-wrap" hidden>IBAN des Kunden <small>optional — spätestens beim Erledigen</small><input id="rk-iban" placeholder="DE00 0000 0000 0000 0000 00" autocomplete="off" style="min-width:260px"></label>
       </div>
       <div class="row" style="margin-top:8px;gap:18px">
@@ -718,6 +763,8 @@ function reklaFormSync() {
 function reklaCard(o) {
   const r = o.reklamation, id = esc(o.orderId);
   const head = (extra = '') => `<div class="sect" id="rk-card"><h3>↩️ Reklamation &amp; Rückversand ${extra}</h3>`;
+  // Nach einem Storno hebt die Stornorechnung die Rechnung auf — keine Reklamation mehr (der Server lehnt sie ab)
+  if (!r && st(o) === 'storniert') return head() + '<p class="muted">Die Bestellung ist storniert – eine Reklamation ist nicht mehr möglich.</p></div>';
   if (!r) return head() + reklaForm(o, false) + '</div>';
   const open = REKLA_OPEN.includes(r.status);
   // Stepper: Angelegt → (Rücksendung erwartet → Ware eingegangen) → Erledigt; Abgelehnt separat
@@ -777,9 +824,10 @@ async function reklaAnlegen(id) {
   const art = $('input[name="rk-art"]:checked')?.value || 'nachdruck';
   if (!grund) return toast('Bitte einen Grund angeben', 'err');
   if (!REKLA_ART[art]) return toast('Bitte eine Art wählen', 'err');
-  const total = euro(o.total);
+  const total = reklaMax(o, art);
   const betrag = art === 'nachdruck' ? undefined : euro($('#rk-betrag').value);
-  if (betrag !== undefined && (betrag <= 0 || betrag > total + 1e-9)) return toast(`Betrag muss zwischen 0,01 € und ${money(total)} (Bestellsumme) liegen`, 'err');
+  if (betrag !== undefined && total <= 0) return toast(o.invoiceNo ? 'Für diese Bestellung ist noch nichts bezahlt – eine Gutschrift/Erstattung gibt es erst nach Zahlungseingang.' : 'Ohne Rechnung (Kasse nie abgeschlossen) ist nur ein Nachdruck möglich – sonst bitte stornieren.', 'err', 6000);
+  if (betrag !== undefined && (betrag <= 0 || betrag > total + 1e-9)) return toast(`Betrag muss zwischen 0,01 € und ${money(total)} (bezahlter Betrag) liegen`, 'err');
   const ruecksendung = !!$('#rk-ruecksendung').checked, notify = rkNotify();
   const iban = art === 'ueberweisung' ? $('#rk-iban').value.trim() : '';
   const what = art === 'nachdruck' ? 'Nachdruck — alle Positionen gehen zurück in die Druckwarteschlange' : `${rkArtLabel(art)} über ${money(betrag)}`;
@@ -1055,7 +1103,7 @@ function renderCustomers() {
     if (!e) continue;
     const c = (m[e] ||= { name: custName(o), email: e, city: '', orders: 0, rev: 0, last: null, account: false });
     c.orders++;
-    if (st(o) !== 'storniert') c.rev += o.total || 0;
+    c.rev += umsatz(o);   // wie „Umsatz gesamt“: nur mit Rechnung, abzüglich Gutschriften
     if (!c.last || o.createdAt > c.last) { c.last = o.createdAt; if (o.customer?.city) c.city = o.customer.city; if (!c.account) c.name = custName(o); }
   }
   const list = Object.values(m).sort((a, b) => (b.last || b.since || '').localeCompare(a.last || a.since || ''));
@@ -1151,20 +1199,22 @@ function renderTiers() {
 function addTier(k) { tiers[k].push({ qty: 2, off: 10 }); setDirty(true); renderTiers(); }
 function renderCoupons() {
   // Spalte „mit Aktion kombinierbar“ (coupons[i].mitAktion, Vertrag „Aktionen“): ohne Haken lehnt der Server den Code ab, solange eine Aktion läuft
-  $('#coupons-table').innerHTML = `<thead><tr><th>Code</th><th>Art</th><th>Wert</th><th>Mindestbestellwert (€)</th><th>Aktiv</th><th title="Gilt der Gutschein auch, während eine Aktion läuft? Ohne Haken wird er dann abgelehnt.">mit Aktion kombinierbar</th><th></th></tr></thead><tbody>` +
+  $('#coupons-table').innerHTML = `<thead><tr><th>Code</th><th>Art</th><th>Wert</th><th>Mindestbestellwert (€)</th><th>Aktiv</th><th title="Gilt der Gutschein auch, während eine Aktion läuft? Ohne Haken wird er dann abgelehnt.">mit Aktion kombinierbar</th><th title="Optional: letzter Gültigkeitstag und Höchstzahl an Bestellungen, die den Code einlösen dürfen (leer = unbegrenzt). Nicht für Guthaben.">Gültig bis / max.</th><th></th></tr></thead><tbody>` +
     coupons.map((c, i) => {
-      // Guthaben (Gutschrift aus einer Reklamation): Code, Art und Wert stehen so auf dem Beleg — nur aktiv/Mindestwert/Aktion änderbar
+      // Guthaben (Gutschrift aus einer Reklamation): Code, Art und Wert stehen so auf dem Beleg; es gilt immer ohne Mindestbestellwert
+      // und auch während einer Aktion (der Server erzwingt das, gutscheineAus) — änderbar ist nur „aktiv“
       const fest = c.guthaben ? ` readonly title="Guthaben aus einer Gutschrift — Code, Art und Wert stehen so auf dem Beleg"` : '';
       return `<tr>
       <td data-l="Code"><input type="text" value="${esc(c.code)}" onchange="coupons[${i}].code=this.value.toUpperCase()" style="width:140px;text-transform:uppercase"${fest}></td>
       <td data-l="Art"><select onchange="coupons[${i}].type=this.value"${c.guthaben ? ' disabled title="Guthaben: immer € Betrag"' : ''}><option value="percent" ${c.type === 'percent' ? 'selected' : ''}>% Rabatt</option><option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>€ Betrag</option></select></td>
       <td data-l="Wert"><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value"${fest}>${couponRestHTML(c)}</td>
-      <td data-l="Mindestwert"><input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value"></td>
+      <td data-l="Mindestwert">${c.guthaben ? '<span class="muted" title="Guthaben gilt ohne Mindestbestellwert">—</span>' : `<input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value">`}</td>
       <td data-l="Aktiv" style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="coupons[${i}].active=this.checked"></td>
-      <td data-l="mit Aktion" style="text-align:center"><input type="checkbox" ${c.mitAktion ? 'checked' : ''} onchange="coupons[${i}].mitAktion=this.checked" title="Mit laufender Aktion kombinierbar"></td>
+      <td data-l="mit Aktion" style="text-align:center">${c.guthaben ? '<input type="checkbox" checked disabled title="Guthaben gilt immer, auch während einer Aktion">' : `<input type="checkbox" ${c.mitAktion ? 'checked' : ''} onchange="coupons[${i}].mitAktion=this.checked" title="Mit laufender Aktion kombinierbar">`}</td>
+      <td data-l="Grenzen">${c.guthaben ? '<span class="muted" title="Guthaben ist Geld der Kundschaft – ohne Ablauf und Mindestbestellwert">—</span>' : `<input type="date" value="${/^\d{4}-\d{2}-\d{2}$/.test(c.gueltigBis || '') ? c.gueltigBis : ''}" onchange="coupons[${i}].gueltigBis=this.value||null" title="letzter Gültigkeitstag (leer = unbegrenzt)" style="width:112px;padding:7px 6px;font-size:.8rem;display:block;margin-bottom:4px"><input type="number" min="1" step="1" value="${Number(c.maxEinloesungen) > 0 ? Number(c.maxEinloesungen) : ''}" placeholder="max. ∞" onchange="coupons[${i}].maxEinloesungen=this.value===''?null:Math.round(+this.value)" title="höchstens so viele Bestellungen (leer = unbegrenzt)" style="width:90px">`}</td>
       <td><button class="ghost mini" onclick="delCoupon(${i})">🗑</button></td>
     </tr>`;
-    }).join('') + (coupons.length ? '' : '<tr><td colspan="7" class="empty">Noch keine Gutscheine.</td></tr>') + '</tbody>';
+    }).join('') + (coupons.length ? '' : '<tr><td colspan="8" class="empty">Noch keine Gutscheine.</td></tr>') + '</tbody>';
 }
 /** Guthaben-Gutschein (Gutschrift aus einer Reklamation): Restwert laut Server (Wert − Einlösungen in nicht stornierten Bestellungen) */
 function couponRestHTML(c) {
@@ -1648,7 +1698,7 @@ function fillCompany() {
   $('#c-name').value = c.name || ''; $('#c-owner').value = c.owner || ''; $('#c-street').value = c.street || '';
   $('#c-zip').value = c.zip || ''; $('#c-city').value = c.city || ''; $('#c-country').value = c.country || 'Deutschland';
   $('#c-email').value = c.email || ''; $('#c-phone').value = c.phone || '';
-  $('#c-steuernr').value = c.steuerNr || ''; $('#c-ustid').value = c.ustId || ''; $('#c-iban').value = c.iban || '';
+  $('#c-steuernr').value = c.steuerNr || ''; $('#c-ustid').value = c.ustId || ''; $('#c-widnr').value = c.wIdNr || ''; $('#c-iban').value = c.iban || '';
   $('#c-bic').value = c.bic || ''; $('#c-bank').value = c.bank || ''; $('#c-prefix').value = s.invoicePrefix || '';
   $('#c-credit-prefix').value = s.creditPrefix || '';   // Gutschriftnummern (Reklamation): Präfix + nextCredit
   $('#c-klein').checked = !!c.kleinunternehmer;
@@ -1683,7 +1733,7 @@ function companyForm() {
   const v = (id) => $(id).value;
   return {
     name: v('#c-name'), owner: v('#c-owner'), street: v('#c-street'), zip: v('#c-zip'), city: v('#c-city'), country: v('#c-country'),
-    email: v('#c-email'), phone: v('#c-phone'), ustId: v('#c-ustid'), steuerNr: v('#c-steuernr'), kleinunternehmer: $('#c-klein').checked,
+    email: v('#c-email'), phone: v('#c-phone'), ustId: v('#c-ustid'), wIdNr: v('#c-widnr'), steuerNr: v('#c-steuernr'), kleinunternehmer: $('#c-klein').checked,
     iban: v('#c-iban'), bic: v('#c-bic'), bank: v('#c-bank'),
   };
 }
@@ -1706,11 +1756,21 @@ function pflichtLuecken(c = {}) {
   const iban = t(c.iban).replace(/\s+/g, '').toUpperCase();
   if (!iban) out.push({ feld: 'c-iban', text: 'IBAN fehlt — Vorkasse-Kundschaft überweist dorthin' });
   else if (iban.startsWith('DE00')) out.push({ feld: 'c-iban', text: 'IBAN ist noch der Platzhalter „DE00 …“ — Vorkasse-Kundschaft überweist dorthin' });
-  if (!c.kleinunternehmer && !t(c.steuerNr) && !t(c.ustId)) out.push({ feld: 'c-steuernr', text: 'Steuernummer oder USt-IdNr. fehlt — ohne Kleinunternehmerregelung Pflicht auf jeder Rechnung' });
+  else if (!ibanOk(iban)) out.push({ feld: 'c-iban', text: 'IBAN-Prüfziffer stimmt nicht — bitte auf Tippfehler prüfen' });
+  // § 34a UStDV: auch Kleinunternehmer-Rechnungen (über 250 €) tragen Steuernummer oder USt-IdNr. — wie settingsHinweise() im Server
+  if (!t(c.steuerNr) && !t(c.ustId)) out.push({ feld: 'c-steuernr', text: c.kleinunternehmer ? 'Steuernummer fehlt — auch als Kleinunternehmer Pflicht auf Rechnungen über 250 € (§ 34a UStDV)' : 'Steuernummer oder USt-IdNr. fehlt — ohne Kleinunternehmerregelung Pflicht auf jeder Rechnung' });
   return out;
 }
+/** IBAN-Prüfziffer (mod 97) wie ibanPruefzifferOk() im Server — nur Hinweis, gespeichert wird trotzdem */
+function ibanOk(iban) {
+  const c = String(iban || '').replace(/\s+/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(c)) return false;
+  let rest = 0;
+  for (const ch of c.slice(4) + c.slice(0, 4)) for (const d of (/\d/.test(ch) ? ch : String(ch.charCodeAt(0) - 55))) rest = (rest * 10 + Number(d)) % 97;
+  return rest === 1;
+}
 /** Server-Hinweise, die der eigene Check nicht schon abdeckt (Inhaber, Anschrift, E-Mail, Telefon, Steuer stehen dort bzw. im Formular) */
-const HINWEIS_DOPPELT = /inhaber|anschrift|e-mail|telefon|steuernummer|ust-idnr/i;
+const HINWEIS_DOPPELT = /inhaber|anschrift|e-mail|telefon|steuernummer|ust-idnr|iban/i;
 const serverHinweise = () => (Array.isArray(DATA?.hinweise) ? DATA.hinweise : []).map((h) => String(h || '').trim()).filter((h) => h && !HINWEIS_DOPPELT.test(h));
 function pflichtHTML(list, extra, inForm) {
   const items = list.map((l) => `<li>${inForm ? `<button class="link" data-pf-focus="${esc(l.feld)}">${esc(l.text)}</button>` : esc(l.text)}</li>`)
