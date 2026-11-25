@@ -88,6 +88,8 @@ function reklaMax(o, art) {
 /** Storno nicht mehr umkehrbar (wie stornoAufhebenSperre() im Server) → Erklärung, sonst '' */
 function stornoEndgueltig(o) {
   if (o.storno?.nr) return `Stornorechnung ${o.storno.nr} ausgestellt – die Rechnung ${o.invoiceNo || ''} ist aufgehoben, das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
+  const r = o.reklamation, gs = r?.status === 'erledigt' && r.art !== 'nachdruck' && r.gutschriftNo ? euro(r.betrag) : 0;
+  if (o.invoiceNo && gs > 0 && r2c(rechnungsbetrag(o) - gs) <= 0) return `Die Rechnung ${o.invoiceNo} ist mit Gutschrift ${r.gutschriftNo} vollständig gutgeschrieben – das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
   const g = guthabenOff(o), rest = DATA?.couponRest?.[String(o.coupon?.code || '').trim().toUpperCase()];
   if (g > 0 && rest != null && rest + 0.005 < g) return `Das Guthaben „${o.coupon.code}“ ist inzwischen anderweitig eingelöst – das Storno lässt sich nicht zurücknehmen.`;
   return '';

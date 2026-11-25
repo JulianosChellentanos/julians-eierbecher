@@ -2083,13 +2083,15 @@ function stornoBetraege(order) {
 }
 /**
  * Darf eine stornierte Bestellung wieder aufleben („Storno aufheben“)? → null oder Meldung (409). Nicht mehr, sobald eine
- * Stornorechnung existiert oder die Rechnung schon vollständig gutgeschrieben ist (die Rechnung ist aufgehoben — ein neuer Vorgang
- * braucht eine neue Bestellung), und nicht, wenn ihr Guthaben inzwischen anderweitig eingelöst ist (sonst wäre es über seinen Wert
- * eingelöst). Ohne Rechnung (nie abgeschlossene Kasse) bleibt das Aufheben als Korrekturweg erlaubt.
+ * Stornorechnung existiert oder die Rechnung schon mit einer Gutschrift vollständig gutgeschrieben ist (die Rechnung ist
+ * aufgehoben — ein neuer Vorgang braucht eine neue Bestellung), und nicht, wenn ihr Guthaben inzwischen anderweitig eingelöst ist
+ * (sonst wäre es über seinen Wert eingelöst). Ohne Rechnung (nie abgeschlossene Kasse) oder bei einer Rechnung über 0,00 € (es gab
+ * nichts aufzuheben, siehe stornoBeleg) bleibt das Aufheben als Korrekturweg erlaubt.
  */
 function stornoAufhebenSperre(order) {
   if (order.storno?.nr) return `Zu dieser Bestellung gibt es die Stornorechnung ${order.storno.nr} – die Rechnung ${order.invoiceNo} ist damit aufgehoben, das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
-  if (order.invoiceNo && stornoBetraege(order).betrag <= 0) return `Die Rechnung ${order.invoiceNo} ist vollständig gutgeschrieben – das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
+  const sb = stornoBetraege(order);
+  if (order.invoiceNo && sb.gutschrift > 0 && sb.betrag <= 0) return `Die Rechnung ${order.invoiceNo} ist vollständig gutgeschrieben – das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
   const gc = order.coupon ? couponByCode(order.coupon.code) : null;
   if (gc && isGuthaben(gc)) {
     const rest = couponRest(gc, { ohne: order.orderId });
@@ -2163,9 +2165,10 @@ function stornoHTML(order) {
 }
 /**
  * Beim Wechsel auf „storniert“ (unter der Bestellsperre, vor writeOrder): Stornorechnung zu einer ausgestellten Rechnung
- * anlegen — einmal je Bestellung (order.storno = { nr, at }). Ohne Rechnung (Kasse nie abgeschlossen) oder wenn schon alles
- * gutgeschrieben ist, gibt es nichts aufzuheben. Reihenfolge wie bei der Rechnung: Nummer ziehen → an der Bestellung speichern
- * (scheitert das, geht die Nummer zurück bzw. die Lücke wird protokolliert) → Zähler speichern → storno.html schreiben. So tragen
+ * anlegen — einmal je Bestellung (order.storno = { nr, at }). Ohne Rechnung (Kasse nie abgeschlossen), bei einer Rechnung über
+ * 0,00 € (100-%-Gutschein) oder wenn schon alles gutgeschrieben ist, gibt es nichts aufzuheben (nur ein Vermerk in der Historie).
+ * Reihenfolge wie bei der Rechnung: Nummer ziehen → an der Bestellung speichern (scheitert das, geht die Nummer zurück bzw. die
+ * Lücke wird protokolliert) → Zähler speichern → storno.html schreiben. So tragen
  * Beleg und Bestellung immer dieselbe Nummer. nachholen = true: nur eine fehlende storno.html zu einer gespeicherten Nummer schreiben.
  */
 async function stornoBeleg(order, { nachholen = false } = {}) {
@@ -2173,8 +2176,11 @@ async function stornoBeleg(order, { nachholen = false } = {}) {
   const file = path.join(ORDERS, order.orderId, 'storno.html');
   if (!order.storno?.nr) {
     if (nachholen) return;
-    if (stornoBetraege(order).betrag <= 0) {
-      addHistory(order, order.status, `Keine Stornorechnung nötig: Rechnung ${order.invoiceNo} ist bereits vollständig gutgeschrieben`, 'system');
+    const sb = stornoBetraege(order);
+    if (sb.betrag <= 0) {
+      // nichts aufzuheben: schon mit einer Gutschrift vollständig gutgeschrieben, oder die Rechnung lautet über 0,00 € (100-%-Gutschein)
+      addHistory(order, order.status, sb.gutschrift > 0 ? `Keine Stornorechnung nötig: Rechnung ${order.invoiceNo} ist bereits vollständig gutgeschrieben`
+        : `Keine Stornorechnung nötig: Rechnung ${order.invoiceNo} lautet über ${money(sb.entgelt)}`, 'system');
       return;
     }
     steuerDerRechnung(order);   // Altbestand: Steuerstatus der Rechnung jetzt festhalten (wird mit gespeichert)

@@ -5,9 +5,11 @@
 //                                        Mail aus — es geht keine Mail hinaus, PayPal aus) und räumt danach auf
 //
 // Geprüft: Versandfreigrenze vor Gutschein/Guthaben, Aktion nie teurer als ohne (Gutschein-Sperre nur mit Ersparnis), Browser- und
-// Server-Preis gleich (pricing.js ⇔ /api/quote), Null-Betrag, Rechnung (Steuerstatus, Leistungszeitpunkt, Zahlungshinweis),
-// Steuerwechsel bei Gutschrift/Storno (auch Altbestand ohne order.steuer), Storno-Aufheben-Sperre, Reklamationsgrenzen,
-// Einstellungs-Prüfung (400 statt 500, nichts gespeichert), CSV-Spalten, Design-Code, Gutschein-Grenzen. Exit 0 = alles bestanden.
+// Server-Preis gleich (pricing.js ⇔ /api/quote), Null-Betrag (bezahlt erst mit dem Abschluss), Rechnung (Steuerstatus,
+// Leistungszeitpunkt, Zahlungshinweis), Steuerwechsel bei Gutschrift/Storno (auch Altbestand ohne order.steuer),
+// Storno-Aufheben-Sperre, Storno einer 0-€-Rechnung, Reklamationsgrenzen, Einstellungs-Prüfung (400 statt 500, nichts
+// gespeichert), CSV-Spalten, Design-Code, Gutschein-Grenzen (Höchstzahl: eigene abgebrochene Kasse sperrt nicht, Nachprüfung
+// beim Abschluss). Exit 0 = alles bestanden.
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -200,6 +202,13 @@ try {
   check(auf.status === 409 && /Stornorechnung/.test(auf.json?.error || '') && lies(k1.orderId).status === 'storniert', '„Storno aufheben“ nach Stornorechnung → 409', auf.json?.error);
   const auf2 = await admin('POST', '/api/admin/order-status', { orderId: k1.orderId, status: 'neu' });
   check(auf2.status === 409, 'auch über den alten Kurz-Endpoint → 409');
+  // Rechnung über 0,00 € (100-%-Gutschein, keine Gutschrift): keine Stornorechnung, Vermerk ohne „gutgeschrieben“, Aufheben möglich
+  const g0 = await bestelle([V(2)], 'G100');
+  check((await status(g0.orderId, 'storniert')).status === 200 && !lies(g0.orderId).storno, 'Rechnung über 0,00 € storniert → keine Stornorechnung');
+  const g0n = lies(g0.orderId).history.at(-1)?.note || '';
+  check(/lautet über 0,00/.test(g0n) && !/gutgeschrieben/.test(g0n), 'Vermerk „Rechnung … lautet über 0,00 €“ (nicht „vollständig gutgeschrieben“)', g0n);
+  const g0a = await status(g0.orderId, 'neu');
+  check(g0a.status === 200 && lies(g0.orderId).status === 'neu' && lies(g0.orderId).paymentStatus === 'bezahlt', '„Storno aufheben“ bei 0-€-Rechnung → 200 (wieder neu, bezahlt)', g0a.json);
   const ohne = await bestelle([V(1)], null, { abschliessen: false });
   await status(ohne.orderId, 'storniert');
   check((await status(ohne.orderId, 'neu')).status === 200, 'ohne Rechnung (nie abgeschlossene Kasse) bleibt Aufheben als Korrekturweg');
