@@ -669,7 +669,7 @@ export function buildModel(params) {
         const wraps = field.width / rMid > FRONT_TEXT_ARC + 1e-9;
         const warns = [];
         if (textInfo.warn) warns.push(textInfo.warn);
-        if (cap < (p.textSize ?? 7) - 0.01 && cap < wanted - 0.01) warns.push(`Text automatisch auf ${cap.toFixed(1)} mm verkleinert, damit er ${wraps ? 'auf den Umfang' : 'auf die Vorderseite'} passt.`);
+        if (cap < (p.textSize ?? 7) - 0.01 && cap < wanted - 0.01) warns.push(`Text automatisch auf ${cap.toFixed(1).replace('.', ',')} mm verkleinert, damit er ${wraps ? 'auf den Umfang' : 'auf die Vorderseite'} passt.`);
         if ((p.textSize ?? 7) < rule.minCap - 0.01) warns.push(`Schrift auf ${rule.minCap} mm vergrößert, damit die feinen Striche druckbar sind.`);
         if (wraps) warns.push('Text läuft um die Seite – zum Lesen drehen.');
         if (field.missing) warns.push(`Zeichen „${field.missing}“ gibt es in dieser Schrift nicht.`);
@@ -900,6 +900,10 @@ export function buildModel(params) {
   // Außendurchmesser oben: mit Wulst ragt die Lippe über R(1) hinaus
   let rTopOut = R(1);
   if (rimEff === 'wulst') for (let s = 0; s <= RIM_LIP_H; s += 0.25) rTopOut = Math.max(rTopOut, Rout((H - RIM_LIP_H + s) / H));
+  // Größte Breite (Ø) des fertigen Modells inkl. Muster, Wulst und Gravur-Relief: weitester Punkt von der Achse — dieses Maß zeigt der
+  // Konfigurator als „Ø“ (für Platz und Versand entscheidend; der obere Rand allein ist bei Flasche/Kugel/Tropfen viel schmaler)
+  let r2max = 0;
+  { const pa = geometry.attributes.position.array; for (let i = 0; i < pa.length; i += 3) { const r2 = pa[i] * pa[i] + pa[i + 2] * pa[i + 2]; if (r2 > r2max) r2max = r2; } }
 
   return {
     geometry,
@@ -911,6 +915,7 @@ export function buildModel(params) {
       // Außendurchmesser: gehämmert steht der Grat nur 0,9·(1−…)·amp über der Silhouette
       // und bei voller Tiefe gar nicht mehr — sonst stünde beim Kunden ein zu großes Maß.
       topDiameter: (rTopOut + amp * (p.pattern === 'gehaemmert' ? 0.9 * (1 - smoothstep(0, 1, Math.pow(hamRel, HAM_RAMP))) : 1)) * 2,
+      maxDiameter: Math.sqrt(r2max) * 2, // größte Breite (siehe oben) — Anzeige „Ø“ im Konfigurator
       baseDiameter: rBase * 2,
       cavityDiameter: cavityDia,
       cavityDepth,
