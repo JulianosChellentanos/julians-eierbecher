@@ -1,10 +1,12 @@
 // formsam — Selbsttest für lib/html-pdf.js (ohne Fremdpakete): Teil 1 HTML einlesen, CSS-Kaskade für den Druck, sichtbarer Text;
-// Teil 2 Satz (htmlToPdf/layoutDocument: Zeilen, Tabellen, Flex, Seiten, Selbstprüfung, Fehlerfälle)
+// Teil 2 Satz (htmlToPdf/layoutDocument: Zeilen, Tabellen, Flex, Seiten, Selbstprüfung, Fehlerfälle); Teil 3 Rechtstexte, belegPdf/legalPdf
 //
 //   node tools/test-html-pdf.mjs        → eine Zeile je Prüfung; Exit 0 = alles gut, 1 = Fehler
 //
 // Testbelege: tools/fixtures/pdf/*.html — im Testshop erzeugt, nur erfundene Daten (Erika/Max Mustermann, Teststraße …).
 // rechnung-45pos.html ist aus einer 20-Positionen-Rechnung zusammengesetzt (die Kasse erlaubt höchstens 20 Positionen).
+// Teil 3: mehrseitige Texte — Rechtstexte aus lib/legal.js (forPdf, erfundene Einstellungen) und tools/fixtures/pdf-text/fliesstext.html
+// (Listen, Zitat, Tabelle über die Seitengrenze, großer Block, Ausfüllzeilen, erzwungene Umbrüche; Sollwerte aus Chromes Druck-PDF).
 // Die Sollwerte unter „Chrome-Sollwerte“ stammen aus Chrome (getComputedStyle in der Druckansicht bzw. Lage der Wörter in
 // Chromes Druck-PDF). pdftotext (poppler) wird zusätzlich benutzt, wenn es installiert ist — ohne poppler entfällt nur diese Prüfung.
 import fs from 'node:fs';
@@ -14,8 +16,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   parseHtml, parseCss, computeStyles, styleTree, visibleText, decodeEntities, parseColor, matches, mediaMatches, applyTransform, IGNORED_PROPS,
-  htmlToPdf, layoutDocument,
+  htmlToPdf, layoutDocument, belegPdf, legalPdf,
 } from '../lib/html-pdf.js';
+import { renderLegalPage } from '../lib/legal.js';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'pdf');
 
@@ -673,6 +676,155 @@ check('Satz: Fehlerfälle brechen sauber und schnell ab (Zeichen, Bilder, Aufbau
   ok(ms < 3000, `${ms.toFixed(0)} ms für alle Fehlerfälle`);
   return `${ms.toFixed(0)} ms`;
 });
+// ---------------------------------------------------------------------------
+// Teil 3: mehrseitige Texte (Rechtstexte aus lib/legal.js mit forPdf, tools/fixtures/pdf-text/fliesstext.html)
+// ---------------------------------------------------------------------------
+const TEXT = path.join(path.dirname(FIX), 'pdf-text');
+/** Umbruchregeln prüfen: keine Überschrift als letzte Einheit einer Seite, kein Absatz mit nur einer Zeile vor oder nach dem Umbruch */
+function breakRules(lay) {
+  const H = lay.page.contentHeight, owner = new Map(), errs = [];
+  (function walk(f, el) { for (const k of f.kids) { if (k.kind === 'line') owner.set(k, { el: f.el || el, box: f }); walk(k, f.el || el); } })(lay.top, null);
+  const pg = (u) => Math.floor((u.top + shiftAt(lay, u.top) + 0.01) / H);
+  for (let i = 1; i < lay.units.length; i++) {
+    const a = lay.units[i - 1], b = lay.units[i];
+    if (pg(a) === pg(b) || b.forced) continue;
+    const oa = owner.get(a.f), ob = owner.get(b.f);
+    if (oa && /^h[1-6]$/.test(oa.el?.tag || '')) errs.push(`Überschrift „${lineText(a.f)}“ am Ende von Seite ${pg(a) + 1}`);
+    if (oa && ob && oa.box === ob.box) {
+      const ls = oa.box.kids.filter((k) => k.kind === 'line'), k = ls.indexOf(b.f);
+      if (k < 2 || ls.length - k < 2) errs.push(`Absatz „${lineText(ls[0]).slice(0, 30)}…“ mit ${k} / ${ls.length - k} Zeilen getrennt`);
+    }
+  }
+  return errs;
+}
+const LEGAL_SET = { company: { name: 'formsam', owner: 'Erika Mustermann', street: 'Teststraße 1', zip: '12345', city: 'Musterstadt', email: 'erika@example.org', phone: '', ustId: '', kleinunternehmer: true, country: 'Deutschland' },
+  shop: { lieferzeit: '5–8 Werktage', liefergebiet: 'Deutschland' }, legal: { hoster: 'Beispiel-Hosting GmbH, Serverweg 2, 12345 Musterstadt', serverOrt: 'Musterstadt (Deutschland)' },
+  pricing: { currency: 'EUR', shipping: { flat: 4.9, freeFrom: 39 } }, paypal: { enabled: false, clientId: '' } };
+const legalVariants = () => {
+  const out = [];
+  for (const klein of [true, false]) for (const pp of [false, true]) for (const tel of ['', '+49 30 1234567']) {
+    const s = JSON.parse(JSON.stringify(LEGAL_SET));
+    s.company = { ...s.company, kleinunternehmer: klein, phone: tel, ...(klein ? {} : { ustId: 'DE123456789' }) };
+    s.paypal = pp ? { enabled: true, clientId: 'test-client' } : { enabled: false, clientId: '' };
+    out.push({ name: `klein${+klein}-paypal${+pp}-tel${tel ? 1 : 0}`, s });
+  }
+  return out;
+};
+const LOGO = '<svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 377.6 100" width="105.7" height="28" role="img" aria-label="formsam"><title>formsam</title><path fill-rule="evenodd" fill="#c86f4a" d="M0 90h377.6v10H0z"/><path fill-rule="evenodd" fill="#211d18" d="M100 20h20v60h-20z"/></svg>';
+check('Rechtstexte: legalPdf für alle Seiten und Einstellungen (Kleinunternehmer, PayPal, Telefon) — streng, Umbruchregeln, Größe, Tempo', () => {
+  const pages = {}, sizes = {};
+  let n = 0, maxMs = 0;
+  for (const { name, s } of legalVariants()) for (const slug of ['agb', 'widerruf', 'datenschutz', 'impressum', 'versand']) {
+    const t0 = process.hrtime.bigint();
+    const r = legalPdf(slug, { settings: s, baseUrl: 'https://shop.example', logoHtml: LOGO });
+    maxMs = Math.max(maxMs, Number(process.hrtime.bigint() - t0) / 1e6);
+    ok(r.buffer.subarray(0, 9).toString('latin1') === '%PDF-1.7\n', `${slug}/${name}: Dateirahmen`);
+    (pages[slug] ||= new Set()).add(r.pages); sizes[slug] = Math.max(sizes[slug] || 0, r.buffer.length);
+    const html = renderLegalPage(slug, { settings: s, baseUrl: 'https://shop.example', logoHtml: LOGO, forPdf: true });
+    const errs = breakRules(layoutDocument(html));
+    ok(!errs.length, `${slug}/${name}: ${errs.join('; ')}`);
+    n++;
+  }
+  // Seitenzahlen wie Chrome mit denselben Druckfassungen (±1 je nach Einstellung); AGB deutlich unter 150 KB
+  const want = { agb: [4, 4], widerruf: [3, 3], datenschutz: [6, 7], impressum: [1, 1], versand: [2, 2] };
+  for (const [slug, [lo, hi]] of Object.entries(want)) ok([...pages[slug]].every((p) => p >= lo && p <= hi), `${slug}: ${[...pages[slug]]} Seiten statt ${lo}–${hi}`);
+  ok(sizes.agb < 150 * 1024, `AGB ${Math.round(sizes.agb / 1024)} KB`);
+  ok(maxMs < 1000, `${maxMs.toFixed(0)} ms für eine Seite`);
+  return `${n} PDFs, Seiten ${Object.entries(pages).map(([k, v]) => `${k} ${[...v].join('/')}`).join(', ')}, AGB ≤ ${Math.round(sizes.agb / 1024)} KB, längste ${maxMs.toFixed(0)} ms`;
+});
+check('Rechtstexte: Absatznummern-Spalte td.nr mit fester Breite (22pt) wie Chrome; Widerrufsformular auf eigener Seite; Rahmenlinie je Seite', () => {
+  const html = renderLegalPage('widerruf', { settings: LEGAL_SET, baseUrl: 'https://shop.example', forPdf: true });
+  const lay = layoutDocument(html), H = lay.page.contentHeight;
+  const form = fragOf(lay, 'section.formular');
+  eq([pageOfFrag(lay, form), lay.pages], [3, 3], 'Formular beginnt auf Seite 3 (break-before:page)');
+  const linien = frags(lay.top).filter((f) => f.el && matches(f.el, '.linie'));
+  ok(linien.length >= 8 && linien.every((f) => f.h > 27 && f.st.borderBottomWidth === 1 && pageOfFrag(lay, f) === 3), `${linien.length} Ausfüllzeilen (20pt + Unterlinie) auf Seite 3`);
+  const muster = frags(lay.top).filter((f) => f.el && matches(f.el, 'div.muster'));
+  const wb = muster.find((f) => f.h > H / 2);
+  ok(wb && pageOfFrag(lay, wb) === 1 && Math.floor((wb.ay + wb.h + shiftAt(lay, wb.ay + wb.h)) / H) === 1, 'Widerrufsbelehrung (div.muster) läuft über die Seitengrenze');
+  const agb = layoutDocument(renderLegalPage('agb', { settings: LEGAL_SET, baseUrl: 'https://shop.example', forPdf: true }));
+  const nr = fragOf(agb, 'td.nr');
+  eq(Math.round(nr.w * 100) / 100, 29.33, 'td.nr: 22pt = 29,33 px (Chrome: Text der Nachbarspalte bei 67,09 pt)');
+  // Zeichen-Bilanz und Rahmenprüfung laufen in htmlToPdf selbst; hier nur: die Rahmenlinie links (div.muster) auf beiden Seiten
+  const r = htmlToPdf(html, { pageFooter: false });
+  eq([r.pages, r.warnings, r.added], [3, [], []], 'Seiten, keine Warnung, keine zusätzlichen Zeichen');
+});
+check('Fließtext (fliesstext.html): Listen, Zitat, Tabelle über die Seitengrenze, großer Block, Ausfüllzeilen, erzwungene Umbrüche — wie Chrome', () => {
+  const html = fs.readFileSync(path.join(TEXT, 'fliesstext.html'), 'utf8');
+  const r = htmlToPdf(html), lay = layoutDocument(html), H = lay.page.contentHeight;
+  eq([r.pages, r.warnings], [7, []], 'Seiten (Chrome: 7), Warnungen');
+  // Listen-Nummern sind zusätzlicher Text (wie Chrome) und in der Zeichen-Bilanz als hinzugefügt geführt
+  eq([...r.added].sort(), ['1. ', '2. ', '7. ', '8. ', 'IV. ', 'V. ', 'a. ', 'b. ', 'c. '], 'Listen-Nummern (decimal, lower-alpha, upper-roman, start, value)');
+  const first = {};
+  for (const u of lay.units) { const p = Math.floor((u.top + shiftAt(lay, u.top) + 0.01) / H) + 1; first[p] ||= u.f; }
+  // Seitenanfänge aus Chromes Druck-PDF desselben HTML (S. 4/5 weichen bewusst ab: Chrome schiebt den zu großen Block mit
+  // break-inside:avoid auf eine neue Seite und lässt seine Überschrift allein am Ende von S. 3 stehen)
+  eq([lineText(first[2]).slice(0, 20), first[3].kind, lineText(first[6]), lineText(first[7])], ['Nach der Trennlinie ', 'row', '6. Formular zum Ausfüllen', '7. Alte Schreibweise'], 'Seitenanfänge wie Chrome');
+  eq(lay.repeats.map((x) => x.p), [2], '<thead> auf Seite 3 wiederholt');
+  const gross = fragOf(lay, 'div.gross');
+  ok(Math.floor((gross.ay + shiftAt(lay, gross.ay)) / H) === 2 && Math.floor((gross.ay + gross.h + shiftAt(lay, gross.ay + gross.h)) / H) === 4, 'Block mit break-inside:avoid, aber höher als eine Seite: läuft über S. 3–5');
+  const box = fragOf(lay, 'div.kasten');
+  ok(Math.floor((box.ay + shiftAt(lay, box.ay)) / H) === Math.floor((box.ay + box.h - 1 + shiftAt(lay, box.ay + box.h - 1)) / H), 'kleiner Kasten mit break-inside:avoid bleibt auf einer Seite');
+  eq(breakRules(lay), [], 'Umbruchregeln');
+  const marks = frags(lay.top).filter((f) => f.marker).map((f) => f.marker.type);
+  eq([...new Set(marks)].sort(), ['circle', 'decimal', 'disc', 'lower-alpha', 'square', 'upper-roman'], 'Marken: Punkt, Kreis, Quadrat, Zahl, Buchstabe, römisch (ul.ohne ohne)');
+});
+check('Satz: feste Spaltenbreite, Schrägstrich, Tabellen mit Absätzen, Rand am Seitenende, Außenabstand über die Seitengrenze', () => {
+  const t = layoutDocument(small('<table style="width:400px;border-collapse:collapse"><tr><td id="n" style="width:22pt;padding:0">(1)</td><td style="padding:0">' + 'Ein langer Absatz. '.repeat(20) + '</td></tr></table>'));
+  eq(Math.round(fragOf(t, '#n').w * 100) / 100, 29.33, 'feste Breite kommt vor dem Wachsen der übrigen Spalten (CSS Tables 3)');
+  const s = layoutDocument(small('<div id="u" style="width:260px">ohne Anmeldung: www.formsam.com/widerruf#widerrufen.</div><div id="v" style="width:80px">Kauf/Überweisung</div>'));
+  eq(frags(fragOf(s, '#u')).filter((g) => g.kind === 'line').map(lineText), ['ohne Anmeldung:', 'www.formsam.com/widerruf#widerrufen.'], 'kein Umbruch nach „/“ vor ASCII (Chrome)');
+  eq(lineText(frags(fragOf(s, '#v')).find((g) => g.kind === 'line')), 'Kauf/', 'Umbruch nach „/“ vor Ü (UAX 14)');
+  const p = (n, lh = 18) => Array.from({ length: n }, (_, i) => `<p style="margin:0;line-height:${lh}px">Zeile ${i + 1}</p>`).join('');
+  const rows = (k, lines) => Array.from({ length: k }, (_, i) => `<tr><td style="padding:0">${Array.from({ length: lines }, (_, j) => `Zeile ${i}.${j}`).join('<br>')}</td></tr>`).join('');
+  const a = layoutDocument(small(p(52) + `<table id="t" style="border-collapse:collapse">${rows(3, 3)}</table>`));
+  eq(fragOf(a, '#t').kids.map((r) => pageOfFrag(a, r)), [1, 1, 2], 'Tabelle mit Absätzen (Zellen > 2 Zeilen) bricht zwischen ihren Zeilen');
+  const b = layoutDocument(small(p(52) + `<table id="t" style="border-collapse:collapse">${rows(8, 1)}</table>`));
+  eq([...new Set(fragOf(b, '#t').kids.map((r) => pageOfFrag(b, r)))], [2], 'kleine Tabelle mit kurzen Zeilen (Summen) bleibt zusammen');
+  const H = layoutDocument(small('')).page.contentHeight, lh = (H + 0.5) / 58;
+  eq(layoutDocument(small(p(58, lh))).pages, 1, '58 Zeilen, die das Seitenende um 0,5 px überragen: noch auf Seite 1 (wie Chrome)');
+  const w = layoutDocument(small(p(57, lh) + `<p id="w" style="margin:0;line-height:${lh}px;width:80px">eins zwei drei vier</p>`));
+  eq(frags(fragOf(w, '#w')).filter((g) => g.kind === 'line').map((g) => pageOfFrag(w, g)), [2, 2], 'Zeile genau am Seitenende: Absatz trotzdem nicht 1/1 getrennt');
+  const m = layoutDocument(small(p(57) + '<h2 id="h" style="margin:30px 0 0;font-size:12px;line-height:18px">Überschrift</h2><p>Text</p>'));
+  const hl = frags(fragOf(m, '#h')).find((g) => g.kind === 'line');
+  eq([pageOfFrag(m, hl), Math.round((hl.ay + shiftAt(m, hl.ay) - m.page.contentHeight) * 100) / 100], [2, 0], 'Außenabstand über die Seitengrenze wird abgeschnitten (Überschrift oben auf Seite 2)');
+});
+check('belegPdf und legalPdf: Dateiname, streng, saubere Fehler', () => {
+  const r = belegPdf(fixture('rechnung-ust'), { createdAt: '2026-09-30T10:00:00Z' });
+  eq([r.filename, r.pages, r.title], ['Rechnung-RE-2026-0027.pdf', 1, 'Rechnung RE-2026-0027 · formsam'], 'Rechnung');
+  eq([belegPdf(fixture('storno')).filename, belegPdf(fixture('gutschrift-gutschein')).filename], ['Stornorechnung-GS-2026-0002.pdf', 'Gutschrift-GS-2026-0003.pdf'], 'Storno, Gutschrift');
+  eq(belegPdf(small('<p>x</p>')).filename, 'Beleg.pdf', 'ohne Nummer im Titel');
+  ok(r.buffer.equals(htmlToPdf(fixture('rechnung-ust'), { createdAt: '2026-09-30T10:00:00Z', author: 'formsam', strict: true }).buffer), 'belegPdf = htmlToPdf mit strict');
+  throwsCode(() => belegPdf(small('<blink>x</blink>')), 'UNSUPPORTED');
+  throwsCode(() => belegPdf(small('<p>Danke 🙂</p>')), 'GLYPH_MISSING');
+  throwsCode(() => belegPdf(fixture('storno'), { strict: false }), 'BAD_OPTION');
+  const l = legalPdf('/AGB/', { settings: LEGAL_SET, baseUrl: 'https://shop.example' });
+  eq([l.filename, l.title], ['formsam-AGB.pdf', 'AGB · formsam'], 'AGB');
+  eq(legalPdf('widerruf', { settings: LEGAL_SET }).filename, 'formsam-Widerrufsbelehrung.pdf', 'Widerruf ohne baseUrl');
+  throwsCode(() => legalPdf('kontakt', { settings: LEGAL_SET }), 'BAD_OPTION');
+  throwsCode(() => legalPdf('agb', { settings: LEGAL_SET, forPdf: true }), 'BAD_OPTION');
+  const bad = JSON.parse(JSON.stringify(LEGAL_SET)); bad.company.owner = 'Erika 🙂 Mustermann';
+  throwsCode(() => legalPdf('impressum', { settings: bad }), 'GLYPH_MISSING');
+  const h = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  eq(h(legalPdf('agb', { settings: LEGAL_SET, createdAt: 0 }).buffer), h(legalPdf('agb', { settings: LEGAL_SET, createdAt: 0 }).buffer), 'gleiche Eingabe → gleiche Bytes');
+});
+if (!spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error) {
+  check('pdftotext: Rechtstexte und Fließtext — Zeichen wie im HTML, plus genau die Listen-Nummern und der wiederholte Tabellenkopf', () => {
+    const count = (s, m = new Map(), k = 1) => { for (const ch of s.normalize('NFC')) if (!/[\s­​]/u.test(ch)) m.set(ch, (m.get(ch) || 0) + k); return m; };
+    const text = (buf) => spawnSync('pdftotext', ['-raw', '-enc', 'UTF-8', '-', '-'], { input: buf, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout;
+    const docs = ['agb', 'widerruf', 'datenschutz'].map((s) => renderLegalPage(s, { settings: LEGAL_SET, baseUrl: 'https://shop.example', forPdf: true, logoHtml: LOGO }));
+    docs.push(fs.readFileSync(path.join(TEXT, 'fliesstext.html'), 'utf8'));
+    for (const html of docs) {
+      const r = htmlToPdf(html, { pageFooter: false }), lay = layoutDocument(html);
+      const want = count(r.text);
+      for (const s of r.added) count(s, want);
+      for (const { tab } of lay.repeats) for (const row of tab.head) count(visibleText(row.el, { transform: true }), want);
+      const got = count(text(r.buffer)), keys = [...new Set([...want.keys(), ...got.keys()])].filter((c) => (want.get(c) || 0) !== (got.get(c) || 0));
+      ok(!keys.length, `${r.title}: ${keys.slice(0, 6).map((c) => `„${c}“ ${want.get(c) || 0}/${got.get(c) || 0}`).join(', ')}`);
+    }
+    return `${docs.length} Dokumente`;
+  });
+}
 if (!spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error) {
   check('pdftotext: Zeichen-Bilanz HTML ↔ PDF für alle Testbelege; Fußzeile nur „Seite n von m“ + Titel', () => {
     const count = (s) => { const m = new Map(); for (const ch of s.normalize('NFC')) if (!/[\s­​]/u.test(ch)) m.set(ch, (m.get(ch) || 0) + 1); return m; };

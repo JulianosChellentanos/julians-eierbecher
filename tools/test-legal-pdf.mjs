@@ -306,6 +306,12 @@ check('lib/html-pdf.js liest die Druckfassung ohne Warnung', () => {
   if (typeof satz?.styleTree !== 'function') return 'übersprungen: lib/html-pdf.js (styleTree) fehlt';
   return each(probe, (k) => { const w = satz.styleTree(pdfOf.get(k), { media: 'print' }).warnings; ok(!w.length, w.slice(0, 3).join('; ')); });
 });
+check('lib/html-pdf.js setzt jede Druckfassung als PDF (streng: ohne Warnung, Selbstprüfung Zeichen-Bilanz und Ränder)', () => {
+  if (typeof satz?.htmlToPdf !== 'function') return 'übersprungen: lib/html-pdf.js (htmlToPdf) fehlt';
+  const pages = {};
+  const n = each(probe, (k) => { const r = satz.htmlToPdf(pdfOf.get(k), { strict: true }); (pages[k.slug] ||= new Set()).add(r.pages); });
+  return `${n}, Seiten ${Object.entries(pages).map(([s, v]) => `${s} ${[...v].sort().join('/')}`).join(', ')}`;
+});
 check('lib/pdf.js: jedes Zeichen hat eine Glyphe (Inter für den Text, Fraunces für h1/h2 und Wortmarke)', () => {
   if (typeof kern?.missingChars !== 'function') return 'übersprungen: lib/pdf.js (missingChars) fehlt';
   return each(probe, (k) => {
