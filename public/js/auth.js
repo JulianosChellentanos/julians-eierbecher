@@ -1,4 +1,5 @@
 // formsam — Kundenkonto: Registrieren, Anmelden, Passwort vergessen/zurücksetzen, Bestellhistorie, Standard-Adresse
+import { getPricing } from './pricing.js';
 const $ = (s) => document.querySelector(s);
 
 let currentUser = null;
@@ -26,6 +27,27 @@ export function emailFeldPruefen(input) {
   pruefen();
 }
 export const getUser = () => currentUser;
+
+/**
+ * Postleitzahl (Kasse und Konto-Adresse) → '' oder Meldung — Spiegel von plzFehler() in server.js (derselbe Wortlaut). Liefergebiet
+ * nur Deutschland (/api/pricing → shop.liefergebiet, Standard): genau 5 Ziffern (nicht mit 00), bei 4 Ziffern der Hinweis auf die führende 0;
+ * steht dort mehr (z. B. „Deutschland und Österreich“), auch 4 Ziffern.
+ */
+const nurDeutschland = () => /^deutschland$/i.test(String(getPricing()?.shop?.liefergebiet || '').trim() || 'Deutschland');
+export function plzFehler(zip) {
+  const v = String(zip ?? '').trim();
+  const de = nurDeutschland();
+  if (de ? /^(?!00)[0-9]{5}$/.test(v) : /^[0-9]{4,5}$/.test(v)) return '';   // deutsche PLZ beginnen nie mit 00
+  if (de && /^[0-9]{4}$/.test(v)) return 'Postleitzahlen in Deutschland haben 5 Ziffern – fehlt vorne eine 0 (z. B. 01067)?';
+  return de ? 'Bitte gib deine Postleitzahl mit 5 Ziffern an – ich liefere nach Deutschland.' : 'Bitte gib eine gültige Postleitzahl an (4 oder 5 Ziffern).';
+}
+/** PLZ-Feld nach dem Liefergebiet einstellen (pattern, title) und seine Meldung setzen — leer bleibt Sache von required */
+export function plzFeldPruefen(input) {
+  if (!input) return;
+  input.pattern = nurDeutschland() ? '[0-9]{5}' : '[0-9]{4,5}';
+  input.title = nurDeutschland() ? 'Postleitzahl mit 5 Ziffern (Lieferung nach Deutschland)' : 'Postleitzahl mit 4 oder 5 Ziffern';
+  input.setCustomValidity(input.value.trim() ? plzFehler(input.value) : '');
+}
 
 const STATUS_LABEL = {
   neu: '⏳ eingegangen', bezahlt: '💶 bezahlt', 'im-druck': '🖨️ im Druck', gedruckt: '✅ gedruckt',
@@ -265,6 +287,8 @@ export function openAccount() {
   $('#acc-street').value = a.street || '';
   $('#acc-zip').value = a.zip || '';
   $('#acc-city').value = a.city || '';
+  addrMsg('');
+  plzFeldPruefen($('#acc-zip'));
   sicherZuruecksetzen();
   $('#acc-orders').innerHTML = myOrders.length ? myOrders.map((o) => `
     <div class="acc-order" style="flex-wrap:wrap">
@@ -282,29 +306,76 @@ export function openAccount() {
 }
 
 let addrMsgTimer = 0;
-async function saveAddress() {
+/**
+ * Rückmeldung zur Adresse: kurze Zustände („Speichere …“, „✅ Gespeichert“ — verschwindet nach 2,5 s) neben dem Knopf, Fehler (⚠️)
+ * in einer eigenen Zeile darüber (#acc-addr-err; fehlt sie in einer älteren index.html, ebenfalls neben dem Knopf)
+ */
+function addrMsg(text, ok = false) {
   clearTimeout(addrMsgTimer);   // ein älteres „Gespeichert“ darf eine neue Meldung nicht wegräumen
-  const address = { street: $('#acc-street').value.trim(), zip: $('#acc-zip').value.trim(), city: $('#acc-city').value.trim() };
-  let r = null;
+  const inline = $('#acc-addr-msg'), err = $('#acc-addr-err');
+  const fehler = !!text && text.startsWith('⚠️') && err;
+  inline.textContent = fehler ? '' : (text || '');
+  if (err) { err.textContent = fehler ? text : ''; err.hidden = !fehler; }
+  if (ok) addrMsgTimer = setTimeout(() => { inline.textContent = ''; }, 2500);
+}
+async function saveAddress() {
+  const felder = { street: $('#acc-street'), zip: $('#acc-zip'), city: $('#acc-city') };
+  const address = Object.fromEntries(Object.entries(felder).map(([k, f]) => [k, f.value.trim()]));
+  // Wie die Kasse (sie übernimmt die Adresse): alle drei Felder oder keines (= Adresse entfernen), PLZ nach dem Liefergebiet
+  plzFeldPruefen(felder.zip);
+  const leer = Object.entries(address).find(([, v]) => !v);
+  if (leer && Object.values(address).some(Boolean)) {
+    addrMsg('⚠️ Bitte Straße, PLZ und Ort vollständig angeben – oder alle drei Felder leeren, um die Adresse zu entfernen.');
+    felder[leer[0]].focus();
+    return;
+  }
+  if (!felder.zip.checkValidity()) { addrMsg(`⚠️ ${felder.zip.validationMessage}`); felder.zip.reportValidity(); return; }
+  const btn = $('#acc-addr-save');
+  btn.disabled = true;
+  addrMsg('Speichere …');
+  let r = null, status = 0;
   try {
     const res = await fetch('/api/auth/address', {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }, body: JSON.stringify(address),
     });
+    status = res.status;
     r = await res.json().catch(() => null);
-  } catch { r = { ok: false, error: 'Keine Verbindung zum Shop – bitte Internetverbindung prüfen.' }; }
-  // Server prüft Längen (Straße 120, PLZ 10, Ort 80) — Meldung statt „Gespeichert“
-  if (!r?.ok) { $('#acc-addr-msg').textContent = `⚠️ ${r?.error || 'Das hat gerade nicht geklappt.'}`; return; }
+  } catch { r = { ok: false, error: 'Keine Verbindung zum Shop – bitte Internetverbindung prüfen. Die Adresse ist noch nicht gespeichert.' }; }
+  btn.disabled = false;
+  // Anmeldung abgelaufen (z. B. auf einem anderen Gerät überall abgemeldet): neu anmelden, dann noch einmal speichern
+  if (status === 401) {
+    addrMsg('');
+    abgemeldet();
+    showAuthTab('login');
+    showInfo('Deine Anmeldung ist abgelaufen – bitte melde dich neu an und speichere deine Adresse dann noch einmal.');
+    $('#auth-modal').showModal();
+    return;
+  }
+  // Server prüft wie hier (Längen, vollständig, PLZ) — seine Meldung statt „Gespeichert“; gespeichert wird lokal erst danach
+  if (!r?.ok) {
+    addrMsg(`⚠️ ${r?.error || 'Das hat gerade nicht geklappt – die Adresse ist noch nicht gespeichert.'}`);
+    if (felder[r?.feld]) felder[r.feld].focus();
+    return;
+  }
   currentUser.address = address;
-  $('#acc-addr-msg').textContent = '✅ Gespeichert';
-  addrMsgTimer = setTimeout(() => { $('#acc-addr-msg').textContent = ''; }, 2000);
+  addrMsg(Object.values(address).some(Boolean) ? '✅ Gespeichert' : '✅ Adresse entfernt', true);
 }
 
+/**
+ * Abmelden: die Kasse leert daraufhin, was sie aus dem Konto vorbefüllt hat (Ereignis ovju:abgemeldet mit den bisherigen
+ * Kontodaten — cart.js vergleicht und lässt selbst Getipptes stehen)
+ */
+function meldeAbgemeldet(u) {
+  if (u) window.dispatchEvent(new CustomEvent('ovju:abgemeldet', { detail: { name: u.name, email: u.email, address: u.address || null } }));
+}
 async function logout() {
-  await fetch('/api/auth/logout', { method: 'POST', headers: getAuthHeaders() });
+  const u = currentUser;
+  try { await fetch('/api/auth/logout', { method: 'POST', headers: getAuthHeaders() }); } catch { /* offline: lokal trotzdem abmelden */ }
   localStorage.removeItem('ovju-auth');
   currentUser = null; myOrders = [];
   renderButton();
   $('#account-modal').close();
+  meldeAbgemeldet(u);
 }
 
 // --- Passwort & Konto (Konto-Dialog): Passwort ändern (beendet die anderen Anmeldungen), überall abmelden, Konto löschen.
@@ -328,10 +399,12 @@ async function kontoPost(path, body) {
   }
 }
 function abgemeldet() {
+  const u = currentUser;
   localStorage.removeItem('ovju-auth');
   currentUser = null; myOrders = [];
   renderButton();
   $('#account-modal').close();
+  meldeAbgemeldet(u);
 }
 async function changePassword() {
   const neu = $('#acc-pw-neu').value;
@@ -368,6 +441,15 @@ export async function initAuth() {
   $('#account-close').addEventListener('click', () => $('#account-modal').close());
   $('#acc-logout').addEventListener('click', logout);
   $('#acc-addr-save').addEventListener('click', saveAddress);
+  $('#acc-zip').addEventListener('input', (e) => plzFeldPruefen(e.target));
+  // Enter in den Adressfeldern: weiter zum nächsten Feld, im Ort-Feld speichern
+  for (const [id, weiter] of [['#acc-street', '#acc-zip'], ['#acc-zip', '#acc-city'], ['#acc-city', null]]) {
+    $(id).addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      e.preventDefault();
+      if (weiter) $(weiter).focus(); else saveAddress();
+    });
+  }
   $('#acc-pw-form')?.addEventListener('submit', (e) => { e.preventDefault(); changePassword(); });
   $('#acc-logout-all')?.addEventListener('click', logoutAll);
   $('#acc-del-start')?.addEventListener('click', () => { $('#acc-del-form').hidden = false; sicherMsg(''); $('#acc-del-pw').focus(); });

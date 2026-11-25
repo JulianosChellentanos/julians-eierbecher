@@ -394,17 +394,17 @@
     </div>
     <h3>Lieferadresse</h3>
     <div class="co-grid">
-      <label>Name <input type="text" id="co-name" required placeholder="Vor- und Nachname" autocomplete="name"></label>
-      <label>E-Mail <input type="email" id="co-email" required pattern="[^@]+@[^@]+\.[^@]+" title="Bitte eine vollständige E-Mail-Adresse angeben, z. B. du@example.de" placeholder="du@example.de" autocomplete="email"></label>
-      <label class="wide">Straße &amp; Hausnummer <input type="text" id="co-street" required placeholder="Musterweg 12" autocomplete="street-address"></label>
+      <label>Name <input type="text" id="co-name" required placeholder="Vor- und Nachname" autocomplete="name" enterkeyhint="next"></label>
+      <label>E-Mail <input type="email" id="co-email" required pattern="[^@]+@[^@]+\.[^@]+" title="Bitte eine vollständige E-Mail-Adresse angeben, z. B. du@example.de" placeholder="du@example.de" autocomplete="email" enterkeyhint="next"></label>
+      <label class="wide">Straße &amp; Hausnummer <input type="text" id="co-street" required placeholder="Musterweg 12" autocomplete="address-line1" enterkeyhint="next"></label>
       <div class="co-row2 wide">
-        <label>PLZ <input type="text" id="co-zip" required pattern="[0-9]{4,5}" placeholder="12345" inputmode="numeric" autocomplete="postal-code"></label>
-        <label>Ort <input type="text" id="co-city" required placeholder="Stadt" autocomplete="address-level2"></label>
+        <label>PLZ <input type="text" id="co-zip" required pattern="[0-9]{5}" title="Postleitzahl mit 5 Ziffern (Lieferung nach Deutschland)" placeholder="12345" inputmode="numeric" autocomplete="postal-code" enterkeyhint="next"></label>
+        <label>Ort <input type="text" id="co-city" required placeholder="Stadt" autocomplete="address-level2" enterkeyhint="next"></label>
       </div>
-      <label class="wide">Anmerkung <input type="text" id="co-note" placeholder="z. B. Geschenkverpackung (optional)"></label>
+      <label class="wide">Anmerkung <input type="text" id="co-note" placeholder="z. B. Geschenkverpackung (optional)" enterkeyhint="next"></label>
     </div>
     <div class="coupon-row">
-      <input type="text" id="co-coupon" placeholder="🎟️ Gutscheincode (optional)" autocomplete="off">
+      <input type="text" id="co-coupon" placeholder="🎟️ Gutscheincode (optional)" autocomplete="off" enterkeyhint="done" aria-label="Gutscheincode">
       <button type="button" class="btn btn-ghost" id="co-coupon-btn">Einlösen</button>
     </div>
     <div class="tiny" id="co-coupon-msg" style="text-align:left"></div>
@@ -427,6 +427,8 @@
     <h3 class="co-sum-head">Deine Bestellung</h3>
     <div class="co-summary" id="co-summary"></div>
     <div id="paypal-buttons" hidden></div>
+    <!-- Meldungen der Kasse (cart.js kassenMeldung) — statt Browser-alert() -->
+    <p class="tiny warn-msg" id="co-error" role="alert" style="text-align:left" hidden></p>
     <div class="modal-btns">
       <button type="button" class="btn btn-ghost" id="co-back">← Warenkorb</button>
       <button type="submit" class="btn btn-primary" id="co-submit">Zahlungspflichtig bestellen</button>
@@ -442,6 +444,8 @@
     <h2>Bestellung eingegangen!</h2>
     <p>Deine Bestellnummer: <b id="confirm-id"></b></p>
     <p><a class="btn btn-ghost" id="confirm-invoice" href="#" target="_blank">🧾 Rechnung ansehen</a></p>
+    <!-- Gesamtbetrag, bei Vorkasse Bankverbindung + Verwendungszweck (cart.js dankeZahlung, Angaben aus /complete) -->
+    <div class="tiny" id="confirm-zahlung" hidden></div>
     <p class="tiny" id="confirm-pay-hint"></p>
     <button class="btn btn-primary" id="confirm-close">Super!</button>
   </div>
@@ -497,13 +501,14 @@
     <div id="acc-orders"></div>
     <h3>📍 Standard-Lieferadresse</h3>
     <div class="co-grid">
-      <label class="wide">Straße &amp; Hausnummer <input type="text" id="acc-street" maxlength="120"></label>
-      <label>PLZ <input type="text" id="acc-zip" maxlength="10"></label>
-      <label>Ort <input type="text" id="acc-city" maxlength="80"></label>
+      <label class="wide">Straße &amp; Hausnummer <input type="text" id="acc-street" maxlength="120" autocomplete="address-line1" enterkeyhint="next"></label>
+      <label>PLZ <input type="text" id="acc-zip" maxlength="10" pattern="[0-9]{5}" title="Postleitzahl mit 5 Ziffern (Lieferung nach Deutschland)" inputmode="numeric" autocomplete="postal-code" enterkeyhint="next"></label>
+      <label>Ort <input type="text" id="acc-city" maxlength="80" autocomplete="address-level2" enterkeyhint="done"></label>
     </div>
+    <p class="tiny warn-msg" id="acc-addr-err" role="alert" style="text-align:left" hidden></p>
     <div class="modal-btns" style="justify-content:space-between">
       <button class="btn btn-ghost" id="acc-logout">Abmelden</button>
-      <span><span class="tiny" id="acc-addr-msg"></span> <button class="btn btn-primary" id="acc-addr-save">💾 Adresse speichern</button></span>
+      <span><span class="tiny" id="acc-addr-msg" role="status"></span> <button class="btn btn-primary" id="acc-addr-save">💾 Adresse speichern</button></span>
     </div>
     <!-- Passwort & Konto (auth.js): Passwort ändern, auf allen Geräten abmelden, Konto löschen -->
     <details class="acc-sicher" id="acc-sicher">

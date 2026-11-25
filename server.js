@@ -3186,14 +3186,19 @@ function kundeAus(raw) {
  */
 function pruefeKasse(data, { garantie = null } = {}) {
   const customer = kundeAus(data?.customer);
-  if (!customer.name || !isEmail(customer.email) || !customer.street || !customer.zip || !customer.city) {
-    return { status: 400, error: 'Bitte Adresse vollständig ausfüllen', customer };
-  }
+  // Je Feld eine eigene Meldung; feld = Kassenfeld, das die Kasse markiert (ältere Kassen-Tabs zeigen nur die Meldung)
+  const fehlt = (feld, error) => ({ status: 400, error, feld, customer });
+  if (!customer.name) return fehlt('name', 'Bitte gib deinen Namen an.');
+  if (!isEmail(customer.email)) return fehlt('email', 'Bitte gib eine gültige E-Mail-Adresse an (z. B. du@example.de).');
+  if (!customer.street) return fehlt('street', 'Bitte gib Straße und Hausnummer an.');
+  if (!customer.zip) return fehlt('zip', 'Bitte gib deine Postleitzahl an.');
+  if (!customer.city) return fehlt('city', 'Bitte gib deinen Ort an.');
   // Umlaute vor dem @: die Bestätigung käme nie an (lib/eingaben.js emailLokalFehler — derselbe Text wie im Browser)
   const lokal = emailLokalFehler(customer.email);
-  if (lokal) return { status: 400, error: lokal, customer };
-  // PLZ wie das Kassenfeld (pattern [0-9]{4,5}); Zahlart nur Vorkasse oder PayPal (alles andere wäre still als Vorkasse angelegt worden)
-  if (!/^[0-9]{4,5}$/.test(customer.zip)) return { status: 400, error: 'Bitte eine gültige Postleitzahl angeben (4 oder 5 Ziffern).', customer };
+  if (lokal) return fehlt('email', lokal);
+  // PLZ nach dem Liefergebiet wie das Kassenfeld (plzFehler); Zahlart nur Vorkasse oder PayPal (alles andere wäre still als Vorkasse angelegt worden)
+  const plz = plzFehler(customer.zip);
+  if (plz) return fehlt('zip', plz);
   if (data.payment !== undefined && data.payment !== null && !['vorkasse', 'paypal'].includes(data.payment)) {
     return { status: 400, error: 'Unbekannte Zahlungsart – bitte Überweisung (Vorkasse) oder PayPal wählen.', customer };
   }
@@ -3228,6 +3233,18 @@ function pruefeKasse(data, { garantie = null } = {}) {
   }
   // Bezugspreise wie in der Kasse festhalten (Rechnung/Mails) — bei PayPal schon hier in /api/paypal/create, die Garantie behält sie
   return { customer, items, totals: aktionsBezug(totals) };
+}
+/**
+ * Postleitzahl für Kasse und Konto-Adresse → null oder Meldung. Liefergebiet nur Deutschland (Standard, Admin → Shop-Angaben):
+ * genau 5 Ziffern, nicht mit 00 — eine 4-stellige ist meist eine ostdeutsche PLZ ohne die führende 0 (Hinweis darauf). Steht dort mehr
+ * (z. B. „Deutschland und Österreich“), auch 4 Ziffern. Spiegel im Browser: auth.js plzFehler (derselbe Wortlaut).
+ */
+function plzFehler(zip) {
+  const v = String(zip ?? '').trim();
+  const nurDE = /^deutschland$/i.test(String(settings.shop?.liefergebiet || '').trim() || 'Deutschland');
+  if (nurDE ? /^(?!00)[0-9]{5}$/.test(v) : /^[0-9]{4,5}$/.test(v)) return null;   // deutsche PLZ beginnen nie mit 00
+  if (nurDE && /^[0-9]{4}$/.test(v)) return 'Postleitzahlen in Deutschland haben 5 Ziffern – fehlt vorne eine 0 (z. B. 01067)?';
+  return nurDE ? 'Bitte gib deine Postleitzahl mit 5 Ziffern an – ich liefere nach Deutschland.' : 'Bitte gib eine gültige Postleitzahl an (4 oder 5 Ziffern).';
 }
 /**
  * Automatische Erstattung einer eingezogenen PayPal-Zahlung, zu der die Kasse keine Bestellung anlegen konnte.
@@ -3645,7 +3662,7 @@ async function handleCheckout(req, res) {
   }
   const k = pruefeKasse(data, { garantie });
   if (k.error) {
-    const body = { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) };
+    const body = { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.feld ? { feld: k.feld } : {}) };
     return paypalCap ? kasseAbgelehntNachZahlung(res, ppId, paypalCap, k.status, body, k.customer) : send(res, k.status, body);
   }
   const { customer, totals } = k;
@@ -3856,7 +3873,7 @@ async function handleComplete(req, res, id, url) {
     try { order = await readOrder(id); } catch { order = null; }
     const z = orderZugriff(req, url, order, kasseOffen);
     if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
-    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
+    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo, ...dankeAngaben(order) });
     // Guthaben (Reservierung einer offenen Kasse gilt nur GUTHABEN_RESERVIERUNG_MS) bzw. Gutschein mit Höchstzahl (eigene parallele
     // Kassen zählen beim Anlegen nicht mit): inzwischen anderweitig eingelöst → nicht abschließen (keine Rechnung), als abgebrochen
     // stornieren. Geprüft hier (früh, ohne Upload-Prüfung) und noch einmal unmittelbar vor der Rechnungsnummer (siehe unten).
@@ -3895,8 +3912,24 @@ async function handleComplete(req, res, id, url) {
     await writeOrder(order);
   } finally { release(); }
   console.log(`📦 Bestellung ${id} – ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
-  send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
+  send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo, ...dankeAngaben(order) });
   await runHook('orderCompleted', order);
+}
+/**
+ * Angaben für die Danke-Ansicht der Kasse (Antwort von /complete, nur mit dem Schlüssel der Bestellung): zuZahlen (= order.total),
+ * gesamtbetrag (mit Guthaben-Anteil, wie auf der Rechnung) und bei offener Vorkasse die Bankverbindung mit Verwendungszweck
+ * (Bestellnummer) aus denselben Einstellungen wie die Rechnung. Ältere Kassen-Tabs lesen die Felder nicht.
+ */
+function dankeAngaben(order) {
+  const zuZahlen = euro(order.total);
+  const guth = guthabenDerBestellung(order);
+  const out = { zuZahlen, gesamtbetrag: guth ? Math.round((zuZahlen + guth.off) * 100) / 100 : zuZahlen, zahlungsfristTage: ZAHLUNGSFRIST_TAGE };
+  if (order.payment !== 'paypal' && zuZahlen > 0 && order.paymentStatus !== 'bezahlt') {
+    const co = settings.company || {};
+    const bank = { empfaenger: co.owner || co.name || '', iban: co.iban || '', bic: co.bic || '', bank: co.bank || '', verwendungszweck: order.orderId };
+    if (String(bank.iban).trim()) out.bank = bank;
+  }
+  return out;
 }
 
 // Admin-Seite: /admin liefert public/admin.html wie eine statische Datei (Login clientseitig, API mit x-admin-key)
@@ -4124,6 +4157,12 @@ const server = http.createServer(async (req, res) => {
       if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const { address, error } = kontoAdresse(await readJson(req, 16 * 1024));   // nur Text: Straße ≤ 120, PLZ ≤ 10, Ort ≤ 80
       if (error) return send(res, 400, { ok: false, error });
+      // wie die Kasse (sie übernimmt die Adresse): alle drei Felder oder keines (Adresse entfernen), PLZ nach dem Liefergebiet
+      const { street, zip, city } = address;
+      if ((street || zip || city) && !(street && zip && city)) {
+        return send(res, 400, { ok: false, feld: !street ? 'street' : !zip ? 'zip' : 'city', error: 'Bitte Straße, PLZ und Ort vollständig angeben – oder alle drei Felder leeren, um die Adresse zu entfernen.' });
+      }
+      if (zip && plzFehler(zip)) return send(res, 400, { ok: false, feld: 'zip', error: plzFehler(zip) });
       u.address = address;
       await saveUsers();
       return send(res, 200, { ok: true });
@@ -4411,7 +4450,7 @@ const server = http.createServer(async (req, res) => {
       // Vor der Zahlung genau die Prüfungen des Checkouts (Adresse, 1–20 Positionen, Sperren, Vereinbarung, Gutschein, angezeigter
       // Betrag) — sonst wäre bezahlt, die Bestellung aber abgelehnt
       const k = pruefeKasse(data);
-      if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) });
+      if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.feld ? { feld: k.feld } : {}) });
       if (forgotLimited(`kasse:${clientIp(req)}`, KASSE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());   // wie /api/checkout
       const t = k.totals;
       // 0 € (Gutschein/Guthaben deckt alles): PayPal nimmt keine Zahlung über 0,00 € an — die Kasse bestellt dann ohne Zahlung
