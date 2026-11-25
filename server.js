@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
-  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse } from './lib/mail-templates.js';
+  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, passwortGeaendert } from './lib/mail-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -830,6 +830,54 @@ function userByToken(token, field) {
   return found;
 }
 const userByResetToken = (token) => userByToken(token, 'reset');
+
+/**
+ * Kundenkonto löschen (Kundin selbst oder Admin): Konto und alle Anmeldungen weg. Bestellungen bleiben wegen der
+ * Aufbewahrungspflicht (Rechnungen, § 147 AO) erhalten, verlieren aber den Kontobezug (userId → null, Vermerk in der Historie).
+ * → Zahl der Bestellungen, die zum Konto gehörten
+ */
+async function kontoLoeschen(u, wer) {
+  const i = users.indexOf(u);
+  if (i >= 0) users.splice(i, 1);
+  sitzungenBeenden(u.id);
+  await saveUsers();
+  await saveSessions();
+  let n = 0;
+  for (const o of await listOrders()) {
+    if (o.userId !== u.id) continue;
+    const release = await lockOrder(o.orderId);
+    try {
+      const x = await readOrder(o.orderId);
+      if (x.userId === u.id) {
+        x.userId = null;
+        addHistory(x, x.status, 'Kundenkonto gelöscht – die Bestellung bleibt (Aufbewahrungspflicht), ohne Kontobezug', 'system');
+        await writeOrder(x);
+        n++;
+      }
+    } catch (err) { console.error(`Konto ${u.id}: Bestellung ${o.orderId} nicht gelöst:`, err?.message || err); }
+    finally { release(); }
+  }
+  console.log(`🗑️  Kundenkonto ${u.id} gelöscht (${wer}) – ${n} Bestellung(en) ohne Kontobezug`);
+  return n;
+}
+/** Datenauskunft zu einem Kundenkonto (Admin, Art. 15 DSGVO): Konto ohne Passwort-Hash, Anmeldungen, Bestellungen (Konto oder gleiche
+ *  E-Mail, ohne Zugriffsschlüssel), Widerrufe und Einträge im Mail-Protokoll an diese Adresse */
+async function kontoExport(u) {
+  const { salt, hash, reset, verify, ...konto } = u;
+  const bestellungen = (await listOrders()).filter((o) => o.userId === u.id || String(o.customer?.email || '').trim().toLowerCase() === u.email).map(ohneSchluessel);
+  const widerrufe = await withWiderrufe((l) => ({ result: l.filter((w) => w.email === u.email) })).catch(() => []);
+  let mails = [];
+  try {
+    mails = (await mailer.list({ limit: 100000 })).filter((m) => String(m.to || '').toLowerCase().split(/,\s*/).includes(u.email))
+      .map(({ createdAt, sentAt, subject, kind, status }) => ({ createdAt, sentAt, subject, kind, status }));
+  } catch { /* Protokoll nicht lesbar → ohne Mails */ }
+  return {
+    exportiertAm: new Date().toISOString(), anbieter: settings.company?.name || BRAND,
+    konto: { ...konto, emailBestaetigt: !!u.emailVerifiedAt },
+    anmeldungen: Object.values(sessions).filter((x) => x.userId === u.id).map((x) => ({ seit: new Date(x.createdAt).toISOString() })),
+    bestellungen, widerrufe, mails,
+  };
+}
 
 // --- E-Mail-Adresse bestätigen (Double-Opt-in): bei der Registrierung wird die Adresse nicht geprüft — wer sie nur eintippt,
 //   darf keine fremden Gastbestellungen (Status, Sendungsnummer, Guthaben-Code, Altbestand-Rechnungen) sehen. Der Link aus der
@@ -3060,6 +3108,46 @@ const server = http.createServer(async (req, res) => {
       await saveUsers();
       return send(res, 200, { ok: true });
     }
+    // Konto (angemeldet): Passwort ändern (altes Passwort; beendet alle anderen Anmeldungen, Mail „Passwort geändert“),
+    // auf allen Geräten abmelden, Konto löschen (Passwort zur Bestätigung). Falsche Passwörter zählen wie bei der Anmeldung.
+    if (req.method === 'POST' && (p === '/api/auth/password' || p === '/api/auth/delete' || p === '/api/auth/logout-all')) {
+      const u = userFromReq(req);
+      if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const token = String(req.headers['x-auth'] || '');
+      if (p === '/api/auth/logout-all') {
+        const n = sitzungenBeenden(u.id);
+        await saveSessions();
+        return send(res, 200, { ok: true, beendet: n });
+      }
+      let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
+      const ip = clientIp(req);
+      if (rateLimitReached(`login:${ip}|${u.email}`, LOGIN_FEHL_KONTO) || rateLimitReached(`login-ip:${ip}`, LOGIN_FEHL_IP)) return send(res, 429, LOGIN_GEBREMST);
+      const altes = p === '/api/auth/password' ? body?.altesPasswort : body?.passwort;
+      if (!(await passwortStimmt(u, altes))) {
+        forgotLimited(`login:${ip}|${u.email}`, LOGIN_FEHL_KONTO);
+        forgotLimited(`login-ip:${ip}`, LOGIN_FEHL_IP);
+        return send(res, 400, { ok: false, error: p === '/api/auth/password' ? 'Das bisherige Passwort stimmt nicht.' : 'Das Passwort stimmt nicht.' });
+      }
+      if (p === '/api/auth/delete') {
+        await kontoLoeschen(u, 'auf Wunsch im Konto');
+        return send(res, 200, { ok: true });
+      }
+      const pwFehler = pwRegel(body?.neuesPasswort);
+      if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
+      if (!users.includes(u)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });   // inzwischen gelöscht
+      u.salt = crypto.randomBytes(16).toString('hex');
+      u.hash = await hashPw(body.neuesPasswort, u.salt);
+      delete u.reset;
+      const beendet = sitzungenBeenden(u.id, token);
+      await saveUsers();
+      await saveSessions();
+      send(res, 200, { ok: true, beendet });
+      try {
+        const m = passwortGeaendert({ user: { name: u.name, email: u.email }, settings, baseUrl: baseUrlFor(settings) });
+        await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-geaendert', ref: u.id });
+      } catch (err) { console.error('Mail „Passwort geändert“ fehlgeschlagen:', err?.message || err); }
+      return;
+    }
 
     // --- Widerruf (elektronische Widerrufsfunktion): speichern, Bestellung zuordnen, bestätigen — Antwort immer gleich
     if (req.method === 'POST' && p === '/api/widerruf') {
@@ -3673,6 +3761,21 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/admin/users') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       return send(res, 200, { ok: true, users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt, address: u.address || null, emailVerifiedAt: u.emailVerifiedAt || null })) });
+    }
+    // Kundenkonto (Admin): Datenauskunft als JSON (Art. 15 DSGVO) bzw. löschen (Bestellungen bleiben, ohne Kontobezug)
+    if ((req.method === 'GET' && p === '/api/admin/user-export') || (req.method === 'POST' && p === '/api/admin/user-delete')) {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      let id = url.searchParams.get('id');
+      if (req.method === 'POST') { try { id = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8'))?.id; } catch { id = null; } }
+      const u = typeof id === 'string' ? users.find((x) => x.id === id) : null;
+      if (!u) return send(res, 404, { ok: false, error: 'Kundenkonto unbekannt' });
+      if (req.method === 'GET') {
+        res.setHeader('Content-Disposition', `attachment; filename="formsam-konto-${u.id.slice(0, 8)}.json"`);
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, await kontoExport(u));
+      }
+      const n = await kontoLoeschen(u, 'im Admin');
+      return send(res, 200, { ok: true, bestellungen: n });
     }
     const mAdminOrder = p.match(/^\/api\/admin\/order\/([A-Z0-9-]+)$/);
     if (req.method === 'GET' && mAdminOrder) {

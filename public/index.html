@@ -461,7 +461,7 @@
     <form id="auth-register" hidden>
       <label>Name <input type="text" id="ar-name" required autocomplete="name"></label>
       <label>E-Mail <input type="email" id="ar-email" required autocomplete="email"></label>
-      <label>Passwort <input type="password" id="ar-pw" required minlength="6" placeholder="mind. 6 Zeichen" autocomplete="new-password"></label>
+      <label>Passwort <input type="password" id="ar-pw" required minlength="8" maxlength="200" placeholder="mind. 8 Zeichen" autocomplete="new-password"></label>
       <button class="btn btn-primary btn-lg" type="submit">Konto anlegen</button>
       <p class="tiny">Ich nutze deine Daten nur für dein Konto und deine Bestellungen – kein Newsletter. Mehr dazu in der <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</p>
     </form>
@@ -475,8 +475,8 @@
     <!-- Neues Passwort setzen (Aufruf über ?reset=TOKEN aus der E-Mail) -->
     <form id="auth-reset" hidden>
       <p class="tiny left">Wähle ein neues Passwort für dein Konto.</p>
-      <label>Neues Passwort <input type="password" id="ap-pw" required minlength="6" placeholder="mind. 6 Zeichen" autocomplete="new-password"></label>
-      <label>Passwort wiederholen <input type="password" id="ap-pw2" required minlength="6" autocomplete="new-password"></label>
+      <label>Neues Passwort <input type="password" id="ap-pw" required minlength="8" maxlength="200" placeholder="mind. 8 Zeichen" autocomplete="new-password"></label>
+      <label>Passwort wiederholen <input type="password" id="ap-pw2" required minlength="8" maxlength="200" autocomplete="new-password"></label>
       <button class="btn btn-primary btn-lg" type="submit" id="ap-submit">Passwort speichern</button>
       <button type="button" class="linkbtn auth-forgot-link" id="ap-forgot">Neuen Link anfordern</button>
     </form>
@@ -502,6 +502,27 @@
       <button class="btn btn-ghost" id="acc-logout">Abmelden</button>
       <span><span class="tiny" id="acc-addr-msg"></span> <button class="btn btn-primary" id="acc-addr-save">💾 Adresse speichern</button></span>
     </div>
+    <!-- Passwort & Konto (auth.js): Passwort ändern, auf allen Geräten abmelden, Konto löschen -->
+    <details class="acc-sicher" id="acc-sicher">
+      <summary>🔐 Passwort &amp; Konto</summary>
+      <form id="acc-pw-form">
+        <label>Bisheriges Passwort <input type="password" id="acc-pw-alt" required autocomplete="current-password"></label>
+        <label>Neues Passwort <input type="password" id="acc-pw-neu" required minlength="8" maxlength="200" placeholder="mind. 8 Zeichen" autocomplete="new-password"></label>
+        <label>Neues Passwort wiederholen <input type="password" id="acc-pw-neu2" required minlength="8" maxlength="200" autocomplete="new-password"></label>
+        <p class="tiny left">Alle anderen Geräte werden dabei abgemeldet.</p>
+        <button class="btn btn-primary" type="submit">Passwort ändern</button>
+      </form>
+      <div class="modal-btns" style="justify-content:space-between;flex-wrap:wrap">
+        <button type="button" class="btn btn-ghost" id="acc-logout-all">Auf allen Geräten abmelden</button>
+        <button type="button" class="btn btn-ghost" id="acc-del-start">Konto löschen …</button>
+      </div>
+      <form id="acc-del-form" hidden>
+        <p class="tiny left">Dein Konto und alle Anmeldungen werden gelöscht. Deine Bestellungen und Rechnungen bewahre ich wegen der gesetzlichen Aufbewahrungspflicht weiter auf – ohne Verbindung zu einem Konto.</p>
+        <label>Passwort zur Bestätigung <input type="password" id="acc-del-pw" required autocomplete="current-password"></label>
+        <button class="btn btn-primary" type="submit">Konto endgültig löschen</button>
+      </form>
+      <p class="tiny left" id="acc-sicher-msg" role="status"></p>
+    </details>
   </div>
 </dialog>
 

@@ -1058,7 +1058,7 @@ function renderPrint() {
 function renderCustomers() {
   const m = {};
   for (const u of USERS) {
-    m[u.email] = { name: u.name, email: u.email, city: u.address?.city || '', orders: 0, rev: 0, last: null, account: true, since: u.createdAt };
+    m[u.email] = { id: u.id, name: u.name, email: u.email, city: u.address?.city || '', orders: 0, rev: 0, last: null, account: true, since: u.createdAt };
   }
   for (const o of DATA.orders) {
     const e = custEmail(o);
@@ -1076,8 +1076,31 @@ function renderCustomers() {
       <td data-l="Bestellungen" class="num">${c.orders}</td>
       <td data-l="Umsatz" class="num">${money(c.rev)}</td>
       <td data-l="Zuletzt">${c.last ? fmtDate(c.last) : '—'}</td>
-      <td data-l="Konto">${c.account ? '<span class="badge">👤 Konto</span>' : '<span class="muted">Gast</span>'}</td>
+      <td data-l="Konto">${c.account ? `<span class="badge">👤 Konto</span> <button class="ghost mini" data-user-export="${esc(c.id)}" title="Alle Daten zu diesem Konto als JSON herunterladen (Datenauskunft)">JSON</button> <button class="ghost mini del" data-user-del="${esc(c.id)}" title="Konto löschen – Bestellungen bleiben (Aufbewahrungspflicht), aber ohne Kontobezug">🗑</button>` : '<span class="muted">Gast</span>'}</td>
     </tr>`).join('') + '</tbody>';
+}
+/** Datenauskunft zu einem Kundenkonto als JSON-Datei (Konto, Anmeldungen, Bestellungen, Widerrufe, Mails) */
+async function userExport(id) {
+  const r = await fetch(`/api/admin/user-export?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': KEY() } });
+  if (r.status === 401) return showLogin();
+  if (!r.ok) return toast((await r.json().catch(() => null))?.error || `Export fehlgeschlagen (${r.status})`, 'err');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(await r.blob());
+  a.download = `formsam-konto-${String(id).slice(0, 8)}.json`;
+  a.click();
+  toast('Datenexport heruntergeladen', 'ok');
+}
+/** Kundenkonto löschen (Konto + Anmeldungen) — Bestellungen bleiben wegen der Aufbewahrungspflicht, verlieren aber den Kontobezug */
+async function userDelete(id) {
+  const u = USERS.find((x) => x.id === id);
+  if (!u || !confirm(`Kundenkonto „${u.name}“ (${u.email}) endgültig löschen?\n\nBestellungen und Rechnungen bleiben wegen der Aufbewahrungspflicht erhalten, aber ohne Verbindung zum Konto.`)) return;
+  const r = await api('/api/admin/user-delete', { method: 'POST', body: JSON.stringify({ id }) }).catch(() => null);
+  if (!r?.ok) return toast(r?.error || 'Löschen fehlgeschlagen', 'err');
+  USERS = USERS.filter((x) => x.id !== id);
+  for (const o of DATA.orders) if (o.userId === id) o.userId = null;
+  renderCustomers();
+  updateCounters();
+  toast(`Konto gelöscht${r.bestellungen ? ` – ${r.bestellungen} Bestellung(en) bleiben ohne Kontobezug` : ''}`, 'ok');
 }
 
 // ---------------------------------------------------------------------------
@@ -1980,6 +2003,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   // Klick-Delegation: Kundendaten (E-Mail, Farbschlüssel, Farbname) stehen nur in data-Attributen, nie in Inline-Handlern
   document.addEventListener('click', (e) => {
+    const ux = e.target.closest?.('[data-user-export]');
+    if (ux) return userExport(ux.dataset.userExport);
+    const ud = e.target.closest?.('[data-user-del]');
+    if (ud) return userDelete(ud.dataset.userDel);
     const em = e.target.closest?.('[data-email]');
     if (em) { if (em.dataset.act === 'filter-email') closeOrder(); return filterByEmail(em.dataset.email); }
     const pq = e.target.closest?.('[data-pq]');

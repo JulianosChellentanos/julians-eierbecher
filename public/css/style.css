@@ -706,6 +706,12 @@ dialog input:focus, dialog textarea:focus, dialog select:focus { border-color: v
 .ao-right { text-align: right; display: flex; flex-direction: column; gap: 2px; margin-left: auto; } /* auch nach dem Umbruch rechtsbündig */
 .acc-order a { color: var(--accent-dark); font-weight: 600; text-decoration: none; }
 .acc-order a:hover { text-decoration: underline; }
+/* Passwort & Konto (aufklappbar unter der Lieferadresse) */
+.acc-sicher { border-top: 1px solid var(--line); padding-top: 12px; }
+.acc-sicher summary { cursor: pointer; font-family: var(--serif); font-weight: 600; font-size: 1rem; }
+.acc-sicher > :not(summary) { margin-top: 12px; }
+.auth-wrap .acc-sicher form { padding: 0; }
+.acc-sicher #acc-sicher-msg:empty { display: none; }
 
 .stage-print {
   position: absolute; z-index: 4; left: 18px; bottom: 56px;
