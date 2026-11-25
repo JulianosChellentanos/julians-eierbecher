@@ -1297,6 +1297,24 @@ function nextBelegNr(prefixKey, nextKey, fallbackPrefix, now = new Date()) {
   settings[nextKey] = n + 1;
   return nr;
 }
+/**
+ * Eine gezogene Nummer, die nicht an der Bestellung gespeichert werden konnte (Schreibfehler): zurückgeben, wenn seitdem keine
+ * weitere gezogen wurde (dann bekommt der nächste Beleg genau diese Nummer), sonst als Lücke mit Grund protokollieren
+ * (settings.belegLuecken, Hinweis in der Admin-Übersicht) — der Nummernkreis bleibt so lückenlos oder begründet.
+ */
+function belegNrFreigeben(prefixKey, nextKey, nr, grund) {
+  const m = /^(.*?)(\d{4,})$/.exec(String(nr));
+  if (m && settings[prefixKey] === m[1] && Number(settings[nextKey]) === Number(m[2]) + 1) {
+    settings[nextKey] = Number(m[2]);
+    belegeVergeben.delete(nr);
+    console.warn(`⚠️  Belegnummer ${nr} nicht vergeben (${grund}) – wird als nächste wieder verwendet`);
+    return;
+  }
+  const luecke = { nr: String(nr), at: new Date().toISOString(), grund: String(grund).slice(0, 300) };
+  settings.belegLuecken = [...(Array.isArray(settings.belegLuecken) ? settings.belegLuecken : []), luecke].slice(-50);
+  console.error(`⚠️  Lücke im Nummernkreis: ${nr} nicht vergeben – ${grund}`);
+  saveSettings().catch((err) => console.error('Einstellungen konnten nicht gespeichert werden:', err?.message || err));
+}
 /** Alle ausgestellten Belegnummern (Rechnung, Gutschrift, Storno) — beim Start aus den Bestellungen, danach bei jedem Schreiben */
 const belegeVergeben = new Set();
 function merkeBelege(o) {
@@ -1463,10 +1481,8 @@ function setOrderStatus(order, status, note, by = 'admin') {
 const orderIsPaid = (o) => o.status === 'bezahlt' || (o.status === 'neu' && o.paymentStatus === 'bezahlt');
 // Atomar (Temp-Datei + rename): ein paralleles listOrders()/readOrder() sieht nie eine halb geschriebene Datei
 async function writeOrder(order) {
-  const file = path.join(ORDERS, order.orderId, 'order.json');
-  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.tmp`;
-  await writeFile(tmp, JSON.stringify(order, null, 2));
-  await rename(tmp, file);
+  // writeFileAtomic räumt die Temp-Datei auf, wenn Schreiben oder Umbenennen scheitert
+  await writeFileAtomic(path.join(ORDERS, order.orderId, 'order.json'), JSON.stringify(order, null, 2));
   trackCouponUse(order);
   merkeBelege(order);
 }
@@ -1809,6 +1825,35 @@ function druckzettelHTML(order) {
 //   Rechenwerte (Zeilen, Summen) kommen unverändert aus der Bestellung.
 // ---------------------------------------------------------------------------
 /**
+ * Steuerstatus einer Rechnung (order.steuer = { kleinunternehmer, satz }) — wird beim Ausstellen der Rechnung an der Bestellung
+ * gespeichert; Gutschrift und Stornorechnung folgen ihm statt der Einstellung am Ausstellungstag (sonst „berichtigte“ ein Storno
+ * nach einem Wechsel der Betriebsart Umsatzsteuer, die nie ausgewiesen war, oder ließe ausgewiesene stehen).
+ */
+const STEUERSATZ = 19;
+const steuerJetzt = () => ({ kleinunternehmer: !!settings.company?.kleinunternehmer, satz: STEUERSATZ });
+/**
+ * Steuerstatus der Rechnung einer Bestellung → { kleinunternehmer, satz }. Bestellungen von vor dem Feld: aus der ausgestellten
+ * rechnung.html abgeleitet (§ 19-Hinweis → Kleinunternehmer, „Umsatzsteuer 19 %“/„USt (19 %)“ → Regelbesteuerung), sonst die
+ * aktuelle Einstellung mit Warnung im Protokoll. Das Ergebnis bleibt an der Bestellung (order.steuer mit quelle), damit spätere
+ * Belege dieselbe Grundlage haben. Belege selbst werden nie geändert.
+ */
+function steuerDerRechnung(order) {
+  const s0 = order?.steuer;
+  if (s0 && typeof s0.kleinunternehmer === 'boolean') return { kleinunternehmer: s0.kleinunternehmer, satz: Number(s0.satz) > 0 ? Number(s0.satz) : STEUERSATZ };
+  let text = '';
+  try { text = readFileSync(path.join(ORDERS, order.orderId, 'rechnung.html'), 'utf8').replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' '); } catch { /* keine Rechnung */ }
+  const satz = /(?:Umsatzsteuer|USt\.?)\s*\(?\s*(\d{1,2}(?:[.,]\d+)?)\s*%/.exec(text) || /(\d{1,2}(?:[.,]\d+)?)\s*%\s*(?:Umsatzsteuer|USt)/.exec(text);
+  let st;
+  if (/§\s*19\b.{0,40}?UStG/.test(text)) st = { kleinunternehmer: true, satz: STEUERSATZ, quelle: 'rechnung.html' };
+  else if (satz) st = { kleinunternehmer: false, satz: Number(satz[1].replace(',', '.')) || STEUERSATZ, quelle: 'rechnung.html' };
+  else {
+    st = { ...steuerJetzt(), quelle: 'einstellung' };
+    console.warn(`⚠️  ${order.orderId}: Steuerstatus der Rechnung ${order.invoiceNo || '(ohne Nummer)'} nicht feststellbar – aktuelle Einstellung (${st.kleinunternehmer ? 'Kleinunternehmer' : `USt ${st.satz} %`}) verwendet`);
+  }
+  order.steuer = st;
+  return { kleinunternehmer: st.kleinunternehmer, satz: st.satz };
+}
+/**
  * Guthaben-Anrechnung einer Bestellung → { code, off, gutschriftNo } oder null (normaler Rabattcode / kein Gutschein).
  * Neue Bestellungen tragen coupon.guthaben; ältere werden über den Gutschein in den Einstellungen erkannt. Die Gutschrift-Nummer
  * steht in der Notiz des Gutscheins („Gutschrift GS-2026-0002 zu FS-…“).
@@ -1822,9 +1867,11 @@ function guthabenDerBestellung(order) {
 }
 function invoiceHTML(order) {
   const co = settings.company || {};
-  const ku = !!co.kleinunternehmer;
+  // Steuerstatus beim Ausstellen (handleComplete speichert ihn an der Bestellung — Gutschrift/Storno folgen ihm später)
+  const st = order.steuer && typeof order.steuer.kleinunternehmer === 'boolean' ? order.steuer : steuerJetzt();
+  const ku = !!st.kleinunternehmer, satz = Number(st.satz) || STEUERSATZ;
   const vorkasse = order.payment !== 'paypal';
-  const ausgestellt = order.completedAt || order.createdAt;
+  const ausgestellt = order.completedAt || order.invoiceAt || order.createdAt;
   // Hinweiszeile je Position: Aktion „Normalpreis 24,90 € · Aktion −16 % (Name)“ (Einzelpreis = reduzierter Preis, nur bei aktionProzent > 0)
   // und Aufpreise „inkl. Aufpreise: …“ (aus l.parts; ältere Bestellungen ohne parts zeigen keine) — Untersetzer/Größe stecken wie bisher im Einzelpreis
   const rows = order.lines.map((l, i) => {
@@ -1833,39 +1880,50 @@ function invoiceHTML(order) {
     <tr><td class="muted">${i + 1}</td><td>${esc(itemLabel(l, { mitAufpreis: false }))}${note ? `<br><small class="muted">${esc(note)}</small>` : ''}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
     <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`;
   }).join('');
-  // Ersparnis je betroffener Aktion („Aktion „Name“ −30 % auf Gehämmert: Ersparnis“) — informativ unter den Summen
-  // (die Summen entstehen wie bisher aus den reduzierten Zeilen); ältere Bestellungen mit nur order.aktion: eine Zeile
+  // Ersparnis je betroffener Aktion („Aktion „Name“ −30 % auf Gehämmert: Ersparnis“) — informativ direkt unter der Zwischensumme,
+  // als „in den Preisen enthalten“ gekennzeichnet (die Summen entstehen aus den reduzierten Zeilen; nach dem Gesamtbetrag läse
+  // sie sich wie ein weiterer Abzug); ältere Bestellungen mit nur order.aktion: eine Zeile
   const aktionRow = aktionSummary(order, settings)
-    .map((a) => `<tr class="fein"><td>${esc(a.label)}</td><td class="r">${esc(a.value)}</td></tr>`).join('');
+    .map((a) => `<tr class="fein"><td>${esc(a.label)} <small>(in den Preisen enthalten)</small></td><td class="r">${esc(a.value)}</td></tr>`).join('');
   // Guthaben (Gutschrift aus einer Reklamation) ist eine Anrechnung, kein Rabatt: Die Gutschrift hat das Entgelt der ersten
   // Rechnung (samt USt) schon gemindert — hier zählt es als Zahlung. Entgelt und USt beziehen sich deshalb auf den Betrag vor
   // dem Guthaben, danach „abzüglich Guthaben“ und „Zu zahlen“ (= order.total). Ältere Bestellungen ohne Kennzeichen: über den Code.
   const guth = guthabenDerBestellung(order);
   const entgelt = guth ? Math.round((order.total + guth.off) * 100) / 100 : order.total;
-  const ust = ku ? null : ustAus(entgelt);
+  const ust = ku ? null : ustAus(entgelt, satz);
   const ustRows = ust
-    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer 19 %</td><td class="r">${money(ust.ust)}</td></tr>` : '';
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz} %</td><td class="r">${money(ust.ust)}</td></tr>` : '';
   const guthRows = guth
     ? `<tr><td>abzüglich Guthaben „${esc(guth.code)}“${guth.gutschriftNo ? ` <small class="muted">(aus Gutschrift ${esc(guth.gutschriftNo)})</small>` : ''}</td><td class="r">−${money(guth.off)}</td></tr>
     <tr class="zahl"><td>Zu zahlen</td><td class="r">${money(order.total)}</td></tr>` : '';
   // § 34a UStDV (seit 2025): Hinweis, dass die Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG gilt
   const steuerNote = (ku
     ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
-    : 'Alle Beträge in Euro inklusive 19 % Umsatzsteuer.') +
-    (guth ? ' Dein Guthaben wird wie eine Zahlung angerechnet und mindert den Gesamtbetrag nicht.' : '');
+    : `Alle Beträge in Euro inklusive ${satz} % Umsatzsteuer.`) +
+    (guth ? ' Dein Guthaben wird wie eine Zahlung angerechnet: Es mindert weder den Gesamtbetrag noch die Versandkostenfreiheit.' : '');
   const bank = [['Kontoinhaber', co.owner || co.name], ['IBAN', co.iban], ['BIC', co.bic], ['Bank', co.bank], ['Verwendungszweck', order.orderId], ['Betrag', money(order.total)]]
     .filter(([, v]) => String(v || '').trim());
   const bankRows = [];
   for (let i = 0; i < bank.length; i += 2) bankRows.push(bank.slice(i, i + 2));
-  const payNote = vorkasse
-    ? `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von 14 Tagen mit deiner Bestellnummer als Verwendungszweck:
-       <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`
-    : `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`;
+  // Zahlungshinweis nach dem Zahlungsstand: nichts zu zahlen (Gutschein/Guthaben deckt alles) · schon bezahlt · Überweisung
+  const payNote = !(order.total > 0)
+    ? `Nichts zu zahlen – der Betrag ist durch ${guth ? `dein Guthaben „${esc(guth.code)}“` : `den Gutschein „${esc(order.coupon?.code || '')}“`} beglichen. Danke!`
+    : !vorkasse
+      ? `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
+      : order.paymentStatus === 'bezahlt'
+        ? `Bezahlt per Überweisung${order.paidAt ? ` am ${esc(dateDE(order.paidAt))}` : ''}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
+        : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von 14 Tagen mit deiner Bestellnummer als Verwendungszweck:
+       <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
+  // Leistungszeitpunkt (§ 14 Abs. 4 Nr. 6 UStG, Kalendermonat genügt nach § 31 Abs. 4 UStDV): schon versandt → Versanddatum,
+  // sonst der voraussichtliche Liefermonat (Rechnungsdatum + längste Lieferzeit) — ausdrücklich als „voraussichtlich“
+  const leistung = order.shippedAt
+    ? `${esc(dateDE(order.shippedAt))}<small>(Versanddatum)</small>`
+    : `voraussichtlich ${esc(lieferMonat(ausgestellt, settings.shop?.lieferzeit))}<small>(Kalendermonat der Lieferung)</small>`;
   const meta = [
     ['Rechnungsnummer', esc(order.invoiceNo)],
     ['Rechnungsdatum', esc(dateDE(ausgestellt))],
     ['Bestellnummer', esc(order.orderId)],
-    ...(ku ? [] : [['Lieferdatum', `${esc(lieferMonat(ausgestellt, settings.shop?.lieferzeit))}<small>(Kalendermonat der Lieferung)</small>`]]),
+    ...(ku ? [] : [['Leistungszeitpunkt', leistung]]),
   ];
   const cu = order.customer || {};
   const body = `
@@ -1878,11 +1936,11 @@ function invoiceHTML(order) {
   <table class="pos"><tr><th>Pos.</th><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
   <table class="summen">
     <tr><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
+    ${aktionRow}
     ${order.coupon && !guth ? `<tr><td>Gutschein „${esc(order.coupon.code)}“</td><td class="r">−${money(order.coupon.off)}</td></tr>` : ''}
     <tr><td>Versand</td><td class="r">${order.shipping === 0 ? 'kostenlos' : money(order.shipping)}</td></tr>
     <tr class="grand"><td>Gesamtbetrag</td><td class="r">${money(entgelt)}</td></tr>
     ${ustRows}
-    ${aktionRow}
     ${guthRows}
   </table>
   <p class="steuer">${steuerNote}</p>
@@ -1904,10 +1962,12 @@ function creditNoteHTML(order) {
   const co = settings.company || {};
   const r = order.reklamation || {};
   const betrag = euro(r.betrag);
-  const ust = co.kleinunternehmer ? null : ustAus(betrag);
-  const vatNote = co.kleinunternehmer
+  // Steuer wie in der Rechnung, die die Gutschrift mindert (order.steuer) — nicht wie die Einstellung am Ausstellungstag
+  const { kleinunternehmer: ku, satz } = order.invoiceNo ? steuerDerRechnung(order) : steuerJetzt();
+  const ust = ku ? null : ustAus(betrag, satz);
+  const vatNote = ku
     ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
-    : `Im Gutschriftbetrag enthaltene USt (19 %): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
+    : `Im Gutschriftbetrag enthaltene USt (${satz} %): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
   const how = {
     gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> – einlösbar in der Kasse des Shops im Feld „Gutscheincode“, ohne Mindestbestellwert und auch während einer Aktion. Ist die Bestellung kleiner, bleibt der Rest auf dem Code.`,
     ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${esc(maskIban(r.iban))}` : ''} innerhalb von 5 Werktagen.`,
@@ -1927,7 +1987,7 @@ function creditNoteHTML(order) {
       <b>${esc(cu.name)}</b><br>${esc(cu.street)}<br>${esc(cu.zip)} ${esc(cu.city)}</div>
     <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
   </section>
-  <h1>Gutschrift</h1>
+  <h1>Gutschrift <span class="muted" style="font-size:.62em">(Rechnungskorrektur)</span></h1>
   <table class="pos"><tr><th>Position</th><th class="r">Betrag</th></tr>
     <tr><td>Gutschrift zu ${ref}<br><small class="muted">Grund: ${esc(r.grund || '—')}</small></td><td class="r">${money(betrag)}</td></tr></table>
   <table class="summen">
@@ -1936,7 +1996,7 @@ function creditNoteHTML(order) {
   <p class="steuer">${vatNote}</p>
   <div class="zahlung"><b>Art der Erstattung:</b> ${how}</div>
   <p class="dank">Diese Gutschrift bezieht sich auf die oben genannte Rechnung bzw. Bestellung${order.invoiceNo ? ' und mindert deren Betrag entsprechend' : ''}. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
-  return belegSeite({ title: `Gutschrift ${r.gutschriftNo || ''} · ${BRAND}`, co, body });
+  return belegSeite({ title: `Gutschrift (Rechnungskorrektur) ${r.gutschriftNo || ''} · ${BRAND}`, co, body });
 }
 
 // ---------------------------------------------------------------------------
@@ -1956,10 +2016,13 @@ function stornoBetraege(order) {
 }
 function stornoHTML(order) {
   const co = settings.company || {};
-  const ku = !!co.kleinunternehmer;
+  // Steuer wie in der aufgehobenen Rechnung (order.steuer); die berichtigte USt = USt der Rechnung − USt einer früheren Gutschrift,
+  // damit Gutschrift und Storno zusammen genau die ausgewiesene Steuer aufheben (sonst 1 Cent Rundungsdifferenz möglich)
+  const { kleinunternehmer: ku, satz } = steuerDerRechnung(order);
   const st = order.storno || {};
   const { entgelt, gutschrift, betrag, guth } = stornoBetraege(order);
-  const ust = ku ? null : ustAus(betrag);
+  const ustBetrag = ku ? 0 : Math.round((ustAus(entgelt, satz).ust - (gutschrift ? ustAus(gutschrift, satz).ust : 0)) * 100) / 100;
+  const ust = ku ? null : { ust: ustBetrag, netto: Math.round((betrag - ustBetrag) * 100) / 100 };
   const rechnungVom = dateDE(order.completedAt || order.createdAt);
   const r = order.reklamation || {};
   const meta = [
@@ -1969,17 +2032,19 @@ function stornoHTML(order) {
     ['Bestellnummer', esc(order.orderId)],
   ];
   const ustRows = ust
-    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">−${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer 19 %</td><td class="r">−${money(ust.ust)}</td></tr>` : '';
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">−${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz} %</td><td class="r">−${money(ust.ust)}</td></tr>` : '';
   const vatNote = ku
     ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
     : `Die in Rechnung ${esc(order.invoiceNo)} ausgewiesene Umsatzsteuer wird in dieser Höhe berichtigt.`;
   const bezahlt = order.paymentStatus === 'bezahlt';
+  // 0 € zu zahlen (Gutschein/Guthaben deckte alles): kein Geld zu erstatten, nur ein Guthaben wird wieder frei
   const zahlung = [
-    bezahlt
-      ? `Den bereits gezahlten Betrag${gutschrift ? ', soweit noch nicht erstattet,' : ''} erstatte ich dir ${order.payment === 'paypal' ? 'über PayPal' : 'per Überweisung'}.`
-      : 'Du musst nichts überweisen. Hast du schon überwiesen, erstatte ich dir den Betrag.',
+    !(order.total > 0) ? ''
+      : bezahlt
+        ? `Den bereits gezahlten Betrag${gutschrift ? ', soweit noch nicht erstattet,' : ''} erstatte ich dir ${order.payment === 'paypal' ? 'über PayPal' : 'per Überweisung'}.`
+        : 'Du musst nichts überweisen. Hast du schon überwiesen, erstatte ich dir den Betrag.',
     guth ? `Dein Guthaben „${esc(guth.code)}“ über ${money(guth.off)} steht dir wieder zur Verfügung.` : '',
-  ].filter(Boolean).join(' ');
+  ].filter(Boolean).join(' ') || 'Es war nichts zu zahlen – es wird nichts erstattet.';
   const cu = order.customer || {};
   const body = `
   <section class="anschrift">
@@ -2003,21 +2068,31 @@ function stornoHTML(order) {
 /**
  * Beim Wechsel auf „storniert“ (unter der Bestellsperre, vor writeOrder): Stornorechnung zu einer ausgestellten Rechnung
  * anlegen — einmal je Bestellung (order.storno = { nr, at }). Ohne Rechnung (Kasse nie abgeschlossen) oder wenn schon alles
- * gutgeschrieben ist, gibt es nichts aufzuheben.
+ * gutgeschrieben ist, gibt es nichts aufzuheben. Reihenfolge wie bei der Rechnung: Nummer ziehen → an der Bestellung speichern
+ * (scheitert das, geht die Nummer zurück bzw. die Lücke wird protokolliert) → Zähler speichern → storno.html schreiben. So tragen
+ * Beleg und Bestellung immer dieselbe Nummer. nachholen = true: nur eine fehlende storno.html zu einer gespeicherten Nummer schreiben.
  */
-async function stornoBeleg(order) {
-  if (!order.invoiceNo || order.storno?.nr) return;
-  if (stornoBetraege(order).betrag <= 0) {
-    addHistory(order, order.status, `Keine Stornorechnung nötig: Rechnung ${order.invoiceNo} ist bereits vollständig gutgeschrieben`, 'system');
-    return;
-  }
-  const nr = nextBelegNr('creditPrefix', 'nextCredit', DEFAULT_SETTINGS.creditPrefix);
-  order.storno = { nr, at: new Date().toISOString() };
-  await saveSettings();
+async function stornoBeleg(order, { nachholen = false } = {}) {
+  if (!order.invoiceNo) return;
   const file = path.join(ORDERS, order.orderId, 'storno.html');
+  if (!order.storno?.nr) {
+    if (nachholen) return;
+    if (stornoBetraege(order).betrag <= 0) {
+      addHistory(order, order.status, `Keine Stornorechnung nötig: Rechnung ${order.invoiceNo} ist bereits vollständig gutgeschrieben`, 'system');
+      return;
+    }
+    steuerDerRechnung(order);   // Altbestand: Steuerstatus der Rechnung jetzt festhalten (wird mit gespeichert)
+    const nr = nextBelegNr('creditPrefix', 'nextCredit', DEFAULT_SETTINGS.creditPrefix);
+    order.storno = { nr, at: new Date().toISOString() };
+    addHistory(order, order.status, `Stornorechnung ${nr} zu Rechnung ${order.invoiceNo} ausgestellt`, 'system');
+    try { await writeOrder(order); } catch (err) {
+      belegNrFreigeben('creditPrefix', 'nextCredit', nr, `Stornorechnung zu ${order.orderId}: Bestellung nicht speicherbar (${err?.message || err})`);
+      throw err;
+    }
+    await saveSettings().catch((err) => console.error(`Zähler nach Stornorechnung ${nr} nicht gespeichert (Nummer steht an der Bestellung):`, err?.message || err));
+    if (existsSync(file)) { console.warn(`⚠️  ${order.orderId}: storno.html existiert bereits – ${nr} nicht als Datei geschrieben`); return; }
+  }
   if (!existsSync(file)) await writeFileAtomic(file, stornoHTML(order));
-  else console.warn(`⚠️  ${order.orderId}: storno.html existiert bereits – ${nr} nicht als Datei geschrieben`);
-  addHistory(order, order.status, `Stornorechnung ${nr} zu Rechnung ${order.invoiceNo} ausgestellt`, 'system');
 }
 
 // ---------------------------------------------------------------------------
@@ -2249,11 +2324,14 @@ function cleanIban(raw) {
 }
 /** Freitext aus dem Admin: Steuerzeichen raus, Länge begrenzen */
 const clipText = (v, n) => String(v ?? '').replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, ' ').trim().slice(0, n);
-/** Eindeutiger Gutschein-Code GS-XXXX-XXXX (ohne verwechselbare Zeichen), geprüft gegen settings.coupons */
+/**
+ * Eindeutiger Guthaben-Code GH-XXXX-XXXX (ohne verwechselbare Zeichen), geprüft gegen settings.coupons — „GH“ statt früher „GS“,
+ * damit er nicht wie eine Gutschrift-/Stornonummer (GS-2026-0003) aussieht; ältere GS-Codes bleiben gültig
+ */
 function newCouponCode() {
   const taken = new Set((settings.coupons || []).map((c) => String(c?.code || '').trim().toUpperCase()));
   for (;;) {
-    let c = 'GS-';
+    let c = 'GH-';
     for (let i = 0; i < 8; i++) c += (i === 4 ? '-' : '') + CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
     if (!taken.has(c)) return c;
   }
@@ -2519,15 +2597,26 @@ async function handleComplete(req, res, id, url) {
       return send(res, 409, { ok: false, code: 'guthaben', error: `Dein Guthaben „${gc.code}“ wurde inzwischen eingelöst – bitte starte die Kasse neu.` });
     }
     if (order.status === 'storniert') return send(res, 409, { ok: false, error: 'Diese Bestellung wurde storniert – bitte starte die Kasse neu.' });
+    // Nummernkreis ohne Widersprüche: 1. Nummer ziehen und mit Rechnungsdatum und Steuerstatus an der Bestellung speichern —
+    // scheitert das, geht die Nummer zurück (bzw. die Lücke wird protokolliert, belegNrFreigeben); 2. Zähler speichern (ein Fehler
+    // dort schadet nicht mehr: die Nummer steht an der Bestellung und wird nach einem Neustart übersprungen); 3. rechnung.html mit
+    // genau dieser Nummer; 4. Abschluss. Ein erneuter Aufruf nach einem Fehler setzt mit derselben Nummer fort.
     if (!order.invoiceNo) {
-      order.invoiceNo = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
-      await saveSettings();
-    }
+      const nr = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
+      order.invoiceNo = nr;
+      order.invoiceAt = new Date().toISOString();
+      order.steuer = steuerJetzt();   // Gutschrift und Stornorechnung richten sich später danach (nicht nach der Einstellung am Ausstellungstag)
+      try { await writeOrder(order); } catch (err) {
+        belegNrFreigeben('invoicePrefix', 'nextInvoice', nr, `Rechnung zu ${id}: Bestellung nicht speicherbar (${err?.message || err})`);
+        throw err;
+      }
+      await saveSettings().catch((err) => console.error(`Zähler nach Rechnung ${nr} nicht gespeichert (Nummer steht an der Bestellung):`, err?.message || err));
+    } else if (!order.steuer) steuerDerRechnung(order);
     order.filesComplete = order.lines.every((l) => existsSync(path.join(ORDERS, id, l.stlFile)));
-    order.completedAt = new Date().toISOString();
     // Eine ausgestellte Rechnung wird nie neu geschrieben (GoBD) — ältere Bestellungen ohne completedAt behalten ihre Datei
     const invoiceFile = path.join(ORDERS, id, 'rechnung.html');
     if (!existsSync(invoiceFile)) await writeFileAtomic(invoiceFile, invoiceHTML(order));
+    order.completedAt = order.invoiceAt || new Date().toISOString();   // = Rechnungsdatum auf dem Beleg
     await writeOrder(order);
   } finally { release(); }
   console.log(`📦 Bestellung ${id} – ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
@@ -3124,7 +3213,7 @@ const server = http.createServer(async (req, res) => {
             ? `Versendet${order.carrier ? ' mit ' + CARRIER_LABELS[order.carrier] : ''} · ${order.trackingNo}` : null;
           const payNote = paidViaStatus && paymentStatus === 'bezahlt' ? 'Zahlung eingegangen' : null;
           setOrderStatus(order, status, note || shipNote || payNote, 'admin');
-          if (order.status === 'storniert' && prevStatus !== 'storniert') await stornoBeleg(order);
+          if (order.status === 'storniert') await stornoBeleg(order, { nachholen: prevStatus === 'storniert' });
         } else if (trackingChanged && order.trackingNo) {
           addHistory(order, order.status, `Sendungsnummer hinterlegt${order.carrier ? ' (' + CARRIER_LABELS[order.carrier] + ')' : ''}: ${order.trackingNo}`, 'admin');
         }
@@ -3254,7 +3343,15 @@ const server = http.createServer(async (req, res) => {
             }
             if (r.art !== 'nachdruck') {
               if (r.art === 'gutschein' && !r.gutscheinCode) r.gutscheinCode = newCouponCode();
-              if (!r.gutschriftNo) r.gutschriftNo = nextBelegNr('creditPrefix', 'nextCredit', DEFAULT_SETTINGS.creditPrefix);
+              if (!r.gutschriftNo) {
+                // Nummer erst an der Bestellung speichern, dann Gutschein und gutschrift.html — Beleg und Bestellung tragen dieselbe Nummer
+                steuerDerRechnung(order);
+                r.gutschriftNo = nextBelegNr('creditPrefix', 'nextCredit', DEFAULT_SETTINGS.creditPrefix);
+                try { await writeOrder(order); } catch (err) {
+                  belegNrFreigeben('creditPrefix', 'nextCredit', r.gutschriftNo, `Gutschrift zu ${orderId}: Bestellung nicht speicherbar (${err?.message || err})`);
+                  throw err;
+                }
+              }
               if (r.art === 'gutschein' && !settings.coupons.some((c) => String(c?.code || '').toUpperCase() === r.gutscheinCode)) {
                 // Guthaben: Restwert bleibt für spätere Bestellungen, gilt auch während einer Aktion (es ist Geld der Kundschaft)
                 settings.coupons.push({ code: r.gutscheinCode, type: 'fixed', value: r.betrag, minOrder: 0, active: true, mitAktion: true, guthaben: true, note: `Gutschrift ${r.gutschriftNo} zu ${orderId}` });
@@ -3390,7 +3487,7 @@ const server = http.createServer(async (req, res) => {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
         setOrderStatus(order, status, null, 'admin');
-        if (order.status === 'storniert' && prevStatus !== 'storniert') await stornoBeleg(order);
+        if (order.status === 'storniert') await stornoBeleg(order, { nachholen: prevStatus === 'storniert' });
         await writeOrder(order);
       } finally { release(); }
       send(res, 200, { ok: true, order });
