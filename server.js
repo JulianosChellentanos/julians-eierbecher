@@ -6,6 +6,7 @@ import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, r
 import { mkdir, writeFile, readdir, readFile, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { produktHinweise, BESCHAFFENHEIT_FASSUNG } from './lib/produkthinweise.js';
 import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
@@ -58,6 +59,7 @@ const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.hdr': 'application/octet-stream',
   '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8',
 };
 
 // ---------------------------------------------------------------------------
@@ -243,8 +245,10 @@ const DEFAULT_SETTINGS = {
   },
   // Shop-Angaben für Kasse, Mails und Rechnung (Lieferzeit steht u. a. in der Bestellbestätigung)
   shop: { lieferzeit: '5–8 Werktage', liefergebiet: 'Deutschland' },
-  // Angaben für die Rechtsseiten (lib/legal.js): Hoster und Serverstandort (Datenschutzerklärung)
-  legal: { hoster: 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur', serverOrt: 'Berlin (Deutschland)' },
+  // Angaben für die Rechtsseiten (lib/legal.js, Datenschutzerklärung): Hoster und Serverstandort je Server — bewusst ohne
+  // Standardwert (Admin-Hinweis, solange leer); avVertrag = AV-Vertrag mit dem Hoster im Admin bestätigt;
+  // mailVersand 'eigen' (eigener Mailserver auf dem gemieteten Server) | 'anbieter' (E-Mail-Anbieter, Name optional in mailAnbieter)
+  legal: { hoster: '', serverOrt: '', avVertrag: false, mailVersand: 'anbieter', mailAnbieter: '' },
   paypal: { enabled: false, sandbox: true, clientId: '', secret: '' },
   // Wartungsmodus: Shop nur mit Zugangskennwort (hash = scrypt, secret = HMAC-Schlüssel für das Freigabe-Cookie)
   wartung: { aktiv: false, hash: '', secret: '' },
@@ -270,7 +274,8 @@ const DEFAULT_SETTINGS = {
 // ---------------------------------------------------------------------------
 const COMPANY_TEXT = { name: 60, owner: 120, street: 120, zip: 10, city: 80, country: 60, email: 254, phone: 40, ustId: 20, steuerNr: 20, iban: 42, bic: 11, bank: 80 };
 const SHOP_TEXT = { lieferzeit: 60, liefergebiet: 80 };
-const LEGAL_TEXT = { hoster: 200, serverOrt: 120 };
+const LEGAL_TEXT = { hoster: 200, serverOrt: 120, mailAnbieter: 120 };
+const MAIL_VERSAND = ['eigen', 'anbieter'];
 const plainObj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 /** Einzeiliger Text: alle Leerraum-Folgen (auch Zeilenumbrüche) → ein Leerzeichen, dann wie clipText */
 const oneLine = (v, n) => clipText(String(v ?? '').replace(/\s+/g, ' '), n);
@@ -306,8 +311,22 @@ function sanitizeCompany(raw) {
 }
 /** Shop-Angaben: Lieferzeit/Liefergebiet als Text, leer → Standard */
 const sanitizeShop = (raw) => pickText(plainObj(raw), SHOP_TEXT, DEFAULT_SETTINGS.shop);
-/** Rechtsangaben (Hoster, Serverstandort): Text, leer → Standard */
-const sanitizeLegal = (raw) => pickText(plainObj(raw), LEGAL_TEXT, DEFAULT_SETTINGS.legal);
+/**
+ * Rechtsangaben: Hoster, Serverstandort und Name des Mail-Anbieters als Text (leer bleibt leer — kein stiller Hoster-Standard
+ * mehr), avVertrag als Boolean (nur mit Hoster; wird der Hoster geleert, ist auch die Bestätigung weg), mailVersand
+ * 'eigen' | 'anbieter'. Migration älterer Einstellungen ohne die neuen Felder: ein eingetragener Hoster gilt als bestätigt
+ * (der Text der Datenschutzerklärung bleibt dort gleich) — außer dem früheren stillen Standard (IONOS): den hat der alte Code
+ * bei jedem Start in settings.json geschrieben, er ist also kein Eintrag und muss je Server bestätigt werden (Hinweis in
+ * legalWarnings); Mailversand wie bisher 'anbieter'.
+ */
+const ALTER_HOSTER_STANDARD = 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur';   // wie lib/legal.js
+function sanitizeLegal(raw) {
+  const src = plainObj(raw);
+  const out = pickText(src, LEGAL_TEXT, { hoster: '', serverOrt: '', mailAnbieter: '' });
+  out.avVertrag = !!out.hoster && (src.avVertrag === undefined ? out.hoster !== ALTER_HOSTER_STANDARD : src.avVertrag === true);   // ohne Hoster keine Bestätigung
+  out.mailVersand = MAIL_VERSAND.includes(src.mailVersand) ? src.mailVersand : DEFAULT_SETTINGS.legal.mailVersand;
+  return out;
+}
 /**
  * Hinweise für den Admin (Übersicht): fehlende Pflichtangaben für Rechnungen mit Umsatzsteuer und — wenn lib/legal.js
  * geladen ist — dessen legalWarnings() (Impressum-Pflichtangaben, Platzhalter-Adresse, Telefon …)
@@ -776,9 +795,13 @@ function clientIp(req) {
 // ---------------------------------------------------------------------------
 // Wartungsmodus (settings.wartung): vor dem ganzen Shop steht eine Seite mit Zugangskennwort. Wer es kennt, bekommt ein
 // Cookie (30 Tage) und sieht den Shop normal — so lässt sich die Seite vor dem Start ansehen und testen.
-// Kennwort nur als scrypt-Hash; das Cookie ist ein HMAC über den Hash → ein neues Kennwort macht alle Freigaben ungültig.
-// Frei bleiben nur die Wartungsseite selbst, ihre Schriften/Logos, das Favicon und sw.js (damit der Service Worker
-// aktualisieren kann). API-Aufrufe ohne Freigabe bekommen 503.
+// Kennwort nur als scrypt-Hash; das Cookie trägt sein Ablaufdatum und einen HMAC über Hash + Ablauf → es gilt höchstens
+// 30 Tage, ein neues Kennwort macht alle Freigaben ungültig.
+// Frei bleiben die Wartungsseite selbst, ihre Schriften/Logos, das Favicon und sw.js (damit der Service Worker aktualisieren
+// kann) — und alles, was Besucher und Bestandskunden auch in der Wartung brauchen: Rechtsseiten samt Widerrufsfunktion
+// (POST /api/widerruf, § 356a BGB), Beleg-Abrufe aus Mails und Konto (/orders/<ID>/rechnung|gutschrift|storno.html|pdf —
+// der Schlüssel wird wie sonst im Handler geprüft) und /robots.txt („Disallow: /“). Sonst bekommen API-Aufrufe 503.
+// Pfade mit kodiertem Schrägstrich, Backslash oder ..-Segment lehnt das Tor mit 400 ab (sonst hinter /fonts/ jede Datei).
 // Ein- und ausschalten: Admin → System, oder auf dem Server  node tools/wartung.mjs an <kennwort> | aus | status
 // ---------------------------------------------------------------------------
 const WARTUNG_COOKIE = 'fs_zugang';
@@ -786,8 +809,22 @@ const WARTUNG_TAGE = 30;
 // Manifest und App-Icons holt der Browser ohne Cookies (anonymous) → müssen frei sein, sonst 503 nach dem Freischalten
 const WARTUNG_FREI = new Set(['/__wartung', '/favicon.ico', '/sw.js', '/manifest.webmanifest']);
 const WARTUNG_FREI_PREFIX = ['/img/brand/', '/img/icons/', '/fonts/'];
+const WARTUNG_FREI_BELEG = /^\/orders\/[^/]+\/(rechnung|gutschrift|storno)\.(html|pdf)$/;
+/** Ohne Freigabe erreichbar? (Rechtsseiten mit und ohne / am Ende — LEGAL_ROUTES steht unten bei den Rechtsseiten) */
+function wartungFrei(req, p) {
+  if (WARTUNG_FREI.has(p) || WARTUNG_FREI_PREFIX.some((x) => p.startsWith(x)) || p === '/robots.txt') return true;
+  if (req.method === 'POST') return p === '/api/widerruf';
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  const m = p.match(/^\/([a-z]+)\/?$/);
+  return !!(m && LEGAL_ROUTES.includes(m[1])) || WARTUNG_FREI_BELEG.test(p);
+}
+/** Pfad taugt für die Freigabe-Prüfung: keine kodierten Schrägstriche, kein Backslash/NUL, bereits normalisiert (kein .., //, /./) */
+const wartungPfadOk = (url, p) => !/%2f|%5c/i.test(url.pathname) && !/[\\\0]/.test(p) && path.posix.normalize(p) === p;
 const wartungAktiv = () => !!(settings.wartung?.aktiv && settings.wartung?.hash && settings.wartung?.secret);
-const wartungToken = () => crypto.createHmac('sha256', settings.wartung.secret).update(`zugang|${settings.wartung.hash}`).digest('base64url');
+/** Signatur des Freigabe-Cookies: HMAC über Kennwort-Hash und Ablauf (Sekunden seit 1970) */
+const wartungSig = (exp) => crypto.createHmac('sha256', settings.wartung.secret).update(`zugang|${settings.wartung.hash}|${exp}`).digest('base64url');
+/** Cookie-Wert „<Ablauf>.<Signatur>“ — Cookies im alten Format (nur HMAC, ohne Ablauf) gelten nicht mehr */
+const wartungToken = () => { const exp = Math.floor(Date.now() / 1000) + WARTUNG_TAGE * 86400; return `${exp}.${wartungSig(exp)}`; };
 function cookieWert(req, name) {
   for (const teil of String(req.headers.cookie || '').split(';')) {
     const i = teil.indexOf('=');
@@ -796,8 +833,9 @@ function cookieWert(req, name) {
   return '';
 }
 function wartungFreigegeben(req) {
-  const c = Buffer.from(cookieWert(req, WARTUNG_COOKIE));
-  const t = Buffer.from(wartungToken());
+  const m = /^(\d{9,11})\.([A-Za-z0-9_-]{43})$/.exec(cookieWert(req, WARTUNG_COOKIE));
+  if (!m || Number(m[1]) * 1000 <= Date.now()) return false;
+  const c = Buffer.from(m[2]), t = Buffer.from(wartungSig(m[1]));
   return c.length === t.length && crypto.timingSafeEqual(c, t);
 }
 /** Kennwort → 'scrypt$salt$hash' (auch tools/wartung.mjs nutzt dieses Format) */
@@ -812,13 +850,34 @@ function wartungKennwortStimmt(kennwort) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 // HTTPS direkt oder hinter dem eigenen Reverse-Proxy (TRUST_PROXY) → Cookie mit Secure
-const istHttps = (req) => !!req.socket?.encrypted || (TRUST_PROXY > 0 && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
+const istHttps = (req) => !!req.socket?.encrypted || (TRUST_PROXY > 0 && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https');
 const wartungCookie = (req) => `${WARTUNG_COOKIE}=${wartungToken()}; Path=/; Max-Age=${WARTUNG_TAGE * 86400}; HttpOnly; SameSite=Lax${istHttps(req) ? '; Secure' : ''}`;
-// Ziel nach dem Freischalten: nur Pfade dieser Seite (kein //host, kein Schema)
-const wartungZiel = (z) => (typeof z === 'string' && /^\/(?![/\\])/.test(z) && z.length < 500 && !z.startsWith('/__wartung') ? z : '/');
+// Ziel nach dem Freischalten: nur Pfade dieser Seite — kein //host, kein Schema, keine Steuer- oder Leerzeichen (Browser
+// entfernen Tabs: aus „/<Tab>/evil.example“ würde „//evil.example“); aufgelöst gegen eine feste Basis bleibt der Host gleich.
+// Das Ergebnis wird noch einmal geprüft: Punktsegmente ergeben nach dem Auflösen sonst wieder „//host“ („/.//evil.example“).
+const ZIEL_PFAD = /^\/(?![/\\])[\x21-\x7e]*$/;
+function wartungZiel(z) {
+  if (typeof z !== 'string' || z.length >= 500 || !ZIEL_PFAD.test(z)) return '/';
+  let u;
+  try { u = new URL(z, 'http://formsam.invalid'); } catch { return '/'; }
+  if (u.origin !== 'http://formsam.invalid') return '/';
+  const ziel = u.pathname + u.search;
+  return ZIEL_PFAD.test(ziel) && !ziel.startsWith('/__wartung') ? ziel : '/';
+}
+// Sperre nach 10 Fehlversuchen je IP in 15 Minuten: danach prüft das Tor ein Kennwort dieser IP nur noch nach einer Pause,
+// die mit jeder Prüfung wächst (30 s, 60 s, 120 s … höchstens 5 Minuten; vergessen nach einer Stunde Ruhe oder beim richtigen
+// Kennwort). Raten bleibt so etwa so langsam wie mit fester Sperre, wer das richtige Kennwort hat (z. B. hinter derselben
+// Adresse wie ein Rater), kommt nach kurzer Wartezeit trotzdem hinein. WARTUNG_BREMSE_S ändert die Grundpause (nur für Prüfskripte).
+const WARTUNG_BREMSE_MS = (Math.max(1, parseInt(process.env.WARTUNG_BREMSE_S || '30', 10) || 30)) * 1000;
+const WARTUNG_BREMSE_MAX_MS = 10 * WARTUNG_BREMSE_MS;   // 5 Minuten
+const WARTUNG_BREMSE_RUHE_MS = 60 * 60 * 1000;
+const wartungGeprueft = new Map();   // Schlüssel wartung:<IP> → { t: letzte Prüfung während der Sperre, n: Zahl dieser Prüfungen }
+/** Pause nach der n-ten Prüfung während der Sperre */
+const wartungPause = (n) => Math.min(WARTUNG_BREMSE_MS * 2 ** Math.max(0, n - 1), WARTUNG_BREMSE_MAX_MS);
+const wartungDauer = (sek) => (sek >= 90 ? `${Math.ceil(sek / 60)} Minuten` : sek === 1 ? '1 Sekunde' : `${sek} Sekunden`);
 let wartungLogo = '';
 try { wartungLogo = readFileSync(path.join(PUBLIC, 'img/brand/formsam-logo.svg'), 'utf8').replace(/<title>.*?<\/title>/, '').replace('<svg ', '<svg class="logo" aria-label="formsam" '); } catch { /* Logo fehlt → nur Text */ }
-function wartungSeite(res, code, { fehler = '', ziel = '/' } = {}) {
+function wartungSeite(res, code, { fehler = '', ziel = '/', warten = 0 } = {}) {
   const html = `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>formsam – bald für dich da</title><meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#f4efe7">
 <link rel="icon" href="/img/brand/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.ico" sizes="any">
@@ -841,6 +900,7 @@ input:focus{outline:none}form:focus-within{border-color:var(--acc);box-shadow:0 
 .err{color:#b3261e;font-size:13px;margin:12px 0 0}
 @media (prefers-color-scheme:dark){.err{color:#ffb4ad}}
 small{display:block;margin-top:34px;color:var(--soft);font-size:12px;letter-spacing:.04em}
+.recht{margin-top:14px;font-size:12px}.recht a{color:var(--soft);text-underline-offset:.16em;margin:0 6px}.recht a:hover{color:var(--ink)}
 </style></head><body><main>
 ${wartungLogo || '<div style="font:600 34px Fraunces,Georgia,serif;margin-bottom:30px">formsam</div>'}
 <h1>Gleich geht’s los.<br><em>Ich arbeite noch an der Seite.</em></h1>
@@ -853,10 +913,11 @@ ${wartungLogo || '<div style="font:600 34px Fraunces,Georgia,serif;margin-bottom
 </form>
 ${fehler ? `<p class="err" role="alert">${esc(fehler)}</p>` : ''}
 <small>Sorgsam geformt. Auf dich zugeschnitten.</small>
+<nav class="recht" aria-label="Rechtliches"><a href="/impressum">Impressum</a><a href="/datenschutz">Datenschutz</a><a href="/widerruf#widerrufen">Vertrag widerrufen</a></nav>
 </main></body></html>`;
   res.writeHead(code, {
     'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow',
-    'X-Formsam-Wartung': '1', ...(code === 503 ? { 'Retry-After': '3600' } : {}),
+    'X-Formsam-Wartung': '1', ...(code === 503 ? { 'Retry-After': '3600' } : warten > 0 ? { 'Retry-After': String(warten) } : {}),
   });
   res.end(html);
 }
@@ -866,16 +927,36 @@ async function wartungTor(req, res, p, url) {
     if (p === '/__wartung') { res.writeHead(303, { Location: '/' }); res.end(); return true; }
     return false;
   }
+  // Kodierte Schrägstriche, Backslash, ..-Segmente: kein legitimer Link sieht so aus → ablehnen statt am Tor vorbei
+  if (!wartungPfadOk(url, p)) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1' });
+    res.end('Ungültige Adresse');
+    return true;
+  }
   if (p === '/__wartung' && req.method === 'POST') {
     const body = new URLSearchParams((await readBody(req, 8 * 1024)).toString('utf8'));
     const ziel = wartungZiel(body.get('ziel'));
     const key = `wartung:${clientIp(req)}`;
-    if (rateLimitReached(key, 10)) { wartungSeite(res, 429, { fehler: 'Zu viele Versuche – bitte in 15 Minuten noch einmal.', ziel }); return true; }
+    const gesperrt = rateLimitReached(key, 10);
+    let pause = 0;
+    if (gesperrt) {
+      const jetzt = Date.now();
+      let g = wartungGeprueft.get(key);
+      if (g && jetzt - g.t > WARTUNG_BREMSE_RUHE_MS) g = null;
+      const warten = g ? Math.ceil((g.t + wartungPause(g.n) - jetzt) / 1000) : 0;
+      if (warten > 0) { wartungSeite(res, 429, { fehler: `Zu viele Versuche – bitte warte ${wartungDauer(warten)} und gib das Kennwort dann noch einmal ein.`, ziel, warten }); return true; }
+      g = { t: jetzt, n: (g?.n || 0) + 1 };
+      wartungGeprueft.delete(key); wartungGeprueft.set(key, g);   // neu einreihen → bei Überlauf fliegen die ältesten raus
+      if (wartungGeprueft.size > 5000) wartungGeprueft.delete(wartungGeprueft.keys().next().value);
+      pause = Math.ceil(wartungPause(g.n) / 1000);
+    }
     if (!wartungKennwortStimmt(body.get('kennwort') || '')) {
       forgotLimited(key, 10); // nur Fehlgriffe zählen
-      wartungSeite(res, 401, { fehler: 'Das Kennwort stimmt nicht.', ziel });
+      if (gesperrt) wartungSeite(res, 429, { fehler: `Das Kennwort stimmt nicht. Nach vielen Fehlversuchen geht der nächste Versuch erst in ${wartungDauer(pause)}.`, ziel, warten: pause });
+      else wartungSeite(res, 401, { fehler: 'Das Kennwort stimmt nicht.', ziel });
       return true;
     }
+    wartungGeprueft.delete(key);
     res.writeHead(303, {
       Location: ziel, 'Cache-Control': 'no-store',
       'Set-Cookie': wartungCookie(req),
@@ -883,17 +964,19 @@ async function wartungTor(req, res, p, url) {
     res.end();
     return true;
   }
-  if (WARTUNG_FREI.has(p) || WARTUNG_FREI_PREFIX.some((x) => p.startsWith(x)) || wartungFreigegeben(req)) {
+  if (wartungFrei(req, p) || wartungFreigegeben(req)) {
     if (p === '/__wartung') { res.writeHead(303, { Location: '/' }); res.end(); return true; }
     return false;
   }
   if (p.startsWith('/api/')) {
+    // bewusst ohne Retry-After: Werkzeuge mit automatischer Wiederholung (curl --retry, Überwachung) hielten sich daran und
+    // warteten eine Stunde — auch wenn die Wartung längst vorbei ist; Seiten und Dateien behalten Retry-After 3600
     res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1' });
     res.end(JSON.stringify({ ok: false, error: 'Wartungsmodus – bitte später noch einmal versuchen.' }));
     return true;
   }
   const seite = (req.method === 'GET' || req.method === 'HEAD') && (/text\/html/.test(String(req.headers.accept || '')) || !path.extname(p));
-  if (seite) { wartungSeite(res, 503, { ziel: wartungZiel(p + url.search) }); return true; }
+  if (seite) { wartungSeite(res, 503, { ziel: wartungZiel(url.pathname + url.search) }); return true; }
   res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1', 'Retry-After': '3600' });
   res.end('Wartungsmodus');
   return true;
@@ -1590,11 +1673,11 @@ function logoHTML(height = 34) {
   const w = Math.round((LOGO_SVG.w / LOGO_SVG.h) * height * 10) / 10;
   return `<svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${LOGO_SVG.w} ${LOGO_SVG.h}" width="${w}" height="${height}" role="img" aria-label="${BRAND}"><title>${BRAND}</title>${LOGO_SVG.paths}</svg>`;
 }
-/** Öffentlicher Host für Fußzeilen: aus mail.publicUrl (wenn gesetzt), sonst formsam.de */
+/** Öffentlicher Host für Fußzeilen: aus mail.publicUrl (wenn gesetzt), sonst die Hauptadresse (www.formsam.com → formsam.com) */
 function publicHost() {
   const u = String(settings.mail?.publicUrl || '').trim();
   try { if (/^https?:\/\//i.test(u)) return new URL(u).host.replace(/^www\./, ''); } catch { /* ungültig → Standard */ }
-  return 'formsam.de';
+  return new URL(HAUPTADRESSE).host.replace(/^www\./, '');
 }
 /** „00000 Musterstadt“ + Land (nur außerhalb Deutschlands) */
 function companyOrt(co) {
@@ -1869,9 +1952,7 @@ function invoiceHTML(order) {
   <p class="steuer">${steuerNote}</p>
   <div class="zahlung">${payNote}</div>
   <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${esc(lieferzeitText(settings))}. ${esc(fristBeginnKurz(order.payment))}</p>
-  <p class="klein">Produkthinweise: Alle Artikel bestehen aus PLA, einem Kunststoff auf Pflanzenbasis (nicht spülmaschinengeeignet, keinen Temperaturen über 50 °C aussetzen, z. B. heißes Wasser, Heizung, Auto im Sommer).
-  Vasen sind für Trockenblumen gedacht; das Material wird imprägniert und ist in der Regel wasserfest – eine Wasserdichtigkeit wird aber nicht zugesagt.
-  Bei individuell gestalteten Formen (Formen-Editor) wird keine Standfestigkeit zugesagt.</p>`;
+  <p class="klein">Produkthinweise: ${esc(produktHinweise(order.lines).join(' '))}</p>`;
   return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body });
 }
 
@@ -2322,6 +2403,51 @@ function legalFallbackHTML(slug) {
   <p><a href="/">Zurück zum Shop</a></p></body></html>`;
 }
 
+// ---------------------------------------------------------------------------
+// Öffentliche Adresse für Suchmaschinen und Link-Vorschau: Startseite (Canonical, og:url, og:image, twitter:image),
+// robots.txt und sitemap.xml nehmen mail.publicUrl; leer oder lokal (localhost/127.…) → Hauptadresse www.formsam.com
+// ---------------------------------------------------------------------------
+const HAUPTADRESSE = 'https://www.formsam.com';
+function oeffentlicheAdresse() {
+  const u = String(settings.mail?.publicUrl || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\/[^\s"'<>]+$/i.test(u) && !/^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(u) ? u : HAUPTADRESSE;
+}
+/**
+ * robots.txt: Admin, Belege und Konto-/Admin-API nicht crawlen; Preise, Farben, Texte, Skripte und Stile bleiben frei (braucht
+ * die Suchmaschine zum Darstellen der Startseite). Im Wartungsmodus alles sperren (die Datei ist dann ohne Kennwort erreichbar).
+ */
+function robotsTxt() {
+  if (wartungAktiv()) return 'User-agent: *\nDisallow: /\n';
+  return ['User-agent: *', 'Disallow: /admin', 'Disallow: /orders/', 'Disallow: /api/admin/', 'Disallow: /api/auth/', '',
+    `Sitemap: ${oeffentlicheAdresse()}/sitemap.xml`, ''].join('\n');
+}
+/** sitemap.xml: Startseite und die fünf Rechtsseiten (ohne lastmod — die Rechtsseiten ändern sich mit den Einstellungen) */
+function sitemapXml() {
+  const base = oeffentlicheAdresse();
+  const urls = ['/', ...LEGAL_ROUTES.map((r) => `/${r}`)].map((u) => `  <url><loc>${esc(base + u)}</loc></url>`);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
+}
+/**
+ * Startseite (public/index.html) mit Canonical und Vorschau-Adressen aus der öffentlichen Adresse. Zwischengespeichert je
+ * Dateistand und Adresse; das ETag kommt aus dem Ergebnis (ändert sich also auch, wenn nur die Adresse im Admin wechselt).
+ */
+let startseiteCache = null;   // { key, html, gz, etag }
+function startseite() {
+  const file = path.join(PUBLIC, 'index.html');
+  if (!existsSync(file)) return null;
+  const st = statSync(file), base = oeffentlicheAdresse();
+  const key = `${st.mtimeMs}|${st.size}|${base}`;
+  if (startseiteCache?.key === key) return startseiteCache;
+  const b = esc(base);
+  const html = readFileSync(file, 'utf8')
+    .replace(/(<link rel="canonical" href=")[^"]*(")/, `$1${b}/$2`)
+    .replace(/(<meta property="og:url" content=")[^"]*(")/, `$1${b}/$2`)
+    .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*?(\/img\/brand\/og\.jpg")/g, `$1${b}$2`);
+  const etag = `"s-${crypto.createHash('sha1').update(html).digest('base64url').slice(0, 20)}"`;
+  startseiteCache = { key, html, gz: gzipSync(html, { level: zc.Z_BEST_SPEED }), etag };
+  return startseiteCache;
+}
+
 /**
  * Fehlerseite für Beleg- und Modell-Links (/orders/…) bei 404 (Link unvollständig, falscher Schlüssel, unbekannt) und 429
  * (zu viele Fehlgriffe) — im formsam-Look, mit Weg zur Hilfe, ohne Auskunft darüber, ob es die Bestellung gibt.
@@ -2434,6 +2560,7 @@ async function handleCheckout(req, res) {
     // Gesonderte Vereinbarung in der Kasse (Wasser/Standfestigkeit, § 476 Abs. 1 Satz 2 BGB): Zeitpunkt als Nachweis — Pflicht
     // (pruefeKasse); bei PayPal der Zeitpunkt vor der Zahlung (/api/paypal/create)
     beschaffenheitBestaetigt: garantie?.beschaffenheitAt || createdAt,
+    beschaffenheitFassung: BESCHAFFENHEIT_FASSUNG,   // Wortlaut des Häkchens: lib/produkthinweise.js BESCHAFFENHEIT_TEXTE[Fassung]
     aktionen: totals.aktionen,   // [{ id, name, prozent, ersparnis, produkte, muster }] je betroffener Aktion (nach Ersparnis absteigend)
     aktion: totals.aktion,       // aktionen[0] | null (Kompatibilität)
     invoiceNo: null, filesComplete: false,
@@ -3448,6 +3575,27 @@ const server = http.createServer(async (req, res) => {
       });
       if (req.method === 'HEAD') return res.end();
       return res.end(gz ? gzipSync(out, { level: zc.Z_BEST_SPEED }) : out);
+    }
+
+    // --- robots.txt und sitemap.xml aus der öffentlichen Adresse (robots.txt ist auch im Wartungsmodus erreichbar: „Disallow: /“)
+    if ((p === '/robots.txt' || p === '/sitemap.xml') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const txt = p === '/robots.txt' ? robotsTxt() : sitemapXml();
+      // Wartung: „Disallow: /“ nur kurz gültig — Google hält robots.txt sonst bis zu 24 h, kürzt das aber nach max-age
+      const cache = p === '/robots.txt' && wartungAktiv() ? 'max-age=300' : 'no-cache';
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(p)], 'Cache-Control': cache, 'Content-Length': Buffer.byteLength(txt) });
+      return res.end(req.method === 'HEAD' ? undefined : txt);
+    }
+    // --- Startseite: Canonical und Vorschau-Adressen aus der öffentlichen Adresse (sonst wie eine statische HTML-Datei)
+    if ((p === '/' || p === '/index.html') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const sp = startseite();
+      if (sp) {
+        const headers = { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', ETag: sp.etag, Vary: 'Accept-Encoding' };
+        if (req.headers['if-none-match'] === sp.etag) { res.writeHead(304, headers); return res.end(); }
+        const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+        const body = gz ? sp.gz : Buffer.from(sp.html);
+        res.writeHead(200, { ...headers, ...(gz ? { 'Content-Encoding': 'gzip' } : {}), 'Content-Length': body.length });
+        return res.end(req.method === 'HEAD' ? undefined : body);
+      }
     }
 
     // --- Seiten & Dateien

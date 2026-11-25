@@ -13,7 +13,7 @@ const IMMUTABLE_PREFIXES = ['/vendor/', '/fonts/', '/env/', '/img/gallery/', '/i
 const SWR_PATHS = ['/', '/index.html', '/content.json', '/manifest.webmanifest'];
 const SWR_PREFIXES = ['/css/', '/js/'];
 // Niemals cachen
-const NEVER_PREFIXES = ['/api/', '/orders/', '/admin', '/sw.js'];
+const NEVER_PREFIXES = ['/api/', '/orders/', '/admin', '/sw.js', '/robots.txt', '/sitemap.xml'];
 // Eigene Seiten des Servers (Rechtstexte, lib/legal.js): Network-First unter ihrer EIGENEN Adresse — nie auf die App-Shell „/“
 // umbiegen (sonst zeigte /impressum offline wie online den Shop); offline ohne Kopie im Cache → Offline-Seite
 const PAGE_PATHS = ['/impressum', '/datenschutz', '/agb', '/widerruf', '/versand'];

@@ -102,19 +102,21 @@ Auf dunklen Flächen den Schrift-Teil in `currentColor` bzw. `#f4efe7` füllen.
 
 ## Domain, E-Mail & Handles
 
-- Hauptadresse: **formsam.de** → `https://formsam.de` (im Admin unter E-Mail → öffentliche Shop-URL eintragen).
-- Weiterleitungen (301 auf formsam.de), sobald registriert: **formsam.com**, **form-sam.de**, **formsam.eu**.
-- E-Mail: **hallo@formsam.de** (Kundschaft), Absendername „formsam“.
+- Hauptadresse: **www.formsam.com** → `https://www.formsam.com` (so läuft der Produktivserver; im Admin unter ✉️ E-Mail →
+  „Öffentliche Shop-Adresse“ eintragen). Canonical, Vorschau-Adressen (og:url/og:image) der Startseite, robots.txt und
+  sitemap.xml kommen daraus; ohne Eintrag nimmt der Shop `https://www.formsam.com`. `formsam.com` ohne www leitet nginx per 301 um.
+- Weitere Domains (**formsam.de**, **form-sam.de**, **formsam.eu**), sobald registriert: nur 301 auf `https://www.formsam.com`.
+- E-Mail: **hallo@formsam.com** (Kundschaft), Shop-Versand von **shop@formsam.com**, Absendername „formsam“.
 - Social: **@formsam** auf Instagram, Pinterest und TikTok — vor dem Start sichern.
 
 ## Offene To-dos
 
 - [ ] **Markenrecherche** (Identität und Ähnlichkeit) in DPMA-Register, EUIPO eSearch und **TMview**, Nizza-Klassen **21** (Vasen, Haushaltsgefäße), **35** (Online-Einzelhandel) und **40** (Anfertigung auf Bestellung, 3D-Druck). Nächster bekannter Nachbar: **FORMANO** — Abstand prüfen (Klang, Waren).
 - [ ] **DPMA-Anmeldung** online: 290 € für bis zu 3 Klassen (jede weitere Klasse 100 €). Erst nach der Recherche.
-- [ ] Domains formsam.de (läuft), formsam.com, form-sam.de, formsam.eu registrieren und weiterleiten.
-- [ ] Postfach hallo@formsam.de einrichten und im Admin (Mein Unternehmen → E-Mail) eintragen.
+- [ ] Weitere Domains (formsam.de, form-sam.de, formsam.eu) registrieren und auf https://www.formsam.com weiterleiten.
+- [ ] Postfach hallo@formsam.com im Admin (Mein Unternehmen → E-Mail) eintragen.
 - [ ] Handles @formsam anlegen, Profilbild und Beiträge aus dem Brand-Kit hochladen.
-- [ ] Paketbeileger drucken lassen (A6, beidseitig) und in jedes Paket legen. Vorher neu bauen, sobald die echte Anschrift und hallo@formsam.de im Admin stehen: Die Rückseite trägt die Herstellerangabe (Name, Post- und E-Mail-Adresse, Art. 9 GPSR) aus den Firmendaten. Mit Musteranschrift oder Gmail-Adresse warnt das Bau-Skript (`tmp-tests/brand-kit-build/_skripte/brandkit.mjs beileger`).
+- [ ] Paketbeileger drucken lassen (A6, beidseitig) und in jedes Paket legen. Vorher neu bauen, sobald die echte Anschrift und hallo@formsam.com im Admin stehen: Die Rückseite trägt die Herstellerangabe (Name, Post- und E-Mail-Adresse, Art. 9 GPSR) aus den Firmendaten. Mit Musteranschrift oder Gmail-Adresse warnt das Bau-Skript (`tmp-tests/brand-kit-build/_skripte/brandkit.mjs beileger`).
 
 ## Brand-Kit
 

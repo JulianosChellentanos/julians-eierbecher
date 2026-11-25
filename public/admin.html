@@ -605,7 +605,7 @@
             <label>PLZ<input id="c-zip" style="width:120px" inputmode="numeric" autocomplete="postal-code"></label>
             <label>Ort<input id="c-city" autocomplete="address-level2"></label>
             <label>Land<input id="c-country" placeholder="Deutschland" autocomplete="country-name"></label>
-            <label>E-Mail<input id="c-email" type="email" placeholder="hallo@formsam.de" autocomplete="email"></label>
+            <label>E-Mail<input id="c-email" type="email" placeholder="hallo@formsam.com" autocomplete="email"></label>
             <label><span>Telefon <small>für Impressum &amp; Widerruf</small></span><input id="c-phone" type="tel" autocomplete="tel"></label>
           </div>
           <p class="muted" id="c-phone-hint" style="margin-top:10px" hidden>Ohne Telefonnummer fehlt eine Pflichtinformation für Online-Verträge (Art. 246a § 1 EGBGB). Trag eine ein, wenn du eine hast — sie steht dann im Impressum und in der Widerrufsbelehrung.</p>
@@ -640,11 +640,15 @@
         </div>
         <div class="card">
           <h2>⚖️ Rechtstexte</h2>
+          <div class="pflicht" id="lg-warn" role="status" hidden></div>
           <div class="grid">
-            <label><span>Hoster <small>Name und Anschrift</small></span><input id="lg-hoster" maxlength="200" placeholder="IONOS SE, Elgendorfer Str. 57, 56410 Montabaur"></label>
-            <label>Serverstandort<input id="lg-serverort" maxlength="120" placeholder="Berlin (Deutschland)"></label>
+            <label><span>Hoster <small>Firma und Anschrift — dieses Servers</small></span><input id="lg-hoster" maxlength="200" placeholder="z. B. Firma GmbH, Straße 1, 12345 Ort"></label>
+            <label>Serverstandort<input id="lg-serverort" maxlength="120" placeholder="z. B. Berlin (Deutschland)"></label>
+            <label><span>Mail-Versand <small>für die Datenschutzerklärung</small></span><select id="lg-mailversand"><option value="eigen">Eigener Mailserver auf diesem Server</option><option value="anbieter">Über einen E-Mail-Anbieter</option></select></label>
+            <label id="lg-mailanbieter-row"><span>E-Mail-Anbieter <small>optional, z. B. „IONOS SE“</small></span><input id="lg-mailanbieter" maxlength="120"></label>
           </div>
-          <p class="muted" style="margin-top:10px">Hoster und Serverstandort stehen in der Datenschutzerklärung. Impressum, Datenschutz, AGB, Widerruf und Versand entstehen aus den Angaben auf dieser Seite. Sie zeigen immer den gespeicherten Stand:</p>
+          <label class="inline" style="margin-top:12px"><input type="checkbox" id="lg-av"> Vertrag zur Auftragsverarbeitung (Art. 28 DSGVO) mit diesem Hoster ist abgeschlossen</label>
+          <p class="muted" style="margin-top:10px">Hoster, Serverstandort und Mail-Versand stehen in der Datenschutzerklärung — trag sie auf jedem Server passend ein. Den AV-Vertrag nennt sie nur mit Häkchen. Impressum, Datenschutz, AGB, Widerruf und Versand entstehen aus den Angaben auf dieser Seite. Sie zeigen immer den gespeicherten Stand:</p>
           <div class="legal-links">
             <a href="/impressum" target="_blank" rel="noopener">Impressum ↗</a>
             <a href="/datenschutz" target="_blank" rel="noopener">Datenschutz ↗</a>
@@ -698,11 +702,11 @@
         <div class="card">
           <h2>✍️ Absender &amp; Empfänger</h2>
           <div class="grid">
-            <label>Absender-Adresse <small>muss zum SMTP-Konto gehören</small><input id="m-from" placeholder="hallo@formsam.de"></label>
+            <label>Absender-Adresse <small>muss zum SMTP-Konto gehören</small><input id="m-from" placeholder="shop@formsam.com"></label>
             <label>Absender-Name<input id="m-fromname" placeholder="formsam"></label>
             <label>Antwort-Adresse (Reply-To)<input id="m-replyto" placeholder="optional"></label>
             <label>Admin-Adresse (Kopien an mich)<input id="m-adminto" placeholder="ich@example.de"></label>
-            <label>Öffentliche Shop-Adresse <small>für Links und Logo in E-Mails</small><input id="m-publicurl" placeholder="https://formsam.de"></label>
+            <label>Öffentliche Shop-Adresse <small>für Links und Logo in E-Mails</small><input id="m-publicurl" placeholder="https://www.formsam.com"></label>
           </div>
           <p class="muted" style="margin-top:10px">Absender-Adresse: Gmail schreibt fremde Absender auf die Konto-Adresse um (außer verifizierte „Senden als“-Aliase); Strato, IONOS, GMX und WEB.DE lehnen Absender ab, die nicht zum Postfach gehören. Eigene Domain: SPF-Eintrag des Providers setzen und DKIM aktivieren, sonst landen Mails im Spam.</p>
           <div class="row" style="margin-top:14px;gap:22px">
@@ -736,7 +740,7 @@
             <h2>🚧 Wartungsmodus</h2>
             <label class="inline"><span class="switch"><input type="checkbox" id="s-wartung" onchange="setDirty(true)"><span></span></span> Shop nur mit Zugangskennwort zeigen</label>
             <label style="margin-top:10px">Neues Zugangskennwort <small>(leer = unverändert, mind. 6 Zeichen)</small><input type="password" id="s-wartung-kw" placeholder="••••••" autocomplete="new-password" style="max-width:280px" oninput="setDirty(true)"></label>
-            <p class="muted" id="s-wartung-hint" style="margin-top:8px">Besucher sehen eine Wartungsseite; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.</p>
+            <p class="muted" id="s-wartung-hint" style="margin-top:8px">Besucher sehen eine Wartungsseite — Rechtsseiten, „Vertrag widerrufen“ und Rechnungslinks bleiben erreichbar; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.</p>
           </div>
           <div class="card">
             <h2>🏺 Produkte</h2>

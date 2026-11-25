@@ -1641,6 +1641,8 @@ async function mailResend(id) {
 // solange Pflichtangaben fehlen oder noch Platzhalter sind. Weitere Server-Hinweise (DATA.hinweise, u. a. aus lib/legal.js)
 // kommen dazu, wenn der eigene Check sie nicht schon abdeckt.
 // ---------------------------------------------------------------------------
+/** Früherer stiller Hoster-Standard: ältere Server haben ihn ungefragt gespeichert → muss je Server geprüft werden (wie server.js) */
+const ALTER_HOSTER_STANDARD = 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur';
 function fillCompany() {
   const s = DATA.settings, c = s.company || {}, sh = s.shop || {}, lg = s.legal || {};
   $('#c-name').value = c.name || ''; $('#c-owner').value = c.owner || ''; $('#c-street').value = c.street || '';
@@ -1652,7 +1654,29 @@ function fillCompany() {
   $('#c-klein').checked = !!c.kleinunternehmer;
   $('#sh-lieferzeit').value = sh.lieferzeit || ''; $('#sh-liefergebiet').value = sh.liefergebiet || '';
   $('#lg-hoster').value = lg.hoster || ''; $('#lg-serverort').value = lg.serverOrt || '';
+  // Ältere Server ohne die Felder: Hoster eingetragen = AV bestätigt (außer dem früheren Standard), Mail-Versand über Anbieter (wie sanitizeLegal im Server)
+  $('#lg-av').checked = lg.avVertrag === undefined ? !!lg.hoster && lg.hoster !== ALTER_HOSTER_STANDARD : lg.avVertrag === true;
+  $('#lg-mailversand').value = lg.mailVersand === 'eigen' ? 'eigen' : 'anbieter'; $('#lg-mailanbieter').value = lg.mailAnbieter || '';
   renderPflicht();
+}
+/** Rechtstexte-Felder für den Patch (legal) — leer bleibt leer, der Server prüft */
+const legalForm = () => ({
+  hoster: $('#lg-hoster').value, serverOrt: $('#lg-serverort').value, avVertrag: $('#lg-av').checked,
+  mailVersand: $('#lg-mailversand').value, mailAnbieter: $('#lg-mailanbieter').value,
+});
+/** Deutlicher Hinweis direkt in der Karte Rechtstexte, solange Hoster, Standort oder AV-Bestätigung fehlen (live beim Tippen) */
+function renderLegalWarn() {
+  const f = legalForm(), t = (v) => String(v || '').trim();
+  const fehlt = [
+    !t(f.hoster) && 'Hoster fehlt — die Datenschutzerklärung nennt dann nur „einen Hosting-Anbieter“.',
+    t(f.hoster) === ALTER_HOSTER_STANDARD && !f.avVertrag && 'Hoster ist noch der frühere Standardwert (IONOS) — bitte prüfen, ob dieser Server wirklich dort läuft; sonst den richtigen Hoster samt Serverstandort eintragen.',
+    !t(f.serverOrt) && 'Serverstandort fehlt.',
+    t(f.hoster) && !f.avVertrag && 'AV-Vertrag mit dem Hoster nicht bestätigt — die Datenschutzerklärung erwähnt ihn dann nicht. Vertrag abschließen (meist online im Kundenkonto des Hosters) und das Häkchen setzen.',
+  ].filter(Boolean);
+  const box = $('#lg-warn');
+  box.hidden = !fehlt.length;
+  box.innerHTML = fehlt.length ? `<div class="pf-text"><span class="pf-title">⚠️ Rechtstexte unvollständig</span><ul>${fehlt.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+  $('#lg-mailanbieter-row').hidden = f.mailVersand === 'eigen';
 }
 /** Firmendaten aus dem Formular — vollständig wie bisher (der Server prüft, trimmt und kürzt; S1) */
 function companyForm() {
@@ -1714,6 +1738,7 @@ function renderPflicht() {
   for (const id of ['c-owner', 'c-street', 'c-zip', 'c-city', 'c-email', 'c-phone', 'c-iban', 'c-steuernr', 'c-ustid']) $(`#${id}`).classList.toggle('miss', miss.has(id));
   // Telefon: Punkt im Hinweis (Art. 246a EGBGB) und zusätzlich eine erklärende Zeile unter dem Feld, solange es leer ist
   $('#c-phone-hint').hidden = !!$('#c-phone').value.trim();
+  renderLegalWarn();
 }
 /** „Jetzt ergänzen“ / Klick auf einen Punkt: Bereich Firma, erstes fehlendes (bzw. angeklicktes) Feld fokussieren */
 function pflichtFocus(feld) {
@@ -1783,7 +1808,7 @@ function fillSettings() {
   $('#s-adminkey').value = '';
   $('#s-wartung').checked = !!s.wartung?.aktiv; $('#s-wartung-kw').value = '';
   $('#s-wartung-hint').textContent = s.wartung?.kennwortGesetzt
-    ? 'Besucher sehen eine Wartungsseite; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.'
+    ? 'Besucher sehen eine Wartungsseite — Rechtsseiten, „Vertrag widerrufen“ und Rechnungslinks bleiben erreichbar; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.'
     : 'Noch kein Zugangskennwort gesetzt — zum Einschalten bitte eines eintragen.';
   const info = DATA.info || {};
   $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(naechsteBelegNr(s.invoicePrefix || 'RE-2026-', s.nextInvoice))}</dd><dt>Nächste Gutschrift</dt><dd>${esc(naechsteBelegNr(s.creditPrefix || 'GS-2026-', s.nextCredit))}</dd><dt>Produkte im Shop</dt><dd>${produktAn('eierbecher') ? 'Vasen, Eierbecher' : 'Vasen'}</dd>`;
@@ -1861,7 +1886,7 @@ async function saveSettings() {
     company: companyForm(),
     // Shop-Angaben und Rechtstexte als eigene Wurzel-Schlüssel (S1) — leer = Standardwert des Servers
     shop: { lieferzeit: $('#sh-lieferzeit').value, liefergebiet: $('#sh-liefergebiet').value },
-    legal: { hoster: $('#lg-hoster').value, serverOrt: $('#lg-serverort').value },
+    legal: legalForm(),
     paypal: { enabled: $('#pp-enabled').checked, sandbox: $('#pp-sandbox').checked, clientId: $('#pp-id').value, secret: $('#pp-secret').value },
     mail: mailForm(),
     printing: { minutesEgg: +$('#p-min-egg').value || 75, gramsEgg: +$('#p-g-egg').value || 22, minutesVase: +$('#p-min-vase').value || 210, gramsVase: +$('#p-g-vase').value || 110 },
@@ -1999,6 +2024,8 @@ document.addEventListener('DOMContentLoaded', () => {
   for (const ev of ['input', 'change']) {
     document.addEventListener(ev, (e) => {
       if (e.target.closest?.('.pane[data-settings]') && !e.target.closest('#m-testto')) setDirty(true);
+      // Anderer Hoster eingetragen → die AV-Bestätigung galt dem alten: Häkchen zurücksetzen (bewusst neu setzen)
+      if (ev === 'input' && e.target.id === 'lg-hoster' && $('#lg-av').checked && e.target.value.trim() !== String(DATA?.settings?.legal?.hoster || '').trim()) $('#lg-av').checked = false;
       if (e.target.closest?.('#pane-company') && DATA) renderPflicht();   // Pflichtangaben-Hinweis live
     });
   }

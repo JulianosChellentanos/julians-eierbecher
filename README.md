@@ -52,23 +52,38 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
   - Druckwarteschlange, Kunden
   - Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
   - Preise & Mengenrabatt-Stufen, Gutscheine (%- oder €-Codes, Mindestbestellwert), Aktionen. Gutschrift-Codes aus Reklamationen (`GS-XXXX-XXXX`) sind **Guthaben**: einlösbar bis der Betrag aufgebraucht ist (Rest bleibt, stornierte Bestellungen geben ihn frei), auch während einer Aktion — die Gutschein-Tabelle zeigt den Restwert
-  - Mein Unternehmen (Anbieter, Steuer & Belege, Bankverbindung, **Shop-Angaben** Lieferzeit/Liefergebiet, **Rechtstexte** Hoster/Serverstandort), PayPal, E-Mail, System (Passwort, Produktschalter, JSON-Backup) — alles in `data/settings.json` (nicht im Git)
+  - Mein Unternehmen (Anbieter, Steuer & Belege, Bankverbindung, **Shop-Angaben** Lieferzeit/Liefergebiet, **Rechtstexte** Hoster/Serverstandort/AV-Vertrag/Mail-Versand je Server), PayPal, E-Mail, System (Passwort, Produktschalter, JSON-Backup) — alles in `data/settings.json` (nicht im Git)
 - **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, Sessions in `data/`), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung
 - **Mobil** (≤ 700 px): Startseite mit der 3D-Formenwelt als Bühne (Wischen wechselt die Form), Kataloge „Formen“ und „Oberflächen“ mit Detailblättern im Bottom-Sheet, ein klebender Bestellknopf; im Konfigurator klebende 3D-Bühne + Tab-Leiste statt Endlos-Scroll, Swipe zwischen Tabs, angedockte Bottom-Bar mit Live-Preis & Warenkorb, Vollbild-3D, Toasts, Haptik. Desktop (≥ 981 px) bleibt davon unberührt
 - **PWA**: Manifest („formsam – Vasen selbst gestalten“), Service Worker (Cache-First für Assets, Offline-Fallback), Home-Screen-Icons mit dem formsam-Zeichen, Theme-Color folgt dem Darkmode. Kein Install-Banner — wer mag, legt die Seite selbst über das Browser-Menü auf den Home-Bildschirm
 - **Darkmode**: Umschalter im Header (🌙/☀️), merkt sich die Wahl, folgt sonst der Systemeinstellung
 - **Druckbarkeits-Ampel**: analysiert live die Flächennormalen des Meshes (Überhangwinkel) — ✅/⚠️/🔶 direkt im Konfigurator; Querwellen werden serverseitig auf druckbare Wellenlängen/Tiefen geklemmt (`tools/check-printability.mjs` für Offline-Analysen)
-- **Rechtliche Produkthinweise** an fünf Stellen (Konfigurator bei Vase & Eigener Form, Checkout, FAQ, Footer, Rechnung): Trockenblumen-Zweck, imprägniert/i. d. R. wasserfest ohne Gewähr, offene Muster (Voronoi) nur mit Einsatz, keine Standfestigkeits-Garantie bei freien Formen, pflanzenbasiertes PLA. In der Kasse bestätigt die Kundschaft Wasser/Standfestigkeit gesondert per Pflicht-Häkchen (§ 476 Abs. 1 S. 2 BGB, Zeitpunkt in `order.beschaffenheitBestaetigt`); darunter Links zu AGB, Widerrufsbelehrung und Datenschutz
+- **Rechtliche Produkthinweise** aus einer Quelle (`lib/produkthinweise.js`): pflanzenbasiertes PLA (nicht spülmaschinenfest, nicht über 50 °C), Trockenblumen-Zweck, imprägniert/i. d. R. wasserfest ohne Gewähr, offene Muster (Voronoi) halten kein Wasser – nur mit Einsatz, keine Standfestigkeits-Zusage bei frei gestalteten Formen. Die Rechnung nimmt die Sätze von dort (Voronoi- und Formen-Satz mit den betroffenen Positionen; nur neue Rechnungen), der Kassenhinweis (`content.json → hinweise.checkout`) enthält sie wörtlich (`node tools/test-recht.mjs` prüft das); dazu Konfigurator, FAQ, Footer. In der Kasse bestätigt die Kundschaft Wasser/Standfestigkeit gesondert per Pflicht-Häkchen (§ 476 Abs. 1 S. 2 BGB): Zeitpunkt in `order.beschaffenheitBestaetigt`, Fassung des Wortlauts in `order.beschaffenheitFassung` (Text je Fassung in `lib/produkthinweise.js`); darunter Links zu AGB, Widerrufsbelehrung und Datenschutz und der Hinweis, dass nach deinem Design gefertigte Vasen in der Regel vom Widerrufsrecht ausgenommen sind (wie FAQ und AGB § 10)
 - Kein Build-Schritt, keine Runtime-Dependencies — alles lokal gevendort (Three.js, Schriften Fraunces/Inter unter `public/fonts`); keine externen Ressourcen
 
 ## Rechtsseiten
 
 `/impressum`, `/datenschutz`, `/agb`, `/widerruf` und `/versand` (jeweils auch mit `/` am Ende) rendert `lib/legal.js` bei jedem Aufruf
 aus den gespeicherten Einstellungen: Anbieter, Kontakt, USt-IdNr. und Kleinunternehmer-Status (Mein Unternehmen), Lieferzeit und
-Liefergebiet (Shop-Angaben), Hoster und Serverstandort (Rechtstexte), Versandkosten (Preise) und PayPal, sobald es aktiv ist.
-Änderungen im Admin gelten also sofort, ohne Texte von Hand anzupassen. Der Storefront-Footer verlinkt alle fünf Seiten.
-Fehlt `lib/legal.js`, antworten die Routen mit 503 und einer Notseite (Anbieter + Kontakt). Mit der Bestellbestätigung gehen
-AGB und Widerrufsbelehrung als Anhang mit (dauerhafter Datenträger).
+Liefergebiet (Shop-Angaben), Hoster, Serverstandort, AV-Vertrag und Mail-Versand (Rechtstexte), Versandkosten (Preise), PayPal,
+sobald es aktiv ist, und die öffentliche Shop-Adresse (✉️ E-Mail). Änderungen im Admin gelten also sofort, ohne Texte von Hand
+anzupassen. Der Storefront-Footer verlinkt alle fünf Seiten. Fehlt `lib/legal.js`, antworten die Routen mit 503 und einer
+Notseite (Anbieter + Kontakt). Mit der Bestellbestätigung gehen AGB und Widerrufsbelehrung als Anhang mit (dauerhafter
+Datenträger); dort sind alle Links absolut.
+
+- **Hoster je Server, kein stiller Standard:** `settings.legal` = `{ hoster, serverOrt, avVertrag, mailVersand, mailAnbieter }`.
+  Ohne Hoster nennt die Datenschutzerklärung nur „einen Hosting-Anbieter“; den Satz zum Vertrag zur Auftragsverarbeitung gibt
+  es nur mit Häkchen „AV-Vertrag … abgeschlossen“ (ein geänderter Hoster nimmt das Häkchen im Formular weg, ein geleerter auf
+  dem Server). Fehlt etwas, warnen die Karte „Rechtstexte“ und die Admin-Übersicht. Beim Update gilt ein schon eingetragener
+  Hoster einmalig als bestätigt, der Text ändert sich dort also nicht — außer beim früheren stillen Standard (IONOS, vom
+  alten Code auf jedem Server gespeichert): dann ist das Häkchen aus, und Karte und Übersicht bitten um Prüfung je Server.
+- **Mail-Versand:** `eigen` = eigener Mailserver auf demselben gemieteten Server (Postfächer, Spamprüfung, Protokolle und
+  Sicherungen je 14 Tage), `anbieter` = E-Mail-Anbieter (Name optional, Auftragsverarbeitung). Bestandsinstallationen stehen
+  auf `anbieter`; auf dem Produktivserver (Stalwart) „Eigener Mailserver“ wählen.
+- **Widerrufsbelehrung** nach dem amtlichen Muster mit dem Baustein für die Pflicht zur Widerrufsfunktion (Gestaltungshinweis 3:
+  „online unter <Adresse>/widerruf#widerrufen ausüben“ + Eingangsbestätigung auf dauerhaftem Datenträger); der Ausschluss
+  (§ 312g Abs. 2 Nr. 1 BGB) steht getrennt unter dem Musterkasten. Ohne öffentliche Shop-Adresse warnt die Übersicht.
+- **Datenschutz** nennt das Zugangs-Cookie `fs_zugang` des Wartungsmodus und die täglichen Sicherungen (14 Tage).
 
 Was vor dem Start noch zu erledigen ist (Anschrift, Telefon, AV-Verträge, Verpackungsregister …) und welche Annahmen in den
 Texten stecken: [docs/rechtstexte.md](docs/rechtstexte.md) — keine Rechtsberatung.
@@ -94,7 +109,8 @@ node server.js          # → http://localhost:4488
 
 | Route | Zweck |
 |---|---|
-| `/` | Landingpage + Konfigurator |
+| `/` | Landingpage + Konfigurator; Canonical und Vorschau-Adressen (og:url, og:image, twitter:image) setzt der Server aus der öffentlichen Shop-Adresse ein (leer/lokal → `https://www.formsam.com`), ETag aus dem Ergebnis |
+| `/robots.txt`, `/sitemap.xml` | vom Server aus der öffentlichen Adresse: gesperrt sind `/admin`, `/orders/`, `/api/admin/`, `/api/auth/` (Preise, Farben, Texte, JS, CSS bleiben frei); Sitemap = Startseite + fünf Rechtsseiten. Im Wartungsmodus `Disallow: /` |
 | `/admin` | Admin: Bestellungen, Status, Einstellungen (Standard-Passwort bei Neuinstallation: `formsam-admin`) |
 | `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand` | Rechtsseiten, aus den Einstellungen gerendert (`lib/legal.js`) |
 | `/api/pricing`, `/api/quote` | Preise, Rabatte, Lieferzeit/Liefergebiet (Server = einzige Preisquelle); `/api/pricing` liefert während einer Aktion unter `preisHistorie` die Momentaufnahmen für den 30-Tage-Tiefstpreis |
@@ -144,6 +160,7 @@ Kompatibilitätsgründen weiter so — für Kundschaft sind sie unsichtbar.
 server.js                  Node-HTTP-Server (Port 4488, keine Dependencies)
 lib/
   legal.js                 Rechtsseiten (Impressum, Datenschutz, AGB, Widerruf, Versand) aus den Einstellungen
+  produkthinweise.js       Produkthinweise und Wortlaut des Kassen-Häkchens je Fassung (Rechnung, order.json)
   mailer.js                SMTP-Versand + Outbox-Protokoll (data/mail-outbox.json)
   mail-templates.js        E-Mail-Vorlagen im formsam-Look
 public/
@@ -166,6 +183,9 @@ tools/
   generate-stl.mjs         STL per CLI erzeugen (Tests/Repro)
   mail-test.mjs            Mail-Versand und Vorlagen testen
   test-referenzpreis.mjs   Unit-Test 30-Tage-Tiefstpreis (§ 11 PAngV) in public/js/pricing.js
+  test-recht.mjs           Rechtstexte, Wartungsmodus, öffentliche Adresse, Produkthinweise (startet eigene Instanz)
+  test-betrieb.mjs         Sicherungs- und Update-Skripte unter deploy/
+deploy/                    Produktivserver: systemd, nginx (+ Logformat), Sicherung, Update, journald/logrotate, Mailserver
 docs/marke.md              Markenleitfaden
 docs/rechtstexte.md        Notiz zu den Rechtstexten (Annahmen, offene Punkte)
 docs/marketing.md          Marketing-Plan (Stand der Eierbecher-Zeit, damals OVJU)
@@ -177,8 +197,70 @@ docs/marketing.md          Marketing-Plan (Stand der Eierbecher-Zeit, damals OVJ
 - **Produktivserver** (www.formsam.com, 178.254.22.240): `/srv/formsam`, systemd-Dienst `formsam` (Node intern auf
   127.0.0.1:4488), davor nginx mit Let's-Encrypt-Zertifikat (`deploy/nginx-formsam.conf`, `deploy/formsam.service`).
   Übernahme erst nach Prüfung bzw. Freigabe: Code nach GitHub pushen, dann auf dem Produktivserver
-  `bash /srv/formsam/deploy/prod-update.sh` (sichert vorher, holt main, startet neu). Daten (`data/`, `orders/`,
-  Galerie) liegen nur auf dem jeweiligen Server; tägliche Sicherung nach `/var/backups/formsam` (14 Tage).
+  `bash /srv/formsam/deploy/prod-update.sh`. Daten (`data/`, `orders/`, Galerie) liegen nur auf dem jeweiligen Server;
+  tägliche Sicherung nach `/var/backups/formsam` (14 Tage).
+
+### Update und Zurück (`deploy/prod-update.sh`)
+
+1. Sichert mit `formsam-backup` — schlägt die Sicherung fehl, bricht das Update ab, ohne etwas zu ändern.
+2. Holt `origin/main`, merkt sich den alten Stand in `/var/backups/formsam/letztes-update`, prüft alle Server-Module mit
+   `node --check` (Syntaxfehler → sofort zurück, der Dienst lief weiter) und startet neu.
+3. Wartet bis zu 60 s, bis `/api/pricing` antwortet (200, im Wartungsmodus 503 mit `X-Formsam-Wartung`). Antwortet der
+   Shop nicht, geht das Skript automatisch auf den alten Stand zurück und zeigt das Journal.
+4. Spielt ein geändertes `deploy/formsam-backup` (bzw. `stalwart-backup`) nach `/usr/local/sbin` ein und meldet fehlende
+   Protokoll-Einstellungen (siehe unten).
+
+Zurück auf den Stand vor dem letzten Update (nur Code, Daten bleiben): `bash /srv/formsam/deploy/prod-update.sh --zurueck`.
+Nur prüfen: `bash /srv/formsam/deploy/prod-update.sh --pruefen`. Test der Skripte (Attrappe, ohne Server): `node tools/test-betrieb.mjs`.
+
+### Sicherung
+
+`formsam-backup` (cron 3:15 Uhr und vor jedem Update) packt `data/`, `orders/` und die Galerie nach
+`/var/backups/formsam/formsam-<Datum>.tar.gz`, prüft das Archiv und löscht Sicherungen nach 14 Tagen. Fehler stehen auf
+stderr und im Journal (`journalctl -t formsam-backup`), Exit-Code 1 = keine brauchbare Sicherung; ändert sich während des
+Packens eine Datei, gibt es nur eine Warnung. **Empfehlung: zusätzlich eine Sicherung außer Haus** — die 14 Tage auf
+derselben Platte helfen nicht, wenn der Server ausfällt, und Rechnungen müssen acht Jahre aufbewahrt werden. Am
+einfachsten verschlüsselt (z. B. restic oder borg) auf Speicher bei einem anderen Anbieter oder regelmäßig auf einen
+eigenen Rechner. Ein fremder Speicher ist ein weiterer Auftragsverarbeiter: AV-Vertrag schließen und die
+Datenschutzerklärung ergänzen (docs/rechtstexte.md, Punkt 7).
+
+### Wiederherstellung aus der Sicherung
+
+1. `systemctl stop formsam`
+2. Sicherung aussuchen: `ls -lt /var/backups/formsam/ | head` (Inhalt ansehen: `tar -tzf <Datei> | less`)
+3. Den kaputten Stand beiseitelegen (nicht löschen): `cd /srv/formsam && S=$(date +%F-%H%M) && mv data data.alt-$S && mv orders orders.alt-$S`
+   (Galerie nur, wenn sie betroffen ist: `mv public/img/gallery public/img/gallery.alt-$S`)
+4. Auspacken: `tar -C /srv/formsam -xzf /var/backups/formsam/formsam-<Datum>.tar.gz data orders` (+ `public/img/gallery`)
+5. Rechte: `chown -R formsam:formsam data orders public/img/gallery`
+6. `systemctl start formsam`, prüfen: `curl -sI http://127.0.0.1:4488/api/pricing` und Admin → Übersicht
+7. Was nach der Sicherung dazukam (Bestellungen, Widerrufe, Konten), steht noch in `data.alt-…`/`orders.alt-…` bzw. in den
+   Admin-Kopien im Postfach — einzelne Bestellordner lassen sich bei angehaltenem Dienst einfach zurückkopieren. Danach die
+   `*.alt-*`-Ordner löschen (sie enthalten Kundendaten).
+
+Nur eine einzelne Bestellung zurückholen: `tar -C /root/wiederherstellung -xzf <Datei> orders/<Bestellnummer>`, Dienst
+anhalten, Ordner nach `/srv/formsam/orders/` kopieren, `chown -R formsam:formsam`, starten.
+Mailserver: siehe Abschnitt Mailserver („Sicherung“).
+
+### Protokolle und Sicherungen (14 Tage, wie in der Datenschutzerklärung)
+
+Einmal einspielen (root), danach zeigt `prod-update.sh --pruefen` nichts mehr an:
+
+```bash
+# Systemprotokoll (Shop und Stalwart schreiben ins Journal): 14 Tage, Dateien täglich wechseln
+install -D -m 644 /srv/formsam/deploy/journald-formsam.conf /etc/systemd/journald.conf.d/formsam.conf
+systemctl restart systemd-journald && journalctl --vacuum-time=14d
+# nginx: Zugriffsprotokoll ohne Query-String (Beleg-Schlüssel ?k=…, ?reset=…), eigener Ordner, 14 Tage
+install -d -m 755 /var/log/nginx/formsam
+install -m 644 /srv/formsam/deploy/nginx-formsam-log.conf /etc/nginx/conf.d/formsam-log.conf
+install -m 644 /srv/formsam/deploy/logrotate-formsam-nginx /etc/logrotate.d/formsam-nginx
+# in /etc/nginx/sites-available/formsam (auch im von certbot ergänzten 443-Block) und formsam-mail je server-Block:
+#   access_log /var/log/nginx/formsam/access.log formsam;        bzw. …/mail-access.log formsam;
+nginx -t && systemctl reload nginx
+```
+
+Die übrigen nginx-Protokolle (`/var/log/nginx/access.log`, `error.log`) rotiert das Paket selbst
+(`/etc/logrotate.d/nginx`, Debian/Ubuntu: `daily`, `rotate 14`) — einmal nachsehen. Das Fehlerprotokoll kann bei
+Störungen eine Anfragezeile samt Schlüssel enthalten; es ist nur für root/adm lesbar und nach 14 Tagen weg.
 
 ## Mailserver (nur Produktivserver)
 
@@ -211,14 +293,31 @@ Umgebung `/etc/stalwart/stalwart.env`). Mail-Host ist **mx.formsam.com**.
   Stalwart selbst aus (nicht ins Postfach, `inboundReportForwarding: false`).
 - **DNS prüfen:** `bash deploy/mail-dns-pruefen.sh` (MX, SPF, DKIM, DMARC, PTR, Autokonfiguration).
 - **Sicherung:** `deploy/stalwart-backup` täglich 3:40 Uhr nach `/var/backups/stalwart` (14 Tage); hält den Dienst
-  dafür ein paar Sekunden an (RocksDB lässt sich nur angehalten konsistent kopieren).
+  dafür ein paar Sekunden an (RocksDB lässt sich nur angehalten konsistent kopieren). Fehler: stderr, Journal
+  (`journalctl -t stalwart-backup`), Exit-Code ≠ 0. Wiederherstellen: `systemctl stop stalwart; tar -C / -xzf <Sicherung>;
+  systemctl start stalwart`.
+- **Admin-Oberfläche öffentlich** (`https://mx.formsam.com/admin`): bewusst, damit die Anmeldung per Passkey auch unterwegs
+  geht. Empfehlung: Admin-Konto nur mit Passkey bzw. langem Passwort + zweitem Faktor, Stalwarts eigene Sperren
+  (Fehlversuche je IP) eingeschaltet lassen, Stalwart aktuell halten. Wer nur von festen Adressen verwaltet, kann `/admin`
+  in `nginx-formsam-mail.conf` per `allow`/`deny` oder Basic-Auth davor beschränken (sperrt aber mobile Zugriffe aus).
+  Die Web-Oberfläche (webui.zip) beim Update wie Bulwark mit Prüfsumme laden.
 - **Shop:** SMTP mx.formsam.com:465, Benutzer shop@formsam.com, Antwort und Admin-Kopie an hallo@formsam.com — seit
   20.11.2026 eingeschaltet (DNS und Reverse-DNS bei 1blu gesetzt, Gmail nimmt an).
 
 ## Wartungsmodus
 
-Vor dem ganzen Shop steht dann eine Wartungsseite mit Zugangskennwort; wer es eingibt, sieht den Shop 30 Tage lang
-normal (Cookie). Schalten im Admin unter System oder auf dem Server (Shop-Server vorher stoppen, danach starten):
+Vor dem ganzen Shop steht dann eine Wartungsseite mit Zugangskennwort (unten Links zu Impressum, Datenschutz und
+„Vertrag widerrufen“); wer es eingibt, sieht den Shop 30 Tage lang normal (Cookie `fs_zugang` = Ablaufdatum + HMAC über
+Kennwort-Hash und Ablauf; ein neues Kennwort sperrt alle Freigaben, Cookies aus der Zeit vor diesem Format gelten nicht
+mehr — einmal neu eingeben). **Ohne Kennwort erreichbar** bleiben: die Rechtsseiten, die Widerrufsfunktion
+(`POST /api/widerruf`), Belege aus Mails und Konto (`/orders/<ID>/rechnung|gutschrift|storno.html|.pdf`, Schlüssel wird wie
+immer geprüft), `/robots.txt` (dann `Disallow: /` mit `Cache-Control: max-age=300`, damit Suchmaschinen die Sperre nach
+der Wartung nicht noch einen Tag lang behalten), Favicon, Logos, Schriften, Manifest und `sw.js`. Alles andere: Seiten →
+Wartungsseite (503, `Retry-After: 3600`), API → 503 bewusst ohne `Retry-After` (sonst warten `curl --retry` und Überwachungen
+eine Stunde, auch wenn die Wartung längst vorbei ist). Pfade mit kodiertem Schrägstrich/Backslash oder `..` beantwortet das
+Tor mit 400; das Ziel nach dem Kennwort ist immer ein Pfad dieser Seite (keine Steuer-/Leerzeichen, gleicher Host, auch
+nach dem Auflösen von Punktsegmenten kein `//host`).
+Schalten im Admin unter System oder auf dem Server (Shop-Server vorher stoppen, danach starten):
 
 ```
 node tools/wartung.mjs an <kennwort>   # einschalten (neues Kennwort sperrt alle bisherigen Freigaben)
@@ -226,7 +325,11 @@ node tools/wartung.mjs aus             # Shop für alle sichtbar
 node tools/wartung.mjs status
 ```
 
-Gespeichert wird nur ein scrypt-Hash (settings.wartung); nach 10 Fehlversuchen je IP 15 Minuten Pause.
+Gespeichert wird nur ein scrypt-Hash (settings.wartung). Nach 10 Fehlversuchen je IP in 15 Minuten prüft das Tor für diese
+IP ein Kennwort nur noch nach einer Pause, die mit jeder Prüfung wächst (30 s, 60 s, 120 s … höchstens 5 Minuten; 429 mit
+`Retry-After`; vergessen nach einer Stunde Ruhe oder beim richtigen Kennwort) — Raten bleibt etwa so langsam wie mit fester
+Sperre, das richtige Kennwort kommt nach kurzer Wartezeit trotzdem durch. Hinter nginx (`TRUST_PROXY=1`) bekommt das Cookie `Secure`, wenn `X-Forwarded-Proto` https ist
+(Groß-/Kleinschreibung egal).
 
 ## Flüssige Bedienung auf dem Handy
 
@@ -247,6 +350,8 @@ npm run check   # erzeugt eine Referenz-Vase als STL und validiert sie
 node tools/check-stl.mjs orders/<ID>/<datei>.stl   # Bestellung prüfen
 node tools/mail-test.mjs --smoke                   # Mail-Versand und alle Vorlagen
 node tools/test-referenzpreis.mjs                  # Streichpreis = niedrigster Preis der letzten 30 Tage
+node tools/test-recht.mjs                          # Rechtstexte, Wartungstor, Startseite/robots/sitemap, Produkthinweise (eigene Instanz)
+node tools/test-betrieb.mjs                        # deploy/: Sicherung und prod-update.sh in einer Attrappe
 ```
 
 Der Validator prüft: Dateikonsistenz, degenerierte Dreiecke, NaN, Bounding Box,

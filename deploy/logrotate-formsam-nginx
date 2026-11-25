@@ -1,0 +1,17 @@
+# formsam — nginx-Zugriffsprotokolle von Shop und Mail-Hosts (/var/log/nginx/formsam/, Format aus nginx-formsam-log.conf):
+# täglich wechseln, nach 14 Tagen löschen (so steht es in der Datenschutzerklärung).
+# Einspielen: install -m 644 /srv/formsam/deploy/logrotate-formsam-nginx /etc/logrotate.d/formsam-nginx
+/var/log/nginx/formsam/*.log {
+	daily
+	rotate 13
+	maxage 14
+	missingok
+	notifempty
+	compress
+	delaycompress
+	create 0640 www-data adm
+	sharedscripts
+	postrotate
+		invoke-rc.d nginx rotate >/dev/null 2>&1 || nginx -s reopen >/dev/null 2>&1 || true
+	endscript
+}
