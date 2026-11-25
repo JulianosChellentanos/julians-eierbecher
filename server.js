@@ -7,10 +7,10 @@ import { mkdir, writeFile, readdir, readFile, rm, rename } from 'node:fs/promise
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
+import { createMailer, baseUrlFor, mailSettings, addressList, keepStoredPass } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
-  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse } from './lib/mail-templates.js';
+  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung } from './lib/mail-templates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -900,15 +900,18 @@ async function wartungTor(req, res, p, url) {
 }
 
 // ---------------------------------------------------------------------------
-// E-Mail-Versand (lib/mailer.js + lib/mail-templates.js) — Protokoll in data/mail-outbox.json
-//   Hooks (unten): Bestellbestätigung + Admin-Kopie, Status-Mails, Willkommensmail.
-//   Jede aus einer Bestellung heraus in den Versand gegebene Mail wird in order.mailsSent[key] = Zeitpunkt
-//   vermerkt (key = 'bestaetigung' | Status) und in der Historie notiert (by 'mail') —
-//   so gibt es je Status nur eine automatische Mail, auch wenn er erneut gesetzt wird.
-//   Ist der Versand nicht eingerichtet, bleibt mailsSent frei (Historie sagt „nicht gesendet“),
-//   damit die Automatik nach der Einrichtung greift; der Eintrag liegt im Versandprotokoll.
+// E-Mail-Versand (lib/mailer.js + lib/mail-templates.js) — Protokoll in data/mail-outbox.json (Inhalte in data/mail-outbox/)
+//   Hooks (unten): Bestellbestätigung + Admin-Kopie, Status-Mails, Reklamation, Widerruf, Willkommensmail.
+//   Eine automatische Mail zu einer Bestellung reserviert vorher order.mailsSent[key] (key = 'bestaetigung' | Status |
+//   'reklamation:<Phase>' | 'widerruf:<Referenz>') — so gibt es je Status nur eine automatische Mail, auch wenn er erneut gesetzt
+//   wird, während die Zustellung noch wiederholt wird. Den Endstand meldet der Mailer (onFinal → mailErgebnis): zugestellt →
+//   mailsSent[key] = Zustellzeit und Historie „E-Mail „…“ → …“; endgültig gescheitert oder Versand aus → Historie „nicht
+//   zugestellt/nicht gesendet“, die Reservierung fällt weg (die Automatik greift später noch). Ebenso für Admin-Versand und Freitext.
 // ---------------------------------------------------------------------------
-const mailer = createMailer({ dataDir: DATA, getSettings: () => settings, log: (m) => console.log('✉️ ', m) });
+const mailer = createMailer({
+  dataDir: DATA, getSettings: () => settings, log: (m) => console.log('✉️ ', m),
+  onFinal: (e) => mailErgebnis(e), rebuildable: (e) => mailNeuBaubar(e), rebuild: (e) => mailNeuBauen(e),
+});
 const MAIL_KEYS = ['enabled', 'host', 'port', 'secure', 'user', 'pass', 'from', 'fromName', 'replyTo', 'adminTo', 'adminCopy', 'autoStatusMails', 'publicUrl', 'allowSelfSigned'];
 const EMAIL_RE = /^[^\s@<>,;"()]+@[^\s@<>,;"()]+\.[^\s@<>,;"()]+$/;
 const isEmail = (s) => EMAIL_RE.test(String(s || '').trim());
@@ -925,29 +928,91 @@ const adminSettingsView = () => {
   };
 };
 
-/** Mail-Vermerk: Bestellung frisch lesen (unter Sperre), damit kein veraltetes Objekt zwischenzeitliche Änderungen überschreibt. */
-async function noteMailSent(order, key, subject, to) {
-  const release = await lockOrder(order.orderId);
+/** Bestellnummer zu einem Protokolleintrag (neu: orderId; ältere Einträge: ref = Bestellnummer) */
+const mailOrderId = (e) => { const id = String(e?.orderId || e?.ref || ''); return /^(FS|OV)-[A-Z0-9-]+$/.test(id) ? id : ''; };
+/** mailsSent-Schlüssel älterer Protokolleinträge (ohne key) aus der Mail-Art */
+const mailKeyAlt = (kind) => (kind === 'bestaetigung' ? kind : /^status:/.test(kind || '') ? kind.slice(7) : /^reklamation:/.test(kind || '') ? kind : null);
+/**
+ * Mail zu einer Bestellung einreihen: mailsSent[key] vorher unter der Bestellsperre reservieren (Bestellung frisch gelesen, damit
+ * parallele Aufrufe nicht zweimal senden). Ist der Schlüssel schon belegt (unterwegs oder zugestellt): nichts tun → null.
+ */
+async function queueOrderMail(order, key, msg) {
+  let reserviert = null;
+  if (key) {
+    const release = await lockOrder(order.orderId);
+    try {
+      const o = await readOrder(order.orderId);
+      if (o.mailsSent?.[key]) return null;
+      reserviert = new Date().toISOString();
+      o.mailsSent[key] = reserviert;
+      await writeOrder(o);
+    } finally { release(); }
+  }
+  return mailer.queue({ ref: order.orderId, ...msg, orderId: order.orderId, key, reserviert });
+}
+/** Endstand einer Mail an der Bestellung vermerken (Mailer → onFinal): Historie + mailsSent (siehe oben) */
+async function mailErgebnis(e) {
+  const orderId = mailOrderId(e);
+  if (!orderId || /^admin-/.test(e.kind || '')) return;   // Meldungen an den Shop gehören nicht in die Bestellhistorie
+  const key = e.key ?? mailKeyAlt(e.kind);
+  const release = await lockOrder(orderId);
   try {
-    const o = await readOrder(order.orderId);
-    o.mailsSent[key] = new Date().toISOString();
-    addHistory(o, o.status, `E-Mail „${subject}“ → ${to}`, 'mail');
+    let o;
+    try { o = await readOrder(orderId); } catch { return; }
+    if (e.status === 'gesendet') {
+      if (key) o.mailsSent[key] = e.sentAt || new Date().toISOString();
+      addHistory(o, o.status, `E-Mail „${e.subject}“ → ${e.to}`, 'mail');
+    } else {
+      if (key && e.reserviert && o.mailsSent[key] === e.reserviert) delete o.mailsSent[key];
+      addHistory(o, o.status, e.status === 'deaktiviert'
+        ? `E-Mail „${e.subject}“ an ${e.to} nicht gesendet: ${e.error || 'Versand aus'} – liegt im Versandprotokoll`
+        : `E-Mail „${e.subject}“ an ${e.to} nicht zugestellt: ${e.error || 'Fehler'} – im Versandprotokoll erneut senden`, 'mail');
+    }
     await writeOrder(o);
   } finally { release(); }
 }
-/** Ehrlicher Vermerk ohne mailsSent, wenn die Mail nicht in den Versand ging (deaktiviert/fehler). */
-async function noteMailSkipped(order, note) {
-  const release = await lockOrder(order.orderId);
-  try {
-    const o = await readOrder(order.orderId);
-    addHistory(o, o.status, note, 'mail');
-    await writeOrder(o);
-  } finally { release(); }
+/**
+ * Empfänger der Meldungen an den Shop: settings.mail.adminTo — auch mehrere Adressen (Komma/Semikolon); ungültige fallen weg,
+ * bleibt keine übrig, die Firmen-Adresse. Leer = niemand.
+ */
+function adminEmpfaenger() {
+  const list = addressList(String(mailSettings(settings.mail).adminTo || '').replace(/;/g, ',')).filter((a) => isEmail(a.email));
+  if (list.length) return list;
+  const co = String(settings.company?.email || '').trim().toLowerCase();
+  return isEmail(co) ? [{ name: '', email: co }] : [];
 }
-/** Ergebnis von mailer.queue() vermerken: eingereiht/gesendet → mailsSent[key], sonst Hinweis. */
-async function noteQueued(order, key, subject, to, q) {
-  if (q.status === 'wartet' || q.status === 'gesendet') return noteMailSent(order, key, subject, to);
-  return noteMailSkipped(order, `E-Mail „${subject}“ an ${to} nicht gesendet: ${q.error || q.status} – liegt im Versandprotokoll`);
+/** Reply-To der Meldungen an den Shop = Adresse der Kundschaft („Antworten“ geht an sie, nicht an den Shop selbst); nur ASCII vor dem @ */
+const antwortAn = (email) => { const e = String(email || '').trim(); return isEmail(e) && /^[\x21-\x7e]+@/.test(e) ? e : ''; };
+/** Storno-Mail: Beträge wie die Stornorechnung (stornoBetraege) — schon erledigte Gutschrift und wieder freies Guthaben */
+function stornoMailInfo(order) {
+  const { gutschrift, guth } = stornoBetraege(order);
+  return { gutschrift, gutschriftNo: gutschrift > 0 ? String(order.reklamation?.gutschriftNo || '') : '', guthaben: guth ? { code: guth.code, off: guth.off } : null };
+}
+// „Erneut“ im Versandprotokoll bei Mails, deren Inhalt nicht mehr gespeichert ist (zugestellt) oder deren Anhänge fehlen:
+// aus Bestellung bzw. Widerruf neu erzeugen — wie „senden“ im Bestell-Drawer. Passwort-/Bestätigungslinks und Freitext nicht.
+function mailNeuBaubar(e) {
+  if (/^(bestaetigung|status:[a-z-]+|reklamation:[a-z]+|zahlungserinnerung|admin-neu)$/.test(e.kind || '')) return !!mailOrderId(e);
+  if (/^(widerruf|admin-widerruf)$/.test(e.kind || '')) return /^WR-[A-Z0-9-]+$/.test(String(e.ref || ''));
+  return false;
+}
+async function mailNeuBauen(e) {
+  const baseUrl = baseUrlFor(settings);
+  const kind = String(e.kind || '');
+  if (kind === 'widerruf' || kind === 'admin-widerruf') {
+    const w = await withWiderrufe((list) => ({ result: list.find((x) => x.ref === e.ref) || null }));
+    if (!w) throw new Error(`Widerruf ${e.ref} ist nicht mehr gespeichert`);
+    if (kind === 'widerruf') return { to: e.to || w.email, ...widerrufEingang({ widerruf: w, settings, baseUrl }) };
+    return { to: adminEmpfaenger(), replyTo: antwortAn(w.email), ...adminWiderruf({ widerruf: w, settings, baseUrl }) };
+  }
+  const orderId = mailOrderId(e);
+  let order;
+  try { order = await readOrder(orderId); } catch { throw new Error(`Bestellung ${orderId} nicht gefunden`); }
+  if (kind === 'admin-neu') return { to: adminEmpfaenger(), replyTo: antwortAn(order.customer?.email), ...adminNewOrder({ order, settings, baseUrl }) };
+  const body = kind.startsWith('status:') ? { kind: 'status', status: kind.slice(7) }
+    : kind.startsWith('reklamation:') ? { kind: 'reklamation', phase: kind.slice(12) } : { kind };
+  const attachments = kind === 'bestaetigung' ? await legalAttachments() : [];
+  const m = renderOrderMail(order, { ...body, anhaenge: attachments.map((a) => a.filename) });
+  return { to: e.to || customerAddress(order), subject: m.subject, text: m.text, html: m.html, attachments };
 }
 /**
  * AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) als HTML-Anhänge der Bestellbestätigung — so hat die Kundschaft
@@ -966,7 +1031,7 @@ async function legalAttachments() {
   return out;
 }
 /**
- * Mail zu einer Bestellung rendern (Admin: Vorschau & Versand). kind: bestaetigung | status | freitext | reklamation (+ phase)
+ * Mail zu einer Bestellung rendern (Admin: Vorschau & Versand). kind: bestaetigung | status | freitext | reklamation (+ phase) | zahlungserinnerung
  * anhaenge: Dateinamen der Rechtstexte, die mit der Bestätigung verschickt werden (nur Hinweistext in der Mail)
  */
 function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge = [] } = {}) {
@@ -989,7 +1054,14 @@ function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge =
       const st = String(status || order.status || '');
       if (!STATUSES.includes(st)) throw httpError(400, 'Ungültiger Status');
       if (!statusMailAllowed(st)) throw httpError(400, `Für den Status „${STATUS_LABELS[st] || st}“ gibt es keine Mail-Vorlage`);
-      return { key: st, kind: `status:${st}`, ...orderStatus({ order, status: st, settings, baseUrl }) };
+      return { key: st, kind: `status:${st}`, ...orderStatus({ order, status: st, settings, baseUrl, storno: st === 'storniert' ? stornoMailInfo(order) : null }) };
+    }
+    case 'zahlungserinnerung': {
+      // Nur für offene Vorkasse mit Betrag — nach Zahlung oder Storno gibt es nichts zu erinnern
+      if (order.payment === 'paypal' || order.paymentStatus === 'bezahlt' || order.status === 'storniert' || !(euro(order.total) > 0)) {
+        throw httpError(400, 'Eine Zahlungserinnerung gibt es nur für offene Vorkasse-Bestellungen (nicht bezahlt, nicht storniert, Betrag über 0 €)');
+      }
+      return { key: 'zahlungserinnerung', kind, ...zahlungserinnerung({ order, settings, baseUrl }) };
     }
     case 'freitext': {
       const subj = String(subject || '').trim().slice(0, 200);
@@ -998,29 +1070,27 @@ function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge =
       return { key: null, kind, ...customMessage({ order, subject: subj, text: body, settings, baseUrl }) };
     }
     default:
-      throw httpError(400, 'Unbekannte Mail-Art (bestaetigung | status | freitext | reklamation)');
+      throw httpError(400, 'Unbekannte Mail-Art (bestaetigung | status | freitext | reklamation | zahlungserinnerung)');
   }
 }
 
-// Bestellung abgeschlossen → Bestätigung an den Kunden, Kopie an den Shop (adminTo, sonst Firmen-Adresse)
+// Bestellung abgeschlossen → Bestätigung an den Kunden, Kopie an den Shop (adminTo — auch mehrere —, sonst Firmen-Adresse)
 hooks.orderCompleted = async (order) => {
   if (order.mailsSent?.bestaetigung) return;   // /complete wurde doppelt aufgerufen
   const baseUrl = baseUrlFor(settings);
   const mc = mailSettings(settings.mail);
   const cust = customerAddress(order);
-  let customerMail = null;   // { subject, q } — nur wenn eine Kundenadresse vorliegt
   if (isEmail(cust.email)) {
     const attachments = await legalAttachments();   // AGB + Widerrufsbelehrung zum Aufbewahren
     const m = orderConfirmation({ order, settings, baseUrl, anhaenge: attachments.map((a) => a.filename) });
-    const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: 'bestaetigung', ref: order.orderId });
-    customerMail = { subject: m.subject, q };
+    const q = await queueOrderMail(order, 'bestaetigung', { to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: 'bestaetigung' });
+    if (q === null) return;   // parallel schon bestätigt → auch keine zweite Admin-Kopie
   }
-  const adminTo = mc.adminTo || String(settings.company?.email || '').trim();
-  if (mc.adminCopy && isEmail(adminTo)) {
+  const admins = adminEmpfaenger();
+  if (mc.adminCopy && admins.length) {
     const m = adminNewOrder({ order, settings, baseUrl });
-    await mailer.queue({ to: adminTo, subject: m.subject, text: m.text, html: m.html, kind: 'admin-neu', ref: order.orderId });
+    await mailer.queue({ to: admins, replyTo: antwortAn(cust.email), subject: m.subject, text: m.text, html: m.html, kind: 'admin-neu', ref: order.orderId });
   }
-  if (customerMail) await noteQueued(order, 'bestaetigung', customerMail.subject, cust.email, customerMail.q);
 };
 // Statuswechsel → Status-Mail (nur mit notify, aktivierter Automatik und passender Vorlage; je Status einmal)
 hooks.statusChanged = async (order, prevStatus, { notify = true } = {}) => {
@@ -1029,9 +1099,8 @@ hooks.statusChanged = async (order, prevStatus, { notify = true } = {}) => {
   if (order.mailsSent?.[status]) return;
   const cust = customerAddress(order);
   if (!isEmail(cust.email)) return;
-  const m = orderStatus({ order, status, settings, baseUrl: baseUrlFor(settings) });
-  const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, kind: `status:${status}`, ref: order.orderId });
-  await noteQueued(order, status, m.subject, cust.email, q);
+  const m = orderStatus({ order, status, settings, baseUrl: baseUrlFor(settings), storno: status === 'storniert' ? stornoMailInfo(order) : null });
+  await queueOrderMail(order, status, { to: cust, subject: m.subject, text: m.text, html: m.html, kind: `status:${status}` });
 };
 // Reklamation angelegt/eingegangen/erledigt/abgelehnt → Kundenmail (je Phase einmal: mailsSent['reklamation:<phase>'])
 hooks.reklamation = async (order, phase, { notify = true } = {}) => {
@@ -1041,22 +1110,22 @@ hooks.reklamation = async (order, phase, { notify = true } = {}) => {
   const cust = customerAddress(order);
   if (!isEmail(cust.email)) return;
   const m = reklamationMail({ order, phase, settings, baseUrl: baseUrlFor(settings) });
-  const q = await mailer.queue({ to: cust, subject: m.subject, text: m.text, html: m.html, kind: key, ref: order.orderId });
-  await noteQueued(order, key, m.subject, cust.email, q);
+  await queueOrderMail(order, key, { to: cust, subject: m.subject, text: m.text, html: m.html, kind: key });
 };
 // Widerruf eingegangen → Eingangsbestätigung an die angegebene Adresse (sofort, mit Inhalt, Datum/Uhrzeit, Referenz) und
 // Meldung an den Shop (adminTo, sonst Firmen-Adresse) — die Meldung geht unabhängig von „Kopie an den Shop“ raus,
-// ein Widerruf darf nicht untergehen. Zugeordnete Bestellung: Mail-Vermerk in der Historie.
+// ein Widerruf darf nicht untergehen. Zugeordnete Bestellung: Zustellung dort vermerkt (mailsSent['widerruf:<Referenz>'] + Historie).
 hooks.widerruf = async (w) => {
   const baseUrl = baseUrlFor(settings);
   const m = widerrufEingang({ widerruf: w, settings, baseUrl });
-  const q = await mailer.queue({ to: { name: w.name, email: w.email }, subject: m.subject, text: m.text, html: m.html, kind: 'widerruf', ref: w.ref });
-  const adminTo = mailSettings(settings.mail).adminTo || String(settings.company?.email || '').trim();
-  if (isEmail(adminTo)) {
+  const msg = { to: { name: w.name, email: w.email }, subject: m.subject, text: m.text, html: m.html, kind: 'widerruf', ref: w.ref };
+  if (w.orderMatched) await queueOrderMail({ orderId: w.orderId }, `widerruf:${w.ref}`, msg);
+  else await mailer.queue(msg);
+  const admins = adminEmpfaenger();
+  if (admins.length) {
     const a = adminWiderruf({ widerruf: w, settings, baseUrl });
-    await mailer.queue({ to: adminTo, subject: a.subject, text: a.text, html: a.html, kind: 'admin-widerruf', ref: w.ref });
+    await mailer.queue({ to: admins, replyTo: antwortAn(w.email), subject: a.subject, text: a.text, html: a.html, kind: 'admin-widerruf', ref: w.ref });
   }
-  if (w.orderMatched) await noteQueued({ orderId: w.orderId }, `widerruf:${w.ref}`, m.subject, w.email, q);
 };
 // Neues Kundenkonto → Willkommensmail
 hooks.userRegistered = async (user) => {
@@ -2184,10 +2253,10 @@ async function kasseAbgelehntNachZahlung(res, id, cap, status, body, kunde) {
   const grund = String(body.error || 'Bestellung abgelehnt');
   const r = await paypalKasseErstatten(id, cap, grund);
   try {   // Meldung an den Shop — unabhängig von „Kopie an den Shop“, hier geht es um Geld
-    const adminTo = mailSettings(settings.mail).adminTo || String(settings.company?.email || '').trim();
-    if (isEmail(adminTo)) {
+    const admins = adminEmpfaenger();
+    if (admins.length) {
       const m = adminPaypalKasse({ p: { id, amount: cap.amount, currency: cap.currency, capturedAt: cap.capturedAt, grund, erstattet: r.erstattet, fehler: r.fehler, customer: { name: kunde?.name, email: kunde?.email } }, settings, baseUrl: baseUrlFor(settings) });
-      await mailer.queue({ to: adminTo, subject: m.subject, text: m.text, html: m.html, kind: 'admin-paypal', ref: id });
+      await mailer.queue({ to: admins, replyTo: antwortAn(kunde?.email), subject: m.subject, text: m.text, html: m.html, kind: 'admin-paypal', ref: id });
     }
   } catch (err) { console.error(`PayPal ${id}: Meldung an den Shop fehlgeschlagen:`, err?.message || err); }
   const zusatz = r.erstattet
@@ -2993,6 +3062,15 @@ const server = http.createServer(async (req, res) => {
         if (neu.aktiv && !neu.hash) return send(res, 400, { ok: false, error: 'Wartungsmodus: bitte zuerst ein Zugangskennwort setzen' });
         wartungNeu = neu;
       }
+      // E-Mail-Passwort vorab (vor der ersten Änderung): ein leeres Feld behält das gespeicherte nur für denselben Zugang
+      // (Host/Port/Benutzer, nicht auf „unverschlüsselt“ heruntergestellt) — sonst ginge es an einen anderen Server (lib/mailer.js keepStoredPass)
+      let mailPass = null;
+      if (patch.mail && typeof patch.mail === 'object') {
+        const nm = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
+        for (const k of MAIL_KEYS) if (patch.mail[k] !== undefined) nm[k] = patch.mail[k];
+        mailPass = keepStoredPass(settings.mail || {}, nm, patch.mail.pass);
+        if (mailPass.error) return send(res, 400, { ok: false, error: mailPass.error });
+      }
       const prevPricing = settings.pricing;
       // Nur bekannte Wurzel-Schlüssel übernehmen (Gutscheine gesondert, siehe mergeCoupons)
       for (const k of ['pricing', 'colors', 'printing']) {
@@ -3037,8 +3115,7 @@ const server = http.createServer(async (req, res) => {
         const prev = settings.mail || {};
         const next = { ...DEFAULT_SETTINGS.mail, ...prev };
         for (const k of MAIL_KEYS) if (patch.mail[k] !== undefined) next[k] = patch.mail[k];
-        if (patch.mail.pass === null) next.pass = '';
-        else if (!String(patch.mail.pass ?? '')) next.pass = prev.pass || '';
+        next.pass = mailPass.pass;   // geprüft oben
         settings.mail = mailSettings(next);
       } else settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
       await saveSettings();
@@ -3374,8 +3451,17 @@ const server = http.createServer(async (req, res) => {
         const cust = customerAddress(order);
         if (p === '/api/admin/mail-preview') return send(res, 200, { ok: true, subject: m.subject, html: m.html, text: m.text, to: cust.email, kind: m.kind });
         if (!isEmail(cust.email)) return send(res, 400, { ok: false, error: 'Die Bestellung hat keine gültige Kunden-E-Mail' });
-        const r = await mailer.send({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: m.kind, ref: order.orderId });
-        if (r.ok && m.key) await noteMailSent(order, m.key, m.subject, cust.email);
+        // Zahlungserinnerung höchstens einmal je Kalendertag (deutsche Zeit)
+        if (m.key === 'zahlungserinnerung' && order.mailsSent?.zahlungserinnerung) {
+          const tag = (iso) => new Date(iso).toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin' });
+          const zuletzt = order.mailsSent.zahlungserinnerung;
+          if (tag(zuletzt) === tag(Date.now())) {
+            const um = new Date(zuletzt).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' });
+            return send(res, 409, { ok: false, error: `Heute ist schon eine Zahlungserinnerung rausgegangen (um ${um} Uhr) – eine je Tag` });
+          }
+        }
+        // Vermerk an der Bestellung (Historie, mailsSent[key]) schreibt der Mailer über mailErgebnis — auch bei Fehlern
+        const r = await mailer.send({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: m.kind, ref: order.orderId, orderId: order.orderId, key: m.key });
         if (!r.ok && /nicht eingerichtet/.test(r.error || '')) r.error += ' – die Nachricht liegt im Versandprotokoll und kann nach der Einrichtung erneut gesendet werden';
         return send(res, 200, { ok: !!r.ok, id: r.id, error: r.error || '' });
       } catch (err) {
@@ -3401,6 +3487,25 @@ const server = http.createServer(async (req, res) => {
       try {
         const limit = parseInt(url.searchParams.get('limit'), 10) || 200;
         return send(res, 200, { ok: true, entries: await mailer.list({ limit }), config: mailer.config() });
+      } catch (err) {
+        return send(res, 500, { ok: false, error: err.message || 'Serverfehler' });
+      }
+    }
+    // Übersicht: endgültig gescheiterte Mails (30 Tage, nicht ausgeblendet) + Zahl der Mails, die auf einen weiteren Versuch warten
+    if (p === '/api/admin/mail-probleme') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      try {
+        return send(res, 200, { ok: true, ...(await mailer.problems()), aktiv: mailer.config().active });
+      } catch (err) {
+        return send(res, 500, { ok: false, error: err.message || 'Serverfehler' });
+      }
+    }
+    if (req.method === 'POST' && p === '/api/admin/mail-quittieren') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      try {
+        const { id } = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8'));
+        if (typeof id !== 'string' || !(id === 'alle' || /^[a-z0-9]{6,40}$/.test(id))) return send(res, 400, { ok: false, error: 'Ungültige Protokoll-ID' });
+        return send(res, 200, await mailer.quittieren(id));
       } catch (err) {
         return send(res, 500, { ok: false, error: err.message || 'Serverfehler' });
       }
