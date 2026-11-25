@@ -89,7 +89,8 @@ function stepsHtml(o) {
 
 function renderButton() {
   const btn = $('#account-btn');
-  btn.innerHTML = `👤 <span class="ab-txt">${currentUser ? currentUser.name.split(' ')[0] : 'Anmelden'}</span>`;
+  // Name kommt vom Konto (frei eingegeben) → maskiert; ältere Konten können noch < > im Namen haben
+  btn.innerHTML = `👤 <span class="ab-txt">${esc(currentUser ? String(currentUser.name || '').trim().split(/\s+/)[0] : 'Anmelden')}</span>`;
   btn.classList.toggle('logged-in', !!currentUser);
 }
 
