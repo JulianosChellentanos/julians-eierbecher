@@ -1641,7 +1641,7 @@ async function loadMailLog() {
     if (canResend(e)) return `<button class="ghost mini" onclick="mailResend('${esc(e.id)}','${esc(e.status)}')">${e.status === 'wartet' ? '↻ Jetzt senden' : '↻ Erneut'}</button>`;
     const oid = e.orderId || e.ref;
     return DATA.orders.some((o) => o.orderId === oid) && e.status !== 'deaktiviert' && !/^admin-/.test(e.kind || '')
-      ? `<button class="link" onclick="openOrder('${esc(oid)}')" title="Mail in der Bestellung neu senden">in der Bestellung</button>` : '';
+      ? `<button class="link" onclick="openOrder('${esc(oid)}')" title="Mail in der Bestellung neu senden">→ Bestellung</button>` : '';
   };
   $('#mail-log').innerHTML = `<thead><tr><th>Zeit</th><th>An</th><th>Betreff</th><th>Art</th><th>Bezug</th><th>Status</th><th></th></tr></thead><tbody>` +
     entries.map((e) => `<tr>
