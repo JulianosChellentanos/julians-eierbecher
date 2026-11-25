@@ -1,9 +1,15 @@
 // formsam Studio — Admin-Oberfläche (klassisches Skript, wird von /admin geladen)
 // Bereiche: Übersicht (+ Pflichtangaben, Widerrufe) · Bestellungen (+ Drawer) · Druck · Kunden · Farben · Bilder · Preise · Aktionen · Firma · PayPal · E-Mail · System
-// Interne Kennungen bleiben aus Kompatibilitätsgründen beim alten Präfix: localStorage „ovju-admin-key“.
+// Admin-Passwort nur für diesen Tab im sessionStorage „ovju-admin-key“ (interne Kennung mit altem Präfix) — nicht mehr dauerhaft im
+// localStorage; ein dort noch liegendes Passwort (ältere Fassung) wird beim Laden übernommen und gelöscht.
 'use strict';
 
-const KEY = () => localStorage.getItem('ovju-admin-key') || '';
+try {
+  const alt = localStorage.getItem('ovju-admin-key');
+  if (alt !== null) { if (!sessionStorage.getItem('ovju-admin-key')) sessionStorage.setItem('ovju-admin-key', alt); localStorage.removeItem('ovju-admin-key'); }
+} catch { /* Speicher gesperrt */ }
+const KEY = () => { try { return sessionStorage.getItem('ovju-admin-key') || ''; } catch { return ''; } };
+const setKey = (k) => { try { if (k) sessionStorage.setItem('ovju-admin-key', k); else sessionStorage.removeItem('ovju-admin-key'); } catch { /* Speicher gesperrt */ } };
 let DATA = null;          // { settings, orders, statuses, statusLabels, carriers, normalHeight, info, aktionen, aktion, serverNow }
 let USERS = [];           // Kundenkonten (ohne Hash/Salt)
 let tiers = { egg: [], vase: [] };
@@ -82,6 +88,7 @@ async function openDruckzettel(orderId) {
 async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-key': KEY(), ...(opts.headers || {}) } });
   if (r.status === 401) { showLogin(); throw new Error('auth'); }
+  if (r.status === 429 && /^\/api\/admin\//.test(path)) { showLogin(); throw new Error('gebremst'); }   // zu viele falsche Passwörter
   // JSON-Antworten unverändert durchreichen (auch 404 „Bestellung unbekannt“); nur ein 404 ohne JSON heißt „Endpoint fehlt noch“
   const j = await r.json().catch(() => null);
   if (j && typeof j === 'object') return j;
@@ -90,11 +97,13 @@ async function api(path, opts = {}) {
 }
 function showLogin() { $('#login').hidden = false; $('#app').hidden = true; }
 async function login() {
-  localStorage.setItem('ovju-admin-key', $('#pw').value);
+  setKey($('#pw').value);
   $('#login-err').textContent = '';
-  try { await load(); } catch { $('#login-err').textContent = 'Falsches Passwort'; }
+  try { await load(); } catch (e) {
+    $('#login-err').textContent = e?.message === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.' : 'Falsches Passwort';
+  }
 }
-function logout() { localStorage.removeItem('ovju-admin-key'); showLogin(); }
+function logout() { setKey(''); showLogin(); }
 function toast(msg, type = '', ms = 3200) {
   const box = $('#toasts');
   // Gleicher Text ersetzt den alten Toast; höchstens drei gleichzeitig (der älteste weicht)
@@ -914,6 +923,7 @@ function wrItemHTML(w) {
         ${done ? '' : `<span class="wr-frist" title="Greift das Widerrufsrecht, erstattest du spätestens 14 Tage nach Eingang der Erklärung (§ 357 BGB).">Erstattung ggf. bis ${fmtDate(wrFrist(w.at))}</span>`}</div>
       <div class="wr-who"><b>${esc(w.name)}</b> · <a href="mailto:${esc(w.email)}">${esc(w.email)}</a><br><span class="muted">Bestellung:</span> ${wrBestellung(w)}</div>
       ${msg ? `<div class="wr-msg">${esc(msg)}</div>` : '<p class="muted" style="margin-top:6px;font-size:.8rem">Keine Nachricht.</p>'}
+      ${w.bestaetigungGebremst ? '<p class="muted" style="margin-top:6px;font-size:.8rem" title="Schutz vor Mail-Flut: höchstens 3 Bestätigungen je Adresse am Tag und 30 je Stunde">⚠️ Eingangsbestätigung nicht per Mail verschickt (Bremse) – bei Bedarf selbst antworten.</p>' : ''}
       <div class="wr-foot">
         <input type="text" id="wr-notiz-${ref}" data-wr-notiz="${ref}" maxlength="1000" value="${esc(w.notiz || '')}" placeholder="Notiz (nur für dich), z. B. „Antwort geschickt am …“" aria-label="Notiz zu ${ref}">
         <button class="mini ghost" data-wr-ref="${ref}" data-wr-note>💾 Notiz</button>
@@ -1885,7 +1895,7 @@ async function saveSettings() {
   try {
     const r = await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
     if (!r.ok) throw new Error(r.error || 'Speichern fehlgeschlagen');
-    if (patch.adminKey) { localStorage.setItem('ovju-admin-key', patch.adminKey); $('#s-adminkey').value = ''; }
+    if (patch.adminKey) { setKey(patch.adminKey.trim()); $('#s-adminkey').value = ''; delete patch.adminKey; }
     if (patch.wartung) {
       const neuesKw = !!patch.wartung.kennwort;
       $('#s-wartung-kw').value = '';

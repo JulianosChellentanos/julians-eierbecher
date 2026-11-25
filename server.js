@@ -1,5 +1,5 @@
 // formsam — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal + Rechtsseiten + Widerruf
-// Start: node server.js   →   http://<host>:4488   (Admin: /admin, Standard-Passwort bei Neuinstallation: formsam-admin)
+// Start: node server.js   →   http://<host>:4488   (Admin: /admin — bei einer Neuinstallation steht ein zufälliges Admin-Passwort einmal im Protokoll)
 import http from 'node:http';
 import { createGzip, gzipSync, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
@@ -205,8 +205,8 @@ function farbSperre(items) {
   return null;
 }
 
+// Kein Standard-Admin-Passwort: settings.adminKeyHash entsteht beim Start (Klartext umstellen oder zufällig erzeugen, siehe loadSettings)
 const DEFAULT_SETTINGS = {
-  adminKey: 'formsam-admin',
   invoicePrefix: 'RE-2026-',
   nextInvoice: 1,
   // Gutschriften (Reklamation): eigener Nummernkreis, vierstellig
@@ -330,11 +330,10 @@ function settingsHinweise() {
 let settings;
 function loadSettings() {
   mkdirSync(DATA, { recursive: true });
-  try {
-    settings = { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) };
-  } catch {
-    settings = structuredClone(DEFAULT_SETTINGS);
-  }
+  // Fehlt settings.json, ist das eine Neuinstallation (Standardwerte). Ist sie da, aber unlesbar, bricht der Start ab (ladeDatei) —
+  // nie still mit Standardwerten weiterlaufen (anderes Admin-Passwort, Mail aus, Gutscheine und Nummernkreise zurückgesetzt)
+  const gespeichert = ladeDatei(SETTINGS_FILE, { pruefe: nurObjekt });
+  settings = gespeichert ? { ...DEFAULT_SETTINGS, ...gespeichert } : structuredClone(DEFAULT_SETTINGS);
   // Filament-Farben einmalig aus content.json übernehmen
   if (!Array.isArray(settings.colors)) {
     try {
@@ -355,11 +354,18 @@ function loadSettings() {
   }
   // Aktionen: Array erzwingen, kaputte Einträge verwerfen (Meldung im Log)
   settings.aktionen = sanitizeAktionen(settings.aktionen, { lenient: true });
-  // Ein leeres/ungültiges Admin-Passwort würde den Admin entweder für alle öffnen oder dauerhaft aussperren
-  if (typeof settings.adminKey !== 'string' || !settings.adminKey.trim()) {
-    console.warn('⚠️  settings.adminKey ungültig – Standard-Passwort wird verwendet');
-    settings.adminKey = DEFAULT_SETTINGS.adminKey;
+  // Admin-Passwort nur als scrypt-Hash (adminKeyHash). Ein Klartext-adminKey (ältere settings.json, von Hand oder per Skript
+  // gesetzt) wird umgestellt und entfernt — dasselbe Passwort gilt weiter. Fehlt beides oder ist der Hash kaputt, gibt es ein
+  // zufälliges Passwort, das genau einmal im Protokoll steht (kein bekanntes Standard-Passwort mehr)
+  if (typeof settings.adminKey === 'string' && settings.adminKey.trim()) {
+    settings.adminKeyHash = pwHashSync(settings.adminKey);
+    console.log('🔐 Admin-Passwort: Klartext in settings.json durch einen scrypt-Hash ersetzt (das Passwort bleibt gleich)');
+  } else if (!pwHashGueltig(settings.adminKeyHash)) {
+    const neu = crypto.randomBytes(15).toString('base64url');
+    settings.adminKeyHash = pwHashSync(neu);
+    console.warn(`🔐 ${gespeichert ? 'settings.json ohne gültiges Admin-Passwort' : 'Neuinstallation'} – neues Admin-Passwort (steht nur hier, bitte notieren und im Admin unter System ändern): ${neu}`);
   }
+  delete settings.adminKey;
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
   // Migration Aufpreise: Muster (Betreiber-Wunsch: Lamellen +3 €), Farbschrift +2 €
@@ -422,6 +428,69 @@ async function writeFileAtomic(file, data) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Datendateien (settings, users, sessions, designs, lists, paypal-captures): Laden beim Start, Speichern atomar und nacheinander.
+//   Fehlt eine Datei, beginnt sie leer (Neuinstallation). Ist sie da, aber nicht lesbar oder kein gültiges JSON, bricht der Start
+//   mit klarer Meldung ab (startAbbruch) — sonst liefe der Shop mit leeren Konten/Codes oder Standard-Einstellungen weiter und
+//   überschriebe die Datei beim nächsten Speichern. Ausnahme sessions.json (nur Anmeldungen): als .defekt-<Zeit> beiseitelegen,
+//   laut warnen, leer weiter. Gespeichert wird über writeFileAtomic in einer Kette je Datei (speicherKette).
+// ---------------------------------------------------------------------------
+const SICHERUNG_HINWEIS = 'Sicherungen: /var/backups/formsam auf dem Produktivserver (täglich, 14 Tage). Datei von dort zurückholen oder reparieren, dann den Shop neu starten (README, Abschnitt „Daten, Sicherung und defekte Dateien“).';
+/** JSON-Datei lesen → Wert (geprüft) | null, wenn sie fehlt; unlesbar → beiseitelegen (beiseite) oder Startabbruch */
+function ladeDatei(file, { pruefe = (v) => v, beiseite = false } = {}) {
+  let text;
+  try { text = readFileSync(file, 'utf8'); } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    return dateiDefekt(file, `nicht lesbar (${err.code || err.message})`, beiseite);
+  }
+  try { return pruefe(JSON.parse(text)); } catch (err) { return dateiDefekt(file, `beschädigt (${err.message})`, beiseite); }
+}
+function dateiDefekt(file, grund, beiseite) {
+  if (beiseite) {
+    const backup = `${file}.defekt-${Date.now()}`;
+    try {
+      renameSync(file, backup);
+      console.error(`⚠️  ${path.basename(file)} ${grund} – gesichert als ${path.basename(backup)}, leer weiter`);
+      return null;
+    } catch (e2) { grund += `; Sichern als ${path.basename(backup)} fehlgeschlagen (${e2.code || e2.message})`; }
+  }
+  throw Object.assign(new Error(`${file} ist ${grund}`), { startAbbruch: true });
+}
+const nurObjekt = (v) => { if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('kein JSON-Objekt'); return v; };
+/**
+ * Speichern je Datei: atomar (writeFileAtomic) und nacheinander. Wer speichert, während ein Schreibvorgang noch wartet, fährt in
+ * diesem mit — serialisiert wird erst beim Start des Schreibens, also immer der neueste Stand. → () => Promise (nach dem Schreiben)
+ */
+function speicherKette(file, stand) {
+  let letzte = Promise.resolve(), wartend = null;
+  return () => {
+    if (wartend) return wartend;
+    wartend = letzte.catch(() => {}).then(() => { wartend = null; return writeFileAtomic(file, stand()); });
+    letzte = wartend;
+    return wartend;
+  };
+}
+const speicherFehler = (was) => (err) => console.error(`${was} konnte nicht gespeichert werden:`, err?.message || err);
+
+// --- Passwörter (Kundenkonten, Admin): crypto.scrypt asynchron — blockiert den Shop nicht wie scryptSync
+const scryptAsync = (pw, salt, len) => new Promise((ok, fail) => crypto.scrypt(String(pw), salt, len, (err, key) => (err ? fail(err) : ok(key))));
+/** Admin-Passwort → 'scrypt$salt$hash' (32 Bytes, wie das Wartungskennwort); synchron nur beim Start und in tools/admin-passwort.mjs */
+function pwHashSync(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `scrypt$${salt}$${crypto.scryptSync(String(pw), salt, 32).toString('hex')}`;
+}
+async function pwHash(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `scrypt$${salt}$${(await scryptAsync(pw, salt, 32)).toString('hex')}`;
+}
+const pwHashGueltig = (h) => /^scrypt\$[0-9a-f]{16,64}\$[0-9a-f]{64}$/.test(String(h || ''));
+async function pwHashStimmt(pw, h) {
+  if (!pwHashGueltig(h) || typeof pw !== 'string') return false;
+  const [, salt, hex] = h.split('$');
+  const a = await scryptAsync(pw, salt, 32), b = Buffer.from(hex, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 // ---------------------------------------------------------------------------
@@ -590,14 +659,15 @@ const SESS_FILE = path.join(DATA, 'sessions.json');
 let users = [];
 let sessions = {};
 function loadUsers() {
-  try { users = JSON.parse(readFileSync(USERS_FILE, 'utf8')).users || []; } catch { users = []; }
-  try { sessions = JSON.parse(readFileSync(SESS_FILE, 'utf8')); } catch { sessions = {}; }
+  // users.json kaputt → Startabbruch (ladeDatei); sessions.json kaputt → beiseitelegen, alle müssen sich neu anmelden
+  users = ladeDatei(USERS_FILE, { pruefe: (v) => { if (!Array.isArray(nurObjekt(v).users)) throw new Error('Liste „users“ fehlt'); return v.users; } }) || [];
+  sessions = ladeDatei(SESS_FILE, { pruefe: nurObjekt, beiseite: true }) || {};
   // alte Sessions (> 90 Tage) aufräumen
   const cutoff = Date.now() - SESSION_TTL;
   for (const [t, s] of Object.entries(sessions)) if (s.createdAt < cutoff) delete sessions[t];
 }
 const SESSION_TTL = 90 * 864e5;   // Anmeldung gilt 90 Tage — danach wird sie beim nächsten Zugriff bzw. Serverstart entfernt
-const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2));
+const saveUsers = speicherKette(USERS_FILE, () => JSON.stringify({ users }, null, 2));
 
 // ---------------------------------------------------------------------------
 // Design-Codes (data/designs.json): kurzer Code ⇄ komplette Konfiguration.
@@ -609,9 +679,18 @@ const DESIGN_KEYS = ['product', 'preset', 'height', 'width', 'pattern', 'ribs', 
   'text', 'textSize', 'textPos', 'font', 'textStyle', 'textColor', 'saucer', 'customPoints', 'color', 'rim'];
 let designs = {};
 function loadDesigns() {
-  try { designs = JSON.parse(readFileSync(DESIGNS_FILE, 'utf8')); } catch { designs = {}; }
+  designs = ladeDatei(DESIGNS_FILE, { pruefe: nurObjekt }) || {};
 }
-const saveDesigns = () => writeFile(DESIGNS_FILE, JSON.stringify(designs));
+const saveDesigns = speicherKette(DESIGNS_FILE, () => JSON.stringify(designs));
+// Abrufzähler (loads/lastLoad) gebündelt schreiben: ein Code-Abruf merkt sich nur die Änderung, gespeichert wird höchstens
+// einmal je DESIGN_ZAEHLER_MS (vorher schrieb jeder Abruf die ganze designs.json neu). Beim Beenden kann ein Rest fehlen — egal.
+const DESIGN_ZAEHLER_MS = 60_000;
+let designZaehlerOffen = false;
+setInterval(() => {
+  if (!designZaehlerOffen) return;
+  designZaehlerOffen = false;
+  saveDesigns().catch(speicherFehler('designs.json (Abrufzähler)'));
+}, DESIGN_ZAEHLER_MS).unref();
 function canonicalDesign(cfg) {
   const out = {};
   for (const k of DESIGN_KEYS) {
@@ -652,8 +731,8 @@ const THUMBS = path.join(DATA, 'thumbs');
 // ---------------------------------------------------------------------------
 const LISTS_FILE = path.join(DATA, 'lists.json');
 let lists = {};
-function loadLists() { try { lists = JSON.parse(readFileSync(LISTS_FILE, 'utf8')); } catch { lists = {}; } }
-const saveLists = () => writeFile(LISTS_FILE, JSON.stringify(lists));
+function loadLists() { lists = ladeDatei(LISTS_FILE, { pruefe: nurObjekt }) || {}; }
+const saveLists = speicherKette(LISTS_FILE, () => JSON.stringify(lists));
 function newListCode() {
   for (;;) {
     let c = 'L';
@@ -681,13 +760,33 @@ function publicList(l) {
   };
 }
 
-const saveSessions = () => writeFile(SESS_FILE, JSON.stringify(sessions));
-const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
+const saveSessions = speicherKette(SESS_FILE, () => JSON.stringify(sessions));
+// Kundenpasswörter: scrypt (64 Bytes, Salz je Konto), asynchron. Neue Passwörter: Text mit 8–200 Zeichen (bestehende kürzere
+// gelten weiter). Bei unbekannter Adresse rechnet die Anmeldung einen Schein-Hash — die Antwortzeit verrät nicht, ob es das Konto gibt.
+const hashPw = async (pw, salt) => (await scryptAsync(pw, salt, 64)).toString('hex');
+const PW_MIN = 8, PW_MAX = 200;
+const pwRegel = (pw) => (typeof pw === 'string' && pw.length >= PW_MIN && pw.length <= PW_MAX ? null : `Passwort: ${PW_MIN} bis ${PW_MAX} Zeichen`);
+const SCHEIN_SALZ = crypto.randomBytes(16).toString('hex');
+async function passwortStimmt(u, pw) {
+  const text = typeof pw === 'string' && pw.length <= 1024 ? pw : '';
+  const h = await hashPw(text, u?.salt || SCHEIN_SALZ);
+  if (!u || !text || !/^[0-9a-f]{128}$/.test(String(u.hash || ''))) return false;
+  return crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(h, 'hex'));
+}
+const SESSIONS_JE_KONTO = 20;   // gleichzeitige Anmeldungen je Konto — darüber fallen die ältesten weg
 function createSession(userId) {
   const token = crypto.randomBytes(24).toString('hex');
   sessions[token] = { userId, createdAt: Date.now() };
-  saveSessions();
+  const eigene = Object.entries(sessions).filter(([, x]) => x.userId === userId).sort((a, b) => a[1].createdAt - b[1].createdAt);
+  for (const [t] of eigene.slice(0, Math.max(0, eigene.length - SESSIONS_JE_KONTO))) delete sessions[t];
+  saveSessions().catch(speicherFehler('sessions.json'));
   return token;
+}
+/** Alle Anmeldungen eines Kontos beenden — außer der Kennung ausser (z. B. die eigene beim Passwortwechsel); → Anzahl */
+function sitzungenBeenden(userId, ausser = null) {
+  let n = 0;
+  for (const [t, x] of Object.entries(sessions)) if (x.userId === userId && t !== ausser) { delete sessions[t]; n++; }
+  return n;
 }
 function userFromReq(req) {
   const t = String(req.headers['x-auth'] || '');
@@ -704,8 +803,11 @@ function userFromReq(req) {
 // emailVerified: Adresse per Link bestätigt (user.emailVerifiedAt) — erst dann zeigt das Konto Gastbestellungen mit dieser Adresse
 const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address || null, emailVerified: !!u.emailVerifiedAt });
 
-// --- Passwort vergessen: Token nur als SHA-256-Hash im Konto (user.reset = { hash, exp }), 60 Minuten gültig
+// --- Passwort vergessen: Token nur als SHA-256-Hash im Konto, 60 Minuten gültig. user.reset = [{ hash, exp }, …] — die letzten
+//   RESET_LINKS verschickten Links gelten (eine verspätete Mail oder ein Dritter, der neue Links anfordert, entwertet keinen gerade
+//   angekommenen); ein erfolgreicher Reset entwertet alle. Ältere Konten haben noch ein einzelnes Objekt { hash, exp }.
 const RESET_TTL = 60 * 60 * 1000;
+const RESET_LINKS = 3;
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 /** Konto zu einem Mail-Token (field 'reset' = Passwort vergessen, 'verify' = E-Mail bestätigen) — nur gültige, nicht abgelaufene */
 function userByToken(token, field) {
@@ -715,9 +817,10 @@ function userByToken(token, field) {
   const now = Date.now();
   let found = null;
   for (const u of users) {   // alle Konten durchgehen (kein Abbruch → keine Zeitmessung möglich)
-    const r = u[field];
-    if (!r || !/^[0-9a-f]{64}$/.test(String(r.hash || ''))) continue;
-    if (crypto.timingSafeEqual(h, Buffer.from(r.hash, 'hex')) && Number(r.exp) > now) found = u;
+    for (const r of [].concat(u[field] || [])) {
+      if (!r || !/^[0-9a-f]{64}$/.test(String(r.hash || ''))) continue;
+      if (crypto.timingSafeEqual(h, Buffer.from(r.hash, 'hex')) && Number(r.exp) > now) found = u;
+    }
   }
   return found;
 }
@@ -737,41 +840,81 @@ function newVerifyToken(u) {
   return token;
 }
 const verifyLinkFor = (token) => `${baseUrlFor(settings)}/?verify=${token}`;
-// Rate-Limit für „Passwort vergessen“ (im Speicher): max. 3 Anfragen je E-Mail in 15 Minuten,
-// je IP großzügiger (10), damit ein Proxy ohne X-Forwarded-For nicht alle Kunden gemeinsam sperrt.
-// Der Speicher ist hart gedeckelt (FORGOT_MAX_KEYS) und wird höchstens einmal pro Minute durchgekehrt.
+// Bremsen (im Speicher): forgotLimited(key, max, fenster) zählt einen Versuch und meldet true, wenn schon max im Zeitfenster liegen;
+// rateLimitReached(key, max, fenster) sieht nur nach (für Sperren, die nur Fehlgriffe zählen). Schlüssel je IP nutzen clientIp(),
+// das IPv6 auf das /64-Netz kürzt. Jeder Schlüssel merkt sich sein Zeitfenster (Tagesgrenzen überleben das Durchkehren nach
+// 15-Minuten-Schlüsseln); der Speicher ist hart gedeckelt (FORGOT_MAX_KEYS), bei Überlauf fallen die am längsten unbenutzten
+// Schlüssel weg. Ein Neustart setzt alle Zähler zurück (bewusst: kein Angreifer kann den Shop neu starten).
+// „Passwort vergessen“: 3 je E-Mail und 10 je IP in 15 Minuten (je IP großzügiger, damit ein Proxy ohne X-Forwarded-For nicht alle
+// Kunden gemeinsam sperrt).
 const FORGOT_IP_MAX = 10;
 const FORGOT_MAX_KEYS = 5000;
-const forgotHits = new Map();
+const STUNDE_MS = 3600e3;
+const forgotHits = new Map();   // Schlüssel → { win: Zeitfenster ms, hits: [Zeitpunkte] }
 let forgotSweep = 0;
 function forgotLimited(key, max = 3, windowMs = 15 * 60 * 1000) {
   const now = Date.now();
-  const hits = (forgotHits.get(key) || []).filter((t) => now - t < windowMs);
-  if (hits.length >= max) { forgotHits.set(key, hits); return true; }
+  const alt = forgotHits.get(key);
+  const hits = (alt?.hits || []).filter((t) => now - t < windowMs);
+  forgotHits.delete(key);   // ans Ende der (einfügegeordneten) Map: zuletzt benutzt
+  forgotHits.set(key, { win: Math.max(windowMs, alt?.win || 0), hits });
+  if (hits.length >= max) return true;
   hits.push(now);
-  forgotHits.set(key, hits);
   if (forgotHits.size > FORGOT_MAX_KEYS && now - forgotSweep > 60_000) {
     forgotSweep = now;
-    for (const [k, v] of forgotHits) if (!v.some((t) => now - t < windowMs)) forgotHits.delete(k);
+    for (const [k, v] of forgotHits) if (!v.hits.some((t) => now - t < v.win)) forgotHits.delete(k);
   }
-  // Map ist einfügegeordnet → bei Überlauf fliegen die ältesten Schlüssel raus
   while (forgotHits.size > FORGOT_MAX_KEYS) forgotHits.delete(forgotHits.keys().next().value);
   return false;
 }
 /** Nur nachsehen (ohne zu zählen): ist das Limit für key im Zeitfenster erreicht? — für Sperren, die nur Fehlgriffe zählen */
 function rateLimitReached(key, max, windowMs = 15 * 60 * 1000) {
   const now = Date.now();
-  return (forgotHits.get(key) || []).filter((t) => now - t < windowMs).length >= max;
+  return (forgotHits.get(key)?.hits || []).filter((t) => now - t < windowMs).length >= max;
+}
+/**
+ * Adresse für Bremsen: IPv4 (auch IPv4-mapped ::ffff:a.b.c.d) unverändert, IPv6 auf das /64-Netz gekürzt („2001:db8:1:2::/64“) —
+ * ein gewöhnlicher Anschluss hat ein ganzes /64, sonst zählte jede seiner Adressen einzeln.
+ */
+function ipNetz(raw) {
+  let ip = String(raw || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  const v4 = ip.match(/^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4) return v4[1];
+  if (!ip.includes(':') || !/^[0-9a-f:.]+$/.test(ip)) return ip;
+  ip = ip.replace(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/, (_, a, b, c, d) => `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`);
+  const teile = ip.split('::');
+  if (teile.length > 2) return ip;
+  const links = teile[0] ? teile[0].split(':') : [], rechts = teile[1] ? teile[1].split(':') : [];
+  const gruppen = teile.length === 2 ? [...links, ...Array(Math.max(0, 8 - links.length - rechts.length)).fill('0'), ...rechts] : links;
+  if (gruppen.length !== 8) return ip;
+  return `${gruppen.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':')}::/64`;
 }
 // X-Forwarded-For ist clientgesteuert — nur hinter eigenem Reverse-Proxy auswerten (TRUST_PROXY=1 = ein Proxy,
-// der seinen Wert hinten anhängt); ohne Proxy zählt die Socket-Adresse
+// der seinen Wert hinten anhängt); ohne Proxy zählt die Socket-Adresse. Ergebnis ist der Bremsen-Schlüssel (ipNetz).
 const TRUST_PROXY = Math.max(0, parseInt(process.env.TRUST_PROXY || '0', 10) || 0);
 function clientIp(req) {
   const ip = req.socket?.remoteAddress || '';
-  if (!TRUST_PROXY) return ip;
+  if (!TRUST_PROXY) return ipNetz(ip);
   const list = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-  return list[list.length - TRUST_PROXY] || ip;
+  return ipNetz(list[list.length - TRUST_PROXY] || ip);
 }
+// Weitere Bremsen (Richtwerte; über der Grenze 429 mit Meldung, außer beim Widerruf — siehe dort)
+const LOGIN_FEHL_KONTO = 10;    // falsche Passwörter je IP + Konto in 15 Minuten (kein Sperren des Kontos selbst: Fremde können
+const LOGIN_FEHL_IP = 30;       //   den Inhaber nicht aussperren) — und je IP über alle Konten
+const REG_IP_MAX = 5;           // Registrierungen je IP und Stunde
+const REG_MAIL_MAX = 3;         // Konten (= Willkommensmails) je Empfängeradresse und Tag
+const REG_ALLE_MAX = 30;        // Registrierungen insgesamt je Stunde
+const WIDERRUF_MAIL_MAX = 3;    // Eingangsbestätigungen je Empfänger und Tag
+const WIDERRUF_ALLE_MAX = 30;   // Eingangsbestätigungen insgesamt je Stunde
+const KASSE_IP_MAX = 20;        // neue Kassen (Bestellungen, PayPal-Zahlungen) je IP und Stunde
+const DESIGN_IP_MAX = 300;      // neue Design-Codes je IP und Stunde — der Konfigurator speichert bei jeder Code-Anzeige, normaler
+const DESIGN_ALLE_MAX = 5000;   //   Gebrauch bleibt weit darunter; insgesamt je Stunde
+const THUMB_IP_MAX = 600;       // Vorschaubilder je IP und Stunde
+const LISTE_IP_MAX = 30;        // neue Listen je IP und Stunde
+const LISTE_AENDERN_IP_MAX = 600;   // Listen ändern/löschen je IP und Stunde
+const UPLOAD_IP_BYTES = 4e9;    // Modelldateien je IP und Stunde (Bytes) — 20 Positionen der größten Konfiguration ≈ 2,5 GB
+const LOGIN_GEBREMST = { ok: false, error: 'Zu viele Fehlversuche – bitte in 15 Minuten noch einmal versuchen oder „Passwort vergessen?“ nutzen.' };
+const GEBREMST = (wann = 'in einer Stunde') => ({ ok: false, error: `Zu viele Anfragen von deinem Anschluss – bitte ${wann} noch einmal versuchen.` });
 
 // ---------------------------------------------------------------------------
 // Wartungsmodus (settings.wartung): vor dem ganzen Shop steht eine Seite mit Zugangskennwort. Wer es kennt, bekommt ein
@@ -916,7 +1059,7 @@ const customerAddress = (order) => ({ name: String(order.customer?.name || '').t
 const httpError = (code, message) => Object.assign(new Error(message), { httpCode: code });
 /** Einstellungen fürs Admin-UI/Export: Geheimnisse maskiert (leer + …Set) — SMTP-Passwort, PayPal-Secret und Admin-Passwort verlassen den Server nie. */
 const adminSettingsView = () => {
-  const { adminKey, ...rest } = settings;
+  const { adminKey, adminKeyHash, ...rest } = settings;
   return {
     ...rest,
     mail: { ...settings.mail, pass: '', passSet: !!settings.mail?.pass },
@@ -1050,13 +1193,14 @@ hooks.reklamation = async (order, phase, { notify = true } = {}) => {
 hooks.widerruf = async (w) => {
   const baseUrl = baseUrlFor(settings);
   const m = widerrufEingang({ widerruf: w, settings, baseUrl });
-  const q = await mailer.queue({ to: { name: w.name, email: w.email }, subject: m.subject, text: m.text, html: m.html, kind: 'widerruf', ref: w.ref });
+  // bestaetigungGebremst (Bremse je Empfänger/insgesamt, siehe /api/widerruf): keine Kundenmail, die Meldung an den Shop geht trotzdem
+  const q = w.bestaetigungGebremst ? null : await mailer.queue({ to: { name: w.name, email: w.email }, subject: m.subject, text: m.text, html: m.html, kind: 'widerruf', ref: w.ref });
   const adminTo = mailSettings(settings.mail).adminTo || String(settings.company?.email || '').trim();
   if (isEmail(adminTo)) {
     const a = adminWiderruf({ widerruf: w, settings, baseUrl });
     await mailer.queue({ to: adminTo, subject: a.subject, text: a.text, html: a.html, kind: 'admin-widerruf', ref: w.ref });
   }
-  if (w.orderMatched) await noteQueued({ orderId: w.orderId }, `widerruf:${w.ref}`, m.subject, w.email, q);
+  if (w.orderMatched && q) await noteQueued({ orderId: w.orderId }, `widerruf:${w.ref}`, m.subject, w.email, q);
 };
 // Neues Kundenkonto → Willkommensmail
 hooks.userRegistered = async (user) => {
@@ -1299,15 +1443,50 @@ function belegPraefixAusPatch(key, raw, label) {
   if (j.gewechselt) throw httpError(400, `${label}: Die Jahreszahl in „${neu}“ liegt vor dem aktuellen Jahr – der Zähler würde neu beginnen und Nummern doppelt vergeben.`);
   return { prefix: neu };
 }
-/** Vergleich mit dem Admin-Passwort in konstanter Zeit; ein leeres/ungültiges Passwort passt nie. */
-function adminKeyMatches(k) {
-  const a = Buffer.from(typeof settings.adminKey === 'string' ? settings.adminKey : '');
-  const s = Buffer.from(String(k ?? ''));
-  return a.length > 0 && s.length === a.length && crypto.timingSafeEqual(s, a);
+// ---------------------------------------------------------------------------
+// Admin-Anmeldung: Passwort im Kopf x-admin-key, geprüft gegen settings.adminKeyHash (scrypt) — einmal je Anfrage ganz oben im
+// Request-Handler (adminAnmeldung); isAdmin(req) liest danach nur das Ergebnis. Ein richtig geprüftes Passwort merkt sich der
+// Server als SHA-256 für ADMIN_CACHE_MS, damit nicht jede Admin-Anfrage scrypt rechnet. Fehlversuche je IP (IPv6: /64) bremsen:
+// nach ADMIN_FEHL_IP in 15 Minuten 429 — auch mit richtigem Passwort von dieser IP, sonst ginge das Raten weiter. Gesamtbremse:
+// liegen insgesamt ADMIN_FEHL_GESAMT Fehlversuche im Fenster (verteilter Angriff), hat jede IP nur noch einen Fehlversuch frei —
+// wer sich nicht vertippt, kommt immer durch, der Inhaber sperrt sich also nicht selbst aus.
+// ---------------------------------------------------------------------------
+const ADMIN_FEHL_IP = 10;
+const ADMIN_FEHL_GESAMT = 100;
+const ADMIN_CACHE_MS = 5 * 60e3;
+const adminCache = new Map();        // SHA-256(Passwort) → gültig bis (ms); leer nach jedem Passwortwechsel
+const adminPruefungen = new Map();   // SHA-256(Passwort) → laufende scrypt-Prüfung (parallele Anfragen rechnen nur einmal)
+const adminAnfragen = new WeakSet(); // Anfragen mit geprüftem Admin-Passwort
+/** → 'ok' | 'falsch' | 'gebremst' | 'ohne' (kein Kopf) */
+async function adminAnmeldung(req) {
+  const k = req.headers['x-admin-key'];
+  if (typeof k !== 'string' || !k) return 'ohne';
+  // Bremse vor dem Cache: sonst käme ein gesperrter Rater mit dem richtigen (gerade gemerkten) Passwort doch durch
+  const ip = clientIp(req);
+  const breit = rateLimitReached('admin-fehl', ADMIN_FEHL_GESAMT);
+  if (rateLimitReached(`admin-fehl:${ip}`, breit ? 1 : ADMIN_FEHL_IP)) return 'gebremst';
+  const h = sha256(k), now = Date.now();
+  if (adminCache.get(h) > now) { adminAnfragen.add(req); return 'ok'; }
+  let pruefung = adminPruefungen.get(h);
+  if (!pruefung) {
+    pruefung = k.length <= 200 ? pwHashStimmt(k, settings.adminKeyHash).catch(() => false) : Promise.resolve(false);
+    adminPruefungen.set(h, pruefung);
+    pruefung.finally(() => adminPruefungen.delete(h));
+  }
+  if (await pruefung) {
+    if (adminCache.size > 20) adminCache.clear();
+    adminCache.set(h, now + ADMIN_CACHE_MS);
+    adminAnfragen.add(req);
+    return 'ok';
+  }
+  forgotLimited('admin-fehl', ADMIN_FEHL_GESAMT);
+  forgotLimited(`admin-fehl:${ip}`, ADMIN_FEHL_IP);
+  if (rateLimitReached(`admin-fehl:${ip}`, ADMIN_FEHL_IP)) {
+    console.warn(`🔐 Admin: ${ADMIN_FEHL_IP} falsche Passwörter von ${ip} – Anmeldung von dort 15 Minuten gesperrt`);
+  }
+  return 'falsch';
 }
-function isAdmin(req) {
-  return adminKeyMatches(req.headers['x-admin-key']);
-}
+const isAdmin = (req) => adminAnfragen.has(req);
 
 // ---------------------------------------------------------------------------
 // Zugriffsschlüssel für Belege und Modelldateien (orders/<ID>/rechnung.html, gutschrift.html, *.stl, *.3mf)
@@ -1704,7 +1883,7 @@ function lieferMonat(fromIso, lieferzeit) {
 }
 
 // ---------------------------------------------------------------------------
-// Druckzettel (A4, schwarz/weiß-tauglich) — GET /admin/druckzettel/<ID>?k=<adminKey>
+// Druckzettel (A4, schwarz/weiß-tauglich) — GET /admin/druckzettel/<ID> mit Kopf x-admin-key
 // ---------------------------------------------------------------------------
 function druckzettelHTML(order) {
   const cu = order.customer || {};
@@ -2024,11 +2203,13 @@ const PAYPAL_ID_RE = /^[A-Z0-9]{10,30}$/;
 const CAPTURES_FILE = path.join(DATA, 'paypal-captures.json');
 const CAPTURES_MAX = 500;
 let paypalCaptures = {};
-function loadCaptures() { try { paypalCaptures = JSON.parse(readFileSync(CAPTURES_FILE, 'utf8')) || {}; } catch { paypalCaptures = {}; } }
+// Unlesbar beim Start → Startabbruch wie users.json (leer weiterzulaufen hieße, eine eingelöste Zahlung ein zweites Mal anzunehmen)
+function loadCaptures() { paypalCaptures = ladeDatei(CAPTURES_FILE, { pruefe: (v) => (v === null ? {} : nurObjekt(v)) }) || {}; }
+const capturesSchreiben = speicherKette(CAPTURES_FILE, () => JSON.stringify(paypalCaptures, null, 2));
 async function saveCaptures() {
   const ids = Object.keys(paypalCaptures);
   if (ids.length > CAPTURES_MAX) for (const id of ids.slice(0, ids.length - CAPTURES_MAX)) delete paypalCaptures[id];   // älteste zuerst (Einfügereihenfolge)
-  await writeFile(CAPTURES_FILE, JSON.stringify(paypalCaptures, null, 2));
+  await capturesSchreiben();
 }
 /** Betrag/Währung aus einer PayPal-Order-Antwort (Capture bevorzugt, sonst purchase_unit) */
 function paypalAmountOf(j) {
@@ -2350,13 +2531,19 @@ function sendBelegFehler(res, code) {
 // ---------------------------------------------------------------------------
 // Bestellungen
 // ---------------------------------------------------------------------------
+const bestellungenDefekt = new Set();   // Ordner mit unlesbarer order.json — Hinweis im Admin (settingsHinweise)
 async function listOrders() {
   if (!existsSync(ORDERS)) return [];
   const dirs = (await readdir(ORDERS, { withFileTypes: true }))
     .filter((d) => d.isDirectory()).map((d) => d.name).sort().reverse();
   const orders = [];
   for (const d of dirs) {
-    try { orders.push(await readOrder(d)); } catch { /* unvollständig */ }
+    try { orders.push(await readOrder(d)); bestellungenDefekt.delete(d); } catch (err) {
+      // fehlt order.json (Kasse legt den Ordner gerade an) → still überspringen; beschädigt → laut melden statt still verschwinden
+      if (err?.code === 'ENOENT') continue;
+      if (!bestellungenDefekt.has(d)) console.error(`⚠️  Bestellung ${d}: order.json unlesbar (${err?.message || err}) – sie fehlt im Admin`);
+      bestellungenDefekt.add(d);
+    }
   }
   return orders;
 }
@@ -2366,6 +2553,10 @@ async function handleCheckout(req, res) {
   try { data = JSON.parse((await readBody(req)).toString('utf8')); } catch { data = null; }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return send(res, 400, { ok: false, error: 'Ungültige Anfrage' });
   const { payment, paypalOrderId } = data;
+  // Bremse: höchstens KASSE_IP_MAX neue Kassen je IP und Stunde (gezählt wird nur, was eine Bestellung anlegt). Eine bezahlte
+  // PayPal-Kasse wird nie gebremst — das Geld ist schon eingezogen (die Zahlung selbst zählt in /api/paypal/create)
+  const kasseKey = `kasse:${clientIp(req)}`;
+  if (payment !== 'paypal' && rateLimitReached(kasseKey, KASSE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
   // PayPal zuerst: Zahlung serverseitig bestätigen (Capture-Speicher bzw. Nachfrage bei PayPal) — ist das Geld schon eingezogen,
   // endet jede Ablehnung danach mit automatischer Erstattung (kasseAbgelehntNachZahlung), nie mit „bezahlt, aber keine Bestellung“.
   // Die PayPal-ID darf nur einmal verwendet werden; Betrag/Währung müssen zur Bestellung passen.
@@ -2399,7 +2590,10 @@ async function handleCheckout(req, res) {
   if (gc && isGuthaben(gc) && !paypalCap && couponRest(gc) + 0.005 < totals.coupon.off) {
     return send(res, 400, { ok: false, error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst – bitte prüf den Betrag in der Kasse.` });
   }
-  const orderId = newOrderId();
+  if (!paypalCap) forgotLimited(kasseKey, KASSE_IP_MAX, STUNDE_MS);
+  // neue Nummer, die es noch nicht gibt (synchron geprüft — ein vorhandener Ordner würde sonst überschrieben)
+  let orderId;
+  do orderId = newOrderId(); while (existsSync(path.join(ORDERS, orderId)));
   const createdAt = new Date().toISOString();
   if (paypalCap) untrackCouponUse(`paypal:${ppId}`);   // Reservierung aus /api/paypal/create geht auf die Bestellung über
   if (totals.coupon) trackCouponUse({ orderId, coupon: totals.coupon, status: 'neu', createdAt, paymentStatus: paypalCap ? 'bezahlt' : 'offen' });
@@ -2461,8 +2655,6 @@ async function handleStlUpload(req, res, id, idx, url) {
     if (size > MAX_STL && !aborted) { aborted = true; out.destroy(); req.destroy(); send(res, 413, { ok: false, error: 'Datei zu groß' }); }
   });
   req.pipe(out);
-  out.on('finish', () => { if (!aborted) send(res, 200, { ok: true, bytes: size }); });
-  out.on('error', () => { if (!aborted) send(res, 500, { ok: false, error: 'Speicherfehler' }); });
 }
 
 // Idempotent: ein zweiter Aufruf (Retry, Doppelklick, Dritte) liefert nur noch die Rechnungsdaten —
@@ -2522,6 +2714,11 @@ const server = http.createServer(async (req, res) => {
   try {
     // --- Wartungsmodus: ohne Freigabe nur die Wartungsseite
     if (await wartungTor(req, res, p, url)) return;
+    // --- Admin-Passwort (Kopf x-admin-key) einmal je Anfrage prüfen; zu viele Fehlversuche → 429 auf Admin-Wegen
+    if (await adminAnmeldung(req) === 'gebremst' && (p.startsWith('/api/admin/') || p.startsWith('/admin/'))) {
+      res.setHeader('Retry-After', '900');
+      return send(res, 429, { ok: false, error: 'Zu viele falsche Admin-Passwörter – bitte in 15 Minuten noch einmal versuchen.' });
+    }
 
     // --- öffentliche API
     if (p === '/api/pricing') {
@@ -2563,21 +2760,39 @@ const server = http.createServer(async (req, res) => {
       const { name, email, password } = JSON.parse((await readBody(req)).toString('utf8'));
       const mail = String(email || '').trim().toLowerCase();
       if (!name?.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return send(res, 400, { ok: false, error: 'Bitte Name und gültige E-Mail angeben' });
-      if (String(password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
+      const pwFehler = pwRegel(password);
+      if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
+      // Bremsen vor der Kontoanlage (jedes neue Konto verschickt eine Mail an die angegebene Adresse): je IP 5 Versuche je Stunde
+      // (zählt auch „existiert schon“ → Konten lassen sich nicht massenhaft abfragen), je Empfänger 3 Konten am Tag, 30 je Stunde insgesamt
+      if (forgotLimited(`register-ip:${clientIp(req)}`, REG_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
       if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto – bitte anmelden' });
+      if (rateLimitReached(`register-mail:${mail}`, REG_MAIL_MAX, TAG_MS) || rateLimitReached('register-alle', REG_ALLE_MAX, STUNDE_MS)) {
+        console.warn(`⚠️  Registrierung gebremst (${rateLimitReached('register-alle', REG_ALLE_MAX, STUNDE_MS) ? `${REG_ALLE_MAX} je Stunde erreicht` : 'Empfänger-Grenze'})`);
+        return send(res, 429, GEBREMST('später'));
+      }
+      forgotLimited(`register-mail:${mail}`, REG_MAIL_MAX, TAG_MS);
+      forgotLimited('register-alle', REG_ALLE_MAX, STUNDE_MS);
       const salt = crypto.randomBytes(16).toString('hex');
-      const user = { id: crypto.randomUUID(), name: name.trim(), email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
+      const user = { id: crypto.randomUUID(), name: name.trim(), email: mail, salt, hash: await hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
+      if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto – bitte anmelden' });   // parallel angelegt
       const verifyToken = newVerifyToken(user);   // Bestätigungslink kommt mit der Willkommensmail
       users.push(user);
       await saveUsers();
       send(res, 200, { ok: true, token: createSession(user.id), user: publicUser(user) });
       return runHook('userRegistered', { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
     }
+    // Anmeldung: Fehlversuche je IP + Konto (10) und je IP (30) in 15 Minuten → 429; das Konto selbst wird nie gesperrt
     if (req.method === 'POST' && p === '/api/auth/login') {
       const { email, password } = JSON.parse((await readBody(req)).toString('utf8'));
-      const u = users.find((x) => x.email === String(email || '').trim().toLowerCase());
-      const ok = u && crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(hashPw(password || '', u.salt), 'hex'));
-      if (!ok) return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
+      const mail = String(email || '').trim().toLowerCase().slice(0, 254);
+      const ip = clientIp(req);
+      if (rateLimitReached(`login:${ip}|${mail}`, LOGIN_FEHL_KONTO) || rateLimitReached(`login-ip:${ip}`, LOGIN_FEHL_IP)) return send(res, 429, LOGIN_GEBREMST);
+      const u = users.find((x) => x.email === mail);
+      if (!(await passwortStimmt(u, password))) {
+        forgotLimited(`login:${ip}|${mail}`, LOGIN_FEHL_KONTO);
+        forgotLimited(`login-ip:${ip}`, LOGIN_FEHL_IP);
+        return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
+      }
       return send(res, 200, { ok: true, token: createSession(u.id), user: publicUser(u) });
     }
     if (req.method === 'POST' && p === '/api/auth/logout') {
@@ -2590,16 +2805,16 @@ const server = http.createServer(async (req, res) => {
       let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
       const mail = String(body?.email || '').trim().toLowerCase();
       if (mail.length > 254 || !isEmail(mail)) return send(res, 400, { ok: false, error: 'Bitte eine gültige E-Mail-Adresse angeben' });   // 254 = RFC-5321-Maximum
-      // IP-Limit zuerst und kurzschließend: eine gesperrte IP legt keine neuen Mail-Schlüssel mehr an
-      if (forgotLimited(`ip:${clientIp(req)}`, FORGOT_IP_MAX) || forgotLimited(`mail:${mail}`)) {
-        return send(res, 429, { ok: false, error: 'Zu viele Anfragen – bitte in 15 Minuten noch einmal versuchen.' });
-      }
+      // IP-Limit zuerst und kurzschließend: eine gesperrte IP legt keine neuen Mail-Schlüssel mehr an. Gebremst: trotzdem 200, aber
+      // keine neue Mail und kein neuer Link — die zuletzt verschickten Links bleiben gültig (Dritte können den Inhaber nicht aussperren)
+      const gebremst = forgotLimited(`ip:${clientIp(req)}`, FORGOT_IP_MAX) || forgotLimited(`mail:${mail}`);
       send(res, 200, { ok: true });
       const u = users.find((x) => x.email === mail);
-      if (!u) return;
+      if (!u || gebremst) return;
       try {
         const token = crypto.randomBytes(24).toString('base64url');
-        u.reset = { hash: sha256(token), exp: Date.now() + RESET_TTL };
+        const frueher = [].concat(u.reset || []).filter((r) => r && Number(r.exp) > Date.now()).slice(-(RESET_LINKS - 1));
+        u.reset = [...frueher, { hash: sha256(token), exp: Date.now() + RESET_TTL }];
         await saveUsers();
         const m = passwordReset({ user: { name: u.name, email: u.email }, link: `${baseUrlFor(settings)}/?reset=${token}`, settings });
         await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-reset', ref: u.id });
@@ -2611,14 +2826,17 @@ const server = http.createServer(async (req, res) => {
       let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
       const u = userByResetToken(body?.token);
       if (!u) return send(res, 400, { ok: false, error: 'Link ungültig oder abgelaufen' });
-      if (String(body?.password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
-      u.salt = crypto.randomBytes(16).toString('hex');
-      u.hash = hashPw(body.password, u.salt);
-      delete u.reset;
+      const pwFehler = pwRegel(body?.password);
+      if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
+      const salt = crypto.randomBytes(16).toString('hex'), hash = await hashPw(body.password, salt);
+      if (userByResetToken(body?.token) !== u) return send(res, 400, { ok: false, error: 'Link ungültig oder abgelaufen' });   // inzwischen benutzt
+      u.salt = salt;
+      u.hash = hash;
+      delete u.reset;   // alle Links aus „Passwort vergessen“ sind damit verbraucht
       // Der Reset-Link kam per Mail an diese Adresse → sie gehört der Person, die jetzt das Passwort setzt
       if (!u.emailVerifiedAt) u.emailVerifiedAt = new Date().toISOString();
       delete u.verify;
-      for (const [t, s] of Object.entries(sessions)) if (s.userId === u.id) delete sessions[t];
+      sitzungenBeenden(u.id);
       await saveUsers();
       return send(res, 200, { ok: true, token: createSession(u.id), user: publicUser(u) });
     }
@@ -2716,8 +2934,12 @@ const server = http.createServer(async (req, res) => {
       let order = null;
       if (orderId) { try { order = await readOrder(orderId); } catch { order = null; } }
       const orderMatched = !!order && String(order.customer?.email || '').trim().toLowerCase() === email;
+      // Eingangsbestätigung je Empfänger höchstens 3 am Tag und insgesamt 30 je Stunde — darüber wird die Erklärung trotzdem gespeichert
+      // und dem Shop gemeldet (ein Widerruf geht nie verloren), nur die Mail an die angegebene Adresse entfällt (bestaetigungGebremst)
+      const gebremst = rateLimitReached(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS) || rateLimitReached('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS);
+      if (!gebremst) { forgotLimited(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS); forgotLimited('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS); }
       const entry = await withWiderrufe((list) => {
-        const w = { ref: newWiderrufRef(list), at: new Date().toISOString(), orderId: orderId || '', name, email, nachricht, orderMatched, status: 'offen', notiz: '' };
+        const w = { ref: newWiderrufRef(list), at: new Date().toISOString(), orderId: orderId || '', name, email, nachricht, orderMatched, status: 'offen', notiz: '', ...(gebremst ? { bestaetigungGebremst: true } : {}) };
         list.push(w);
         return { changed: true, result: w };
       });
@@ -2731,7 +2953,7 @@ const server = http.createServer(async (req, res) => {
         } catch (err) { console.error(`Widerruf ${entry.ref}: Vermerk in ${orderId} fehlgeschlagen:`, err?.message || err); }
         finally { release(); }
       }
-      console.log(`↩️  Widerruf ${entry.ref}${orderId ? ` zu ${orderId}` : ''} (${orderMatched ? 'zugeordnet' : 'nicht zugeordnet'})`);
+      console.log(`↩️  Widerruf ${entry.ref}${orderId ? ` zu ${orderId}` : ''} (${orderMatched ? 'zugeordnet' : 'nicht zugeordnet'})${gebremst ? ' – Eingangsbestätigung gebremst, nur Meldung an den Shop' : ''}`);
       send(res, 200, { ok: true, ref: entry.ref, at: entry.at });
       return runHook('widerruf', entry);
     }
@@ -2774,6 +2996,8 @@ const server = http.createServer(async (req, res) => {
       if (!cfg || !['vase', 'eierbecher'].includes(cfg.product)) return send(res, 400, { ok: false, error: 'Ungültiges Design' });
       const { code, canon, isNew } = designCode(cfg);
       if (isNew) {
+        // nur neue Codes zählen (je IP und insgesamt je Stunde) — ein schon bekanntes Design kostet keinen Speicher
+        if (forgotLimited(`design:${clientIp(req)}`, DESIGN_IP_MAX, STUNDE_MS) || forgotLimited('design-alle', DESIGN_ALLE_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
         designs[code] = { config: canon, createdAt: Date.now(), loads: 0 };
         await saveDesigns();
       }
@@ -2785,7 +3009,7 @@ const server = http.createServer(async (req, res) => {
       const d = designs[code];
       if (!d) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht – bitte prüfen (z. B. B statt 8).' });
       d.loads = (d.loads || 0) + 1; d.lastLoad = Date.now();
-      saveDesigns();
+      designZaehlerOffen = true;   // gespeichert wird gebündelt (DESIGN_ZAEHLER_MS)
       return send(res, 200, { ok: true, code, config: d.config });
     }
 
@@ -2796,11 +3020,11 @@ const server = http.createServer(async (req, res) => {
       const file = path.join(THUMBS, `${code}.jpg`);
       if (req.method === 'PUT') {
         if (!designs[code]) return send(res, 404, { ok: false, error: 'Design unbekannt' });
+        if (forgotLimited(`thumb:${clientIp(req)}`, THUMB_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
         const raw = (await readBody(req, 120 * 1024)).toString('utf8');
         const m = raw.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/);
         if (!m) return send(res, 400, { ok: false, error: 'Nur JPEG (data-URL)' });
-        await mkdir(THUMBS, { recursive: true });
-        await writeFile(file, Buffer.from(m[1], 'base64'));
+        await writeFileAtomic(file, Buffer.from(m[1], 'base64'));
         return send(res, 200, { ok: true });
       }
       if (req.method === 'GET') {
@@ -2812,6 +3036,7 @@ const server = http.createServer(async (req, res) => {
 
     // --- Design-Listen
     if (req.method === 'POST' && p === '/api/list') {
+      if (forgotLimited(`liste:${clientIp(req)}`, LISTE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
       let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
       const name = String(b.name || '').trim().slice(0, 60) || 'Meine Liste';
       const code = newListCode();
@@ -2831,6 +3056,7 @@ const server = http.createServer(async (req, res) => {
       const l = lists[code];
       if (!l) return send(res, 404, { ok: false, error: 'Diese Liste gibt es nicht – bitte den Code prüfen.' });
       if (req.method === 'GET') return send(res, 200, { ok: true, list: publicList(l) });
+      if (forgotLimited(`liste-aendern:${clientIp(req)}`, LISTE_AENDERN_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
       let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
       if (!b.token || b.token !== l.token) return send(res, 403, { ok: false, error: 'Nur der Besitzer kann diese Liste ändern.' });
       if (req.method === 'DELETE') { delete lists[code]; await saveLists(); return send(res, 200, { ok: true }); }
@@ -2879,6 +3105,7 @@ const server = http.createServer(async (req, res) => {
       // Betrag) — sonst wäre bezahlt, die Bestellung aber abgelehnt
       const k = pruefeKasse(data);
       if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) });
+      if (forgotLimited(`kasse:${clientIp(req)}`, KASSE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());   // wie /api/checkout
       const t = k.totals;
       const token = await paypalToken();
       const r = await fetch(`${paypalBase()}/v2/checkout/orders`, {
@@ -2940,10 +3167,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/admin/settings') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const patch = JSON.parse((await readBody(req)).toString('utf8'));
-      // Admin-Passwort: nur ein nicht-leerer String (≥ 8 Zeichen) — leer würde den Admin für alle öffnen, Nicht-Strings sperren aus
+      // Admin-Passwort: Text mit 8–200 Zeichen (leer würde den Admin für alle öffnen, Nicht-Strings sperren aus) — gespeichert wird nur
+      // der scrypt-Hash (übernommen erst, wenn der ganze Patch geprüft ist); danach gilt der Speicher-Cache nicht mehr
+      let adminHashNeu = null;
       if (patch.adminKey !== undefined) {
-        if (typeof patch.adminKey !== 'string' || patch.adminKey.trim().length < 8) return send(res, 400, { ok: false, error: 'Admin-Passwort: mindestens 8 Zeichen' });
-        settings.adminKey = patch.adminKey.trim();
+        if (typeof patch.adminKey !== 'string' || patch.adminKey.trim().length < 8 || patch.adminKey.trim().length > 200) return send(res, 400, { ok: false, error: 'Admin-Passwort: 8 bis 200 Zeichen' });
+        adminHashNeu = await pwHash(patch.adminKey.trim());
       }
       if (patch.pricing !== undefined && (!patch.pricing || typeof patch.pricing !== 'object' || Array.isArray(patch.pricing))) {
         return send(res, 400, { ok: false, error: 'Preise: ungültiges Format' });
@@ -3023,6 +3252,7 @@ const server = http.createServer(async (req, res) => {
       if (Array.isArray(settings.colors)) for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
       // PayPal: Secret-Maske wie beim SMTP-Passwort — leer = gespeichertes behalten, null = löschen
       if (wartungNeu) settings.wartung = wartungNeu;
+      if (adminHashNeu) { settings.adminKeyHash = adminHashNeu; delete settings.adminKey; adminCache.clear(); }
       if (patch.paypal && typeof patch.paypal === 'object') {
         const prev = settings.paypal || {};
         const next = { ...DEFAULT_SETTINGS.paypal, ...prev };
@@ -3416,10 +3646,10 @@ const server = http.createServer(async (req, res) => {
         return send(res, 500, { ok: false, error: err.message || 'Serverfehler' });
       }
     }
-    // Druckzettel (Seite, A4) — Key per Header oder ?k=
+    // Druckzettel (Seite, A4) — nur mit Admin-Kopf (die Oberfläche lädt ihn per fetch; ein Passwort in der URL landet in Verlauf und Logs)
     const mZettel = p.match(/^\/admin\/druckzettel\/([A-Z0-9-]+)$/);
     if (req.method === 'GET' && mZettel) {
-      if (!isAdmin(req) && !adminKeyMatches(url.searchParams.get('k'))) return send(res, 401, 'Nicht angemeldet – bitte über den Admin-Bereich öffnen.', 'text/plain; charset=utf-8');
+      if (!isAdmin(req)) return send(res, 401, 'Nicht angemeldet – bitte über den Admin-Bereich öffnen.', 'text/plain; charset=utf-8');
       let order;
       try { order = await readOrder(mZettel[1]); } catch { return send(res, 404, 'Bestellung unbekannt', 'text/plain; charset=utf-8'); }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -3518,13 +3748,20 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-loadSettings();
+// Datendateien laden — eine vorhandene, aber unlesbare Datei bricht den Start ab (siehe ladeDatei), bevor irgendetwas geschrieben wird
+try {
+  loadSettings();
+  loadDesigns();
+  loadLists();
+  loadUsers();
+  loadCaptures();
+} catch (err) {
+  if (!err?.startAbbruch) throw err;
+  console.error(`\n❌ Start abgebrochen: ${err.message}.\n   Der Shop startet nicht mit leeren oder Standard-Daten – sonst wären Konten, Codes oder Einstellungen beim nächsten Speichern überschrieben.\n   ${SICHERUNG_HINWEIS}\n`);
+  process.exit(1);
+}
 loadPreisHistorie();
 notePreisHistorie().catch((err) => console.error('Preis-Historie konnte nicht gespeichert werden:', err?.message || err));
-loadDesigns();
-loadLists();
-loadUsers();
-loadCaptures();
 // Sicherheitsnetz: ein einzelner Fehler außerhalb der try/catch-Pfade darf den Shop nicht beenden
 process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ablehnung:', err));
 process.on('uncaughtException', (err) => console.error('Unbehandelte Ausnahme:', err));
