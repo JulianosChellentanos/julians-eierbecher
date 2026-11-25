@@ -5,7 +5,9 @@
 //      /img/studio|brand|icons stale-while-revalidate (Treffer sofort, im Hintergrund erneuert), /vendor cache-first, VERSION ≠ v2
 //   D) Startseite und Styles: endgültige Texte im HTML (keine Layout-Verschiebung), Gravurfeld ohne Versalien, Schriftfarben-Kugeln im
 //      Knopf, mobile-home.js nur über studio.js (Handy), Formenkarten mit 700-px-srcset, Auswahlknöpfe mit aria-pressed, eigene Dialoge mit
-//      Namen, Kontraste ≥ 4,5:1
+//      Namen, Kontraste ≥ 4,5:1, Desktop-Preisleiste kompakt
+//   E) Entwurf (Ablauf, Code-Herkunft, nach Bestellung) und Link-Codes: nur „gibt es nicht“ nimmt den Code aus der Adresse, sonst deutscher
+//      Satz statt technischer Meldung (designcode.js in einer kleinen Browser-Attrappe)
 // Aufruf: node tools/test-konfigurator.mjs   → Exit 0 = alles bestanden, 1 = Fehler
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -155,7 +157,10 @@ const iText = style.match(/#i-text \{[^}]*\}/)?.[0] || '';
 check(iText && !/text-transform/.test(iText) && !/letter-spacing/.test(iText), 'Gravurfeld ohne Versalien/Sperrung (zeigt, was graviert wird)');
 check(/\.panel \.swatches-sm \.swatch span \{ width: 100%; height: 100%;/.test(style), 'Schriftfarben-Kugeln füllen ihren Knopf (keine 37-px-Kugel im 26-px-Knopf)');
 const cs = lies('public/css/configurator-studio.css');
-check(/\.panel-cta\{position:sticky;bottom:0/.test(cs), 'Desktop: Preis/Warenkorb haften unten im Panel');
+// Desktop: kompakte Leiste statt des ganzen haftenden Preisbereichs (der nahm auf Laptops bis zur Hälfte des Panels ein)
+check(!/\.panel-cta\{position:sticky/.test(cs) && /\.cta-mini\{display:block;position:sticky;bottom:-24px;height:0/.test(cs), 'Desktop: Preisbereich im Fluss, kompakte Leiste #cta-mini haftet unten (0 px hoch, bündig)');
+check(/<div class="cta-mini" id="cta-mini" aria-hidden="true" inert>[\s\S]*id="cta-mini-price"[\s\S]*id="cta-mini-ship"[\s\S]*id="cta-mini-order"[\s\S]*<\/div>\s*<\/aside>/.test(html), 'Leiste mit Preis, Versand-Hinweis und Kaufknopf als letztes Kind des Panels, ausgeblendet inert');
+check(/new IntersectionObserver\([\s\S]*\{ root: panel, threshold/.test(app) && /animateMoney\(\$\('#cta-mini-price'\)/.test(app) && /\$\('#cta-mini-ship'\)/.test(app), 'app.js: Leiste folgt der Sichtbarkeit von Preis/Kaufknopf und spiegelt Preis und Versand');
 check(!/<script[^>]+mobile-home\.js/.test(html) && /await import\('\.\/mobile-home\.js'\)/.test(lies('public/js/studio.js')), 'mobile-home.js nur auf dem Handy (über studio.js)');
 check(!/loadFont\('helvetiker'\)\.catch/.test(lies('public/js/model-worker.js')), 'Gravurschriften nicht mehr beim Start im Worker');
 // Formenkarten: 700-px-Fassungen für srcset (Anzeige ≈ 400 CSS-px), jede deutlich kleiner als das Original
@@ -185,6 +190,48 @@ for (const [blk, n] of [[hell, 'hell'], [dunkel, 'dunkel']]) {
   }
 }
 check(kontrast('#ffb4ad', tok(dunkel, 'card')) >= 4.5, 'Dunkelmodus-Fehlertext ≥ 4,5:1');
+
+// ---------------------------------------------------------------------------
+console.log('E Entwurf und Link-Codes');
+check(/ENTWURF_TAGE = 30/.test(app) && /entwurfLoeschen\(\); return null;/.test(app), 'Entwurf: abgelaufener/unlesbarer Stand wird gelöscht (30 Tage)');
+check(/sig === entwurfSig\(startConfig\)\) \{ entwurfLoeschen\(\); return; \}/.test(app), 'Entwurf: Grundzustand wird nicht gesichert (kein Eintrag ohne eigene Gestaltung)');
+check(/if \(sig === codeStand\.sig\) return;/.test(app) && /stripURLParam\('d'\);\s+\/\/ weitergestaltet/.test(app), 'Entwurf: Code-Design unverändert → nichts gesichert; weitergestaltet → Code raus aus der Adresse');
+check(/code && e\.von !== code/.test(app) && /'Original-Design laden'/.test(app), 'Entwurf aus demselben Link-Code: Entwurf statt Code, mit „Original-Design laden“');
+check(/\$\('#confirm-id'\)/.test(app) && /bestelltSig = entwurfSig/.test(app), 'Entwurf nach abgeschlossener Bestellung gelöscht');
+check(/30 Tagen ohne Änderung/.test(lies('lib/legal.js')), 'Datenschutzerklärung nennt Löschung nach Bestellung bzw. 30 Tagen');
+{
+  // designcode.js in einer kleinen Attrappe von Browser-Umgebung: welche Antwort nimmt den Code aus der Adresse, welcher Text erscheint?
+  const toast = { textContent: '', classList: { add() {}, remove() {} } };
+  const attrappe = () => ({ addEventListener() {}, classList: { add() {}, remove() {}, toggle() {} }, value: '', textContent: '', hidden: false });
+  let adresse = '/';
+  const alt = { window: globalThis.window, document: globalThis.document, location: globalThis.location, history: globalThis.history, fetch: globalThis.fetch, navigator: globalThis.navigator };
+  globalThis.window = { matchMedia: () => ({ matches: false }) };
+  globalThis.document = { querySelector: (q) => (q === '#toast' ? toast : attrappe()), querySelectorAll: () => [] };
+  Object.defineProperty(globalThis, 'location', { configurable: true, value: { get href() { return `https://shop.test${adresse}`; }, get search() { return new URL(this.href).search; }, get hash() { return new URL(this.href).hash; }, get pathname() { return new URL(this.href).pathname; }, origin: 'https://shop.test' } });
+  globalThis.history = { state: null, replaceState: (_s, _t, u) => { adresse = u; } };
+  if (!globalThis.navigator) Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
+  let antwort = null;
+  globalThis.fetch = async () => { if (antwort === 'netz') throw new TypeError('Failed to fetch'); return antwort(); };
+  const dc = await import('../public/js/designcode.js');
+  let geladen = null;
+  dc.initDesignCodes({ getConfig: () => ({}), applyConfig: async (cfg, code) => { geladen = code; } });
+  const fall = async (name, a, erwartet) => {
+    adresse = '/?d=QWERTZ#konfigurator'; toast.textContent = ''; geladen = null; antwort = a;
+    const r = await dc.loadFromURL();
+    const ok = erwartet(r, toast.textContent, adresse);
+    check(ok, `${name}: Meldung „${toast.textContent}“, Adresse ${adresse}`);
+  };
+  const json = (status, body) => () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  await fall('Link-Code vorhanden', json(200, { ok: true, code: 'QWERTZ', config: { product: 'vase' } }), (r, t, a) => r === 'QWERTZ' && geladen === 'QWERTZ' && !t && a.includes('d=QWERTZ'));
+  await fall('Link-Code gibt es nicht (404)', json(404, { ok: false, error: 'Diesen Design-Code gibt es nicht – bitte prüfen (z. B. B statt 8).' }), (r, t, a) => r === false && /gibt es nicht/.test(t) && a === '/#konfigurator');
+  await fall('502-Fehlerseite von nginx', () => new Response('<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>', { status: 502, headers: { 'content-type': 'text/html' } }), (r, t, a) => r === false && /ließ sich gerade nicht laden – bitte versuch es gleich noch einmal/.test(t) && !/Unexpected|JSON|token/i.test(t) && a.includes('d=QWERTZ'));
+  await fall('Netz weg', 'netz', (r, t, a) => r === false && /ließ sich gerade nicht laden/.test(t) && a.includes('d=QWERTZ'));
+  await fall('503 Wartung (JSON)', json(503, { ok: false, error: 'Wartung' }), (r, t, a) => r === false && /ließ sich gerade nicht laden/.test(t) && a.includes('d=QWERTZ'));
+  check(dc.linkUnbrauchbar({ status: 404 }) && dc.linkUnbrauchbar({ endgueltig: true }) && !dc.linkUnbrauchbar(new TypeError('x')) && !dc.linkUnbrauchbar({ status: 502 }), 'linkUnbrauchbar: nur 400/404 bzw. endgültig');
+  const listen = lies('public/js/lists.js');
+  check(/if \(linkUnbrauchbar\(e\)\) stripURLParam\('l'\)/.test(listen) && /throw apiFehler\(r\.status/.test(listen), 'Listen-Link: Code nur bei endgültigem Fehler aus der Adresse, Status wird mitgegeben');
+  Object.assign(globalThis, { window: alt.window, document: alt.document, history: alt.history, fetch: alt.fetch });
+}
 
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail ? 1 : 0);
