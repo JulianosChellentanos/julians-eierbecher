@@ -183,6 +183,7 @@ function showLogin(grund = '') {
   const hint = $('#login-hint');
   if (hint) {
     hint.textContent = grund === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.'
+      : grund === 'ueberlast' ? 'Gerade ist sehr viel los – bitte gleich noch einmal versuchen.'   // 503 beim Start (load)
       : grund === 'abgemeldet' ? 'Abgemeldet.'
         : grund === 'auth' && DATA && !ABGEMELDET ? 'Abgemeldet – das Admin-Passwort wurde geändert oder gilt nicht mehr. Bitte neu anmelden; deine Eingaben bleiben erhalten.'
           : grund && grund !== 'auth' ? grund : LOGIN_TEXT;
