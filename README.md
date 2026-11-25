@@ -49,11 +49,11 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
 - **Admin-Zentrale** (`/admin`; bei einer Neuinstallation steht ein zufälliges Admin-Passwort einmal im Server-Protokoll — siehe [Admin-Passwort](#admin-passwort)):
   - Übersicht: Umsatz (gesamt/30 Tage), offene Drucke, Ø Bestellwert, meistbestellte Farben & Produkte, offene Widerrufe, fehlende Pflichtangaben
   - Bestellungen: Suche & Status-Filter, aufklappbare Details, Sendungsnummer, interne Notizen, E-Mail-Vorlagen (Zahlungserinnerung/Druckstart/Versand), Reklamation mit Gutschrift, CSV-Export
-  - Druckwarteschlange, Kunden (je Konto: Daten als JSON exportieren, Konto löschen — Bestellungen bleiben ohne Kontobezug)
+  - Druckwarteschlange, Kunden (je Konto: Daten als JSON exportieren — Gastbestellungen, Widerrufe und Mails, die nur über die Adresse zugeordnet sind, nur bei bestätigter Adresse; Konto löschen — Bestellungen bleiben ohne Kontobezug)
   - Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
   - Preise & Mengenrabatt-Stufen, Gutscheine (%- oder €-Codes, Mindestbestellwert), Aktionen. Gutschrift-Codes aus Reklamationen (`GS-XXXX-XXXX`) sind **Guthaben**: einlösbar bis der Betrag aufgebraucht ist (Rest bleibt, stornierte Bestellungen geben ihn frei), auch während einer Aktion — die Gutschein-Tabelle zeigt den Restwert
   - Mein Unternehmen (Anbieter, Steuer & Belege, Bankverbindung, **Shop-Angaben** Lieferzeit/Liefergebiet, **Rechtstexte** Hoster/Serverstandort), PayPal, E-Mail, System (Passwort, Produktschalter, JSON-Backup) — alles in `data/settings.json` (nicht im Git)
-- **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, 8–200 Zeichen — ältere kürzere gelten weiter; Sessions in `data/`, höchstens 20 je Konto), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung. Unter „🔐 Passwort & Konto“: Passwort ändern (altes Passwort, beendet alle anderen Anmeldungen, Mail „Passwort geändert“), auf allen Geräten abmelden, Konto löschen (Bestellungen und Rechnungen bleiben wegen der Aufbewahrungspflicht, ohne Kontobezug)
+- **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, 8–200 Zeichen — ältere kürzere gelten weiter; Sessions in `data/`, höchstens 20 je Konto), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung. Unter „🔐 Passwort & Konto“: Passwort ändern (altes Passwort, höchstens 5-mal je Stunde, beendet alle anderen Anmeldungen, Mail „Passwort geändert“ — je Adresse höchstens 3 am Tag, an eine unbestätigte nur 1), auf allen Geräten abmelden, Konto löschen (Bestellungen und Rechnungen bleiben wegen der Aufbewahrungspflicht, ohne Kontobezug). Mails an die Kontoadresse (Willkommen, Passwort vergessen/geändert, Bestätigungslink) übernehmen den Kontonamen nur, wenn er wie ein Name aussieht (Buchstaben, Bindestrich, Apostroph, bis 6 Wörter), sonst „Hallo!“ — kein fremder Text, keine Links
 - **Mobil** (≤ 700 px): Startseite mit der 3D-Formenwelt als Bühne (Wischen wechselt die Form), Kataloge „Formen“ und „Oberflächen“ mit Detailblättern im Bottom-Sheet, ein klebender Bestellknopf; im Konfigurator klebende 3D-Bühne + Tab-Leiste statt Endlos-Scroll, Swipe zwischen Tabs, angedockte Bottom-Bar mit Live-Preis & Warenkorb, Vollbild-3D, Toasts, Haptik. Desktop (≥ 981 px) bleibt davon unberührt
 - **PWA**: Manifest („formsam – Vasen selbst gestalten“), Service Worker (Cache-First für Assets, Offline-Fallback), Home-Screen-Icons mit dem formsam-Zeichen, Theme-Color folgt dem Darkmode. Kein Install-Banner — wer mag, legt die Seite selbst über das Browser-Menü auf den Home-Bildschirm
 - **Darkmode**: Umschalter im Header (🌙/☀️), merkt sich die Wahl, folgt sonst der Systemeinstellung
@@ -83,9 +83,11 @@ zu einem kurzen Formular (Name, E-Mail, Bestellnummer optional, Nachricht option
 - Die Kundin/der Kunde erhält sofort eine **Eingangsbestätigung** per E-Mail (Inhalt, Datum und Uhrzeit des Eingangs, Referenz);
   der Admin bekommt eine Benachrichtigung wie bei neuen Bestellungen.
 - Passen Bestellnummer **und** E-Mail zu einer Bestellung, wird der Widerruf dort vermerkt (Historie). Die Antwort ist in jedem Fall
-  gleich — sie verrät nichts über fremde Bestellungen. Bremse je IP (10 in 15 Minuten → 429). Eingangsbestätigungen gehen höchstens
-  3-mal am Tag an dieselbe Adresse und 30-mal je Stunde insgesamt raus; darüber wird der Widerruf trotzdem gespeichert und dem Admin
-  gemeldet (in der Übersicht mit „Eingangsbestätigung nicht per Mail verschickt“) — nur die Kundenmail entfällt.
+  gleich — sie verrät nichts über fremde Bestellungen. Bremse je IP (10 in 15 Minuten → 429). Eingangsbestätigungen nicht zugeordneter
+  Widerrufe gehen höchstens 3-mal am Tag an dieselbe Adresse und 30-mal je Stunde insgesamt raus; darüber wird der Widerruf trotzdem
+  gespeichert und dem Admin gemeldet (in der Übersicht mit „Eingangsbestätigung nicht per Mail verschickt“) — nur die Kundenmail entfällt.
+  Zugeordnete Widerrufe zählen dort nicht mit und werden immer bestätigt (höchstens 5 Bestätigungen je Bestellung und Tag) — Spam ohne
+  echte Bestellung kann echten Kundinnen die Eingangsbestätigung nicht nehmen.
 - Admin → Übersicht zeigt offene Widerrufe (`GET /api/admin/widerrufe`, `POST /api/admin/widerruf-status`).
 
 ## Admin-Passwort
@@ -93,7 +95,15 @@ zu einem kurzen Formular (Name, E-Mail, Bestellnummer optional, Nachricht option
 Gespeichert wird nur ein scrypt-Hash (`settings.adminKeyHash`), nie das Passwort selbst; an den Browser geht weder Passwort noch Hash
 (auch nicht im JSON-Backup). Die Admin-Oberfläche hält das Passwort nur im `sessionStorage` des Tabs (ein alter
 `localStorage`-Eintrag wird beim Laden entfernt) und schickt es als Kopf `x-admin-key`; der Druckzettel nimmt es nicht mehr als `?k=`.
-Der Server prüft es je Anfrage mit scrypt und merkt sich ein richtiges Passwort 5 Minuten als SHA-256 im Speicher.
+Ein abgewiesenes Passwort (401/429) behält die Oberfläche nicht — es geht beim Neuladen nicht noch einmal raus.
+Der Server prüft es mit scrypt und merkt sich ein richtiges Passwort bis 5 Minuten nach der letzten Anfrage als SHA-256 im Speicher. scrypt rechnet
+höchstens zweimal gleichzeitig (der Rest des Threadpools bleibt für Dateien frei); warten schon 100 Prüfungen, gibt es sofort 429/503.
+
+`adminKey` in `settings.json` ist danach ein **zufälliger Platzhalter** (`adminKeyPlatzhalter` = SHA-256 davon), kein Passwort: Kehrt man
+nach dem Update per git zu einer älteren Fassung zurück, kennt die nur `adminKey` — mit dem Platzhalter bleibt der Admin dort zu, statt
+das früher bekannte `formsam-admin` zu nehmen. Wer in der alten Fassung an den Admin muss: Server stoppen, `adminKey` in `settings.json`
+von Hand auf ein Passwort setzen, starten. Die neue Fassung übernimmt ein so (oder in der alten Fassung unter System) gesetztes
+Passwort beim nächsten Start wieder in den Hash.
 
 - **Neuinstallation** (keine `settings.json`): zufälliges Passwort, steht genau einmal im Protokoll (`journalctl -u formsam | grep Admin-Passwort`).
   Ein bekanntes Standard-Passwort gibt es nicht mehr.
@@ -101,8 +111,10 @@ Der Server prüft es je Anfrage mit scrypt und merkt sich ein richtiges Passwort
   umgestellt und entfernt — das Passwort bleibt dasselbe.
 - **Vergessen / neu setzen:** Shop-Server stoppen, `node tools/admin-passwort.mjs <neues-passwort>` (oder `--zufall`), wieder starten.
   Datenordner wie beim Server über `DATA_DIR=…`.
-- **Bremse:** 10 falsche Passwörter je IP (IPv6: je /64) in 15 Minuten → 429 für diese IP, auch mit richtigem Passwort. Liegen insgesamt
-  100 Fehlversuche im Fenster (verteilter Angriff), hat jede IP nur noch einen Fehlversuch frei — wer sich nicht vertippt, kommt durch.
+- **Bremse:** 10 falsche Passwörter je IP (IPv6: je /64) in 15 Minuten → 429 für diese IP, auch mit richtigem Passwort. Jeder Versuch zählt
+  schon beim Start der Prüfung (ein richtiges Passwort gibt den Platz wieder frei) — auch gleichzeitig abgeschickte Versuche kommen also
+  nicht darüber hinaus. Liegen insgesamt 100 Fehlversuche im Fenster (verteilter Angriff aus mindestens 10 Netzen), hat jede IP nur noch
+  einen Fehlversuch frei — wer sich nicht vertippt, kommt durch.
 
 ## Missbrauchsbremsen
 
@@ -112,18 +124,19 @@ Proxy als eine IP für alle.
 
 | Was | Grenze | darüber |
 |---|---|---|
-| Anmeldung | 10 Fehlversuche je IP + Konto, 30 je IP (15 min) | 429; das Konto selbst wird nie gesperrt, von anderer IP geht es weiter |
+| Anmeldung | 10 Fehlversuche je IP + Konto, 30 je IP (15 min); zählt schon beim Start der Prüfung (auch parallel) | 429; das Konto selbst wird nie gesperrt, von anderer IP geht es weiter |
+| Passwort ändern / Konto löschen | wie Anmeldung; Passwortwechsel zusätzlich 5 je Konto/Stunde | 429 (Mail „Passwort geändert“: 3 je Adresse/Tag, unbestätigt 1) |
 | Registrierung | 5 je IP/Stunde · 3 Konten je Adresse/Tag · 30 insgesamt/Stunde | 429, kein Konto, keine Mail |
 | Passwort vergessen | 3 je Adresse, 10 je IP (15 min) | 200, aber keine neue Mail; die letzten 3 Links bleiben gültig, ein Reset entwertet alle |
-| Widerruf | 10 je IP (15 min) → 429; Bestätigung 3 je Adresse/Tag, 30/Stunde | gespeichert + Admin-Meldung, keine Kundenmail |
+| Widerruf | 10 je IP (15 min) → 429; Bestätigung 3 je Adresse/Tag, 30/Stunde (zugeordnete: immer, 5 je Bestellung/Tag) | gespeichert + Admin-Meldung, keine Kundenmail |
 | Kasse | 20 neue Kassen je IP/Stunde (PayPal-Zahlung zählt mit) | 429 (eine bezahlte PayPal-Kasse wird nie abgewiesen) |
-| Druckdateien | 4 GB je IP/Stunde | 429 |
+| Druckdateien | 4 GB je IP/Stunde — die angekündigte Größe zählt ab Beginn des Uploads (auch gleichzeitige), Abbruch gibt sie frei | 429 |
 | Design-Codes | 300 neue je IP, 5000 insgesamt je Stunde (bekannte Codes zählen nicht) | 429 |
 | Vorschaubilder / Listen | 600 je IP/Stunde · 30 neue Listen, 600 Änderungen je IP/Stunde | 429 |
 
 Normaler Gebrauch bleibt weit darunter (der Konfigurator speichert bei jeder Code-Anzeige ein Design und ein Vorschaubild). Der
-Abrufzähler der Design-Codes wird gebündelt höchstens einmal pro Minute gespeichert. Der Willkommens-Betreff übernimmt nur einen
-echten Vornamen (Buchstaben, Bindestrich, Apostroph), sonst „schön, dass du da bist“.
+Abrufzähler der Design-Codes wird gebündelt höchstens einmal pro Minute gespeichert. Mails an die Kontoadresse übernehmen nur einen
+Kontonamen, der wie ein Name aussieht (siehe Kundenkonten), sonst „Hallo!“ bzw. „schön, dass du da bist“.
 
 ## Druckdateien (Uploads)
 
@@ -135,9 +148,12 @@ echten Vornamen (Buchstaben, Bindestrich, Apostroph), sonst „schön, dass du d
 - `/complete` stellt die Rechnung nur aus, wenn jede Position eine vollständige, gültige Datei hat (sonst 409 `code: 'dateien'`);
   danach — und bei stornierten Bestellungen — sind die Dateien unveränderlich (PUT → 409).
 - Sind weniger als **1 GB frei**, lehnt der Server Uploads mit 507 ab (Protokollzeile „💾 … weniger als 1 GB frei“).
-- **Abgebrochene Kassen** (ohne Abschluss, Rechnungsnummer, Zahlung/PayPal, Status „neu“, ohne Admin-Eingriff) werden nach
-  **14 Tagen** samt Ordner gelöscht — beim Start und dann täglich, eine Protokollzeile „🧹 Abgebrochene Kasse …“ je Bestellung.
-  Ohne Abschluss gibt es keinen Vertrag; die Adresse muss nicht liegen bleiben. Alles mit Beleg, Zahlung oder Bearbeitung bleibt.
+- **Abgebrochene Kassen** (ohne Abschluss, Rechnungsnummer, Zahlung/PayPal, Status „neu“, ohne Admin-Eingriff): ihre **Druckdateien**
+  werden nach **48 Stunden** gelöscht („🧹 Druckdateien der nie abgeschlossenen Kasse …“), die Bestellung selbst nach **14 Tagen** samt
+  Ordner („🧹 Abgebrochene Kasse …“) — beim Start und dann stündlich. Sind weniger als **5 GB frei**, gehen die Druckdateien schon nach
+  1 Stunde; dann stößt auch ein Upload den Lauf an (höchstens alle 10 Minuten). So lässt sich die Platte nicht mit nie abgeschlossenen
+  Kassen füllen. Ohne Abschluss gibt es keinen Vertrag; eine echte Kasse lädt hoch und schließt gleich ab. Alles mit Beleg, Zahlung
+  oder Bearbeitung bleibt.
 
 ## Daten, Sicherung und defekte Dateien
 
