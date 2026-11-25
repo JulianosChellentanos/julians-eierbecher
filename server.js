@@ -2508,7 +2508,7 @@ const BELEG_CSS = `
     .blatt{background:#fff;max-width:210mm;margin:0 auto;padding:15mm 15mm 11mm;border-radius:4px;box-shadow:0 1px 3px rgba(33,29,24,.08),0 14px 36px rgba(33,29,24,.08)}
     .leiste{max-width:210mm;margin:0 auto 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
     .leiste button{font:inherit;font-weight:600;padding:10px 22px;border-radius:999px;border:none;background:#211d18;color:#f4efe7;cursor:pointer}
-    .leiste a{color:#9e4f2c}
+    .leiste a{color:#9e4f2c}#pdf-hinweis{color:#6b6257}
     .kopf{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:12px;border-bottom:1px solid #e6ddd0}
     .logo{display:block;height:34px;width:auto;margin-top:2px}
     .wortmarke{font-family:Fraunces,Georgia,serif;font-size:30px;line-height:1}
@@ -2557,10 +2557,17 @@ const BELEG_CSS = `
 /**
  * Komplettes Beleg-Dokument: Knopfleiste (nur Bildschirm) + Blatt mit Kopf, Inhalt und Fußzeile.
  * pdf = Datei der PDF-Fassung (rechnung.pdf …): Leiste „Drucken“ + „PDF herunterladen“ — den Zugriffsschlüssel (?k=…) nimmt
- * der Link aus der Adresse der Seite, in der gespeicherten Datei steht er nie
+ * der Link aus der Adresse der Seite, in der gespeicherten Datei steht er nie; dl=1 → die Route schickt die Datei als Download.
+ * Leitet die Route mangels PDF hierher zurück (?pdf=0), steht statt des Links ein Hinweis aufs Drucken
  */
 function belegSeite({ title, co, body, css = '', leiste = '<button type="button" onclick="print()">Drucken / als PDF speichern</button>', logoHeight = 34, pdf = '' }) {
-  if (pdf) leiste = `<button type="button" onclick="print()">Drucken</button> <a id="pdf-link" href="${esc(pdf)}">PDF herunterladen</a><script>document.getElementById('pdf-link').search=location.search</script>`;
+  if (pdf) {
+    leiste = `<button type="button" onclick="print()">Drucken</button> <a id="pdf-link" href="${esc(pdf)}">PDF herunterladen</a>`
+      + '<span id="pdf-hinweis" hidden>Für diesen Beleg gibt es keine PDF-Datei – über „Drucken“ kannst du ihn als PDF speichern.</span>'
+      + '<script>(function(){var a=document.getElementById(\'pdf-link\'),q=new URLSearchParams(location.search);'
+      + 'if(q.get(\'pdf\')===\'0\'){a.hidden=true;document.getElementById(\'pdf-hinweis\').hidden=false;return}'
+      + 'q.delete(\'pdf\');q.set(\'dl\',\'1\');a.search=\'?\'+q})()</script>';
+  }
   return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
   <style>${BELEG_CSS}${css}</style></head><body>
   <div class="leiste noprint">${leiste}</div>
@@ -5283,6 +5290,7 @@ const server = http.createServer(async (req, res) => {
 
     // PDF-Fassung eines Belegs (/orders/<ID>/rechnung|gutschrift|storno.pdf) — Schlüssel wie bei der HTML-Fassung. Entsteht beim
     // ersten Abruf aus der gespeicherten HTML-Datei und bleibt danach unverändert; lässt sie sich nicht setzen → 302 auf die HTML-Fassung
+    // (mit pdf=0: neue Belegseiten zeigen dann statt des PDF-Links einen Hinweis). dl=1 (Link „PDF herunterladen“) → als Download
     const mPdf = p.match(/^\/orders\/([^/]+)\/(rechnung|gutschrift|storno)\.pdf$/);
     if (mPdf) {
       let order = null;
@@ -5293,10 +5301,13 @@ const server = http.createServer(async (req, res) => {
       const kopf = { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow' };
       const pdf = await ensureBelegPdf(order, mPdf[2]);
       if (!pdf) {
-        res.writeHead(302, { ...kopf, Location: `/orders/${encodeURIComponent(mPdf[1])}/${mPdf[2]}.html${url.search}` });
+        const q = new URLSearchParams(url.search);
+        q.delete('dl'); q.set('pdf', '0');
+        res.writeHead(302, { ...kopf, Location: `/orders/${encodeURIComponent(mPdf[1])}/${mPdf[2]}.html?${q}` });
         return res.end();
       }
-      res.writeHead(200, { ...kopf, 'Content-Type': PDF_TYP, 'Content-Length': pdf.buffer.length, 'Content-Disposition': `inline; filename="${pdf.filename}"` });
+      const art = url.searchParams.get('dl') === '1' ? 'attachment' : 'inline';
+      res.writeHead(200, { ...kopf, 'Content-Type': PDF_TYP, 'Content-Length': pdf.buffer.length, 'Content-Disposition': `${art}; filename="${pdf.filename}"` });
       return res.end(req.method === 'HEAD' ? undefined : pdf.buffer);
     }
     if (p.startsWith('/orders/')) {

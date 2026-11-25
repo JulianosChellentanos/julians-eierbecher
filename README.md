@@ -126,9 +126,12 @@ Antwort an die Kasse oder eine Mail auf. Im Protokoll steht nur Code, Codepunkt 
   `.html` (Erstellungsdatum = Belegdatum, gleiche Datei → gleiche Bytes), werden atomar und nur angelegt, nie ersetzt (0600), und
   gleichzeitige Abrufe teilen sich eine Erzeugung. Abruf: `/orders/<ID>/<beleg>.pdf?k=<accessKey>` (Schlüssel wie beim HTML-Beleg,
   Admin-Kopf, Altbestand ohne Schlüssel), `inline` mit Dateinamen `formsam-Rechnung-<Nummer>.pdf` (`formsam-Gutschrift-…`,
-  `formsam-Stornorechnung-…`), `no-store`, `noindex`; die Datei entsteht beim ersten Abruf, scheitert der Satz → 302 auf die HTML-Fassung.
-  Links: Leiste neuer Belegseiten („PDF herunterladen“, der Schlüssel kommt aus der Adresse der Seite, nie aus der Datei), Konto
-  (`invoicePdfUrl`, `stornoPdfUrl`, `gutschriftPdfUrl`), Admin-Drawer, Erfolgsmeldung der Kasse (`invoicePdfUrl` aus `/complete`).
+  `formsam-Stornorechnung-…`), `no-store`, `noindex`; mit `&dl=1` als Download (`attachment`). Die Datei entsteht beim ersten
+  Abruf; scheitert der Satz → 302 auf die HTML-Fassung mit `&pdf=0`.
+  Links: Leiste neuer Belegseiten („PDF herunterladen“ mit `dl=1`, der Schlüssel kommt aus der Adresse der Seite, nie aus der Datei;
+  bei `pdf=0` steht dort statt des Links „Für diesen Beleg gibt es keine PDF-Datei – über „Drucken“ kannst du ihn als PDF
+  speichern.“), Konto (`invoicePdfUrl`, `stornoPdfUrl`, `gutschriftPdfUrl`), Admin-Drawer, Erfolgsmeldung der Kasse
+  (`invoicePdfUrl` aus `/complete`).
 - **Mails:** Bestellbestätigung mit Rechnung, AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) als PDF; Admin-Kopie mit der
   Rechnung; Storno-Mail mit der Stornorechnung; erledigte Reklamation mit Gutschrift mit der Gutschrift. Der Mailtext nennt nur, was
   wirklich anhängt. „Erneut“ im Versandprotokoll und „senden“ im Drawer hängen dieselben Dateien wieder an. Die PDFs entstehen im

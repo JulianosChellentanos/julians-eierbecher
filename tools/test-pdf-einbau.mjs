@@ -186,13 +186,18 @@ async function main() {
   check(/@media screen and \(max-width:640px\)\{\.posten thead\{display:none\}/.test(html) && /\.posten \.leer\{display:none\}/.test(html) && /class="r rabatt leer">—/.test(html),
     'Handy (nur Bildschirm): Positionen als Karten, leerer Rabatt ausgeblendet — der PDF-Satz übergeht den Block');
   check(/150&nbsp;mm/.test(html) && /§&nbsp;19 Abs\.&nbsp;1 UStG/.test(html) && /14&nbsp;Tagen/.test(html) && /5–8&nbsp;Werktage/.test(html) && /DE89&nbsp;3704/.test(html), 'Geschützte Leerzeichen: Zahl + Einheit, §, IBAN');
-  check(html.includes('<a id="pdf-link" href="rechnung.pdf">PDF herunterladen</a>') && html.includes('location.search') && !html.includes(a.accessKey), 'Leiste: „PDF herunterladen“, Schlüssel nur aus der Adresse (nicht in der Datei)');
+  check(html.includes('<a id="pdf-link" href="rechnung.pdf">PDF herunterladen</a>') && html.includes('location.search') && html.includes("q.set('dl','1')") && !html.includes(a.accessKey),
+    'Leiste: „PDF herunterladen“ (dl=1), Schlüssel nur aus der Adresse (nicht in der Datei)');
+  check(/<span id="pdf-hinweis" hidden>Für diesen Beleg gibt es keine PDF-Datei – über „Drucken“ kannst du ihn als PDF speichern\.<\/span>/.test(html) && html.includes("q.get('pdf')==='0'"),
+    'Leiste: Hinweis aufs Drucken, wenn die Route mangels PDF zurückleitet (pdf=0)');
   check(order(a.orderId).lines[0].config.text === 'Anna & Tom 12.06.2027', 'Gravur unverändert übernommen');
 
   console.log('\n— Route /orders/<ID>/<beleg>.pdf');
   const r1 = await req('GET', `/orders/${a.orderId}/rechnung.pdf?k=${a.accessKey}`);
   check(r1.status === 200 && r1.headers['content-type'] === 'application/pdf' && r1.headers['content-disposition'] === `inline; filename="${rechnungName}"` && r1.headers['cache-control'] === 'no-store'
     && /noindex/.test(r1.headers['x-robots-tag'] || '') && r1.headers['referrer-policy'] === 'no-referrer' && sha(r1.buf) === sha(reA), 'mit Schlüssel: 200, PDF, inline mit Dateinamen, no-store, noindex', r1.headers);
+  const r1dl = await req('GET', `/orders/${a.orderId}/rechnung.pdf?k=${a.accessKey}&dl=1`);
+  check(r1dl.status === 200 && r1dl.headers['content-disposition'] === `attachment; filename="${rechnungName}"` && sha(r1dl.buf) === sha(reA), 'dl=1 (Link „PDF herunterladen“): als Download', r1dl.headers['content-disposition']);
   check((await req('GET', `/orders/${a.orderId}/rechnung.pdf`)).status === 404 && (await req('GET', `/orders/${a.orderId}/rechnung.pdf?k=falsch`)).status === 404, 'ohne bzw. mit falschem Schlüssel: 404');
   check((await req('GET', `/orders/${a.orderId}/rechnung.pdf`, undefined, { 'x-admin-key': ADMIN })).status === 200, 'Admin-Kopf: 200');
   const head = await req('HEAD', `/orders/${a.orderId}/rechnung.pdf?k=${a.accessKey}`);
@@ -272,7 +277,11 @@ async function main() {
     'Bestätigung ohne Rechnungs-PDF (Text nennt sie nicht, Link bleibt), Rechtstexte als PDF', confC?.names);
   check(admC && admC.names.length === 0 && !admC.text.includes('Rechnung als PDF'), 'Admin-Kopie ohne Anhang');
   const rc = await req('GET', `/orders/${c.orderId}/rechnung.pdf?k=${c.accessKey}`);
-  check(rc.status === 302 && rc.headers.location === `/orders/${c.orderId}/rechnung.html?k=${c.accessKey}` && rc.headers['cache-control'] === 'no-store' && !existsSync(datei(c.orderId, 'rechnung.pdf')), 'Route: 302 auf die HTML-Fassung, keine PDF-Datei', rc.headers);
+  check(rc.status === 302 && rc.headers.location === `/orders/${c.orderId}/rechnung.html?k=${c.accessKey}&pdf=0` && rc.headers['cache-control'] === 'no-store' && !existsSync(datei(c.orderId, 'rechnung.pdf')),
+    'Route: 302 auf die HTML-Fassung (pdf=0 → Hinweis statt Link), keine PDF-Datei', rc.headers);
+  const rcDl = await req('GET', `/orders/${c.orderId}/rechnung.pdf?k=${c.accessKey}&dl=1`);
+  const rcZiel = await req('GET', rcDl.headers.location || '/');
+  check(rcDl.status === 302 && rcDl.headers.location === rc.headers.location && rcZiel.status === 200 && rcZiel.text.includes('id="pdf-hinweis"'), 'dl=1 ohne PDF: dasselbe Ziel, Belegseite mit Hinweis', rcDl.headers.location);
   const zeile = pdfLog().find((l) => l.includes(c.orderId));
   check(zeile && /GLYPH_MISSING U\+738B/.test(zeile) && !/王|Wang/.test(pdfLog().join('\n')), 'Protokoll: nur Code, Codepunkt, Bestellnummer — keine Kundendaten', zeile);
   // absichtlich kaputte Beleg-HTML (abgeschnitten, z. B. nach vollem Datenträger): keine PDF, Mail ohne sie
