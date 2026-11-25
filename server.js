@@ -368,6 +368,8 @@ function loadSettings() {
     if (c.guthaben === undefined && c.type === 'fixed' && /^GS-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(String(c.code || '')) && /^Gutschrift\b/.test(String(c.note || ''))) {
       c.guthaben = true; c.mitAktion = true;
     }
+    // Guthaben gilt ohne Mindestbestellwert und auch während einer Aktion (Gutschrift-Beleg, AGB § 14) — ältere Einstellungen angleichen
+    if (c.guthaben) { c.minOrder = 0; c.mitAktion = true; }
   }
   // Aktionen: Array erzwingen, kaputte Einträge verwerfen (Meldung im Log)
   settings.aktionen = sanitizeAktionen(settings.aktionen, { lenient: true });
@@ -376,6 +378,8 @@ function loadSettings() {
     console.warn('⚠️  settings.adminKey ungültig – Standard-Passwort wird verwendet');
     settings.adminKey = DEFAULT_SETTINGS.adminKey;
   }
+  // Preise: auf Cent runden, fehlende Teile (Versand, Produkte, Währung) auffüllen — Altstände laufen ohne Handarbeit weiter
+  settings.pricing = preiseBeimLaden(settings.pricing);
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
   // Migration Aufpreise: Muster (Betreiber-Wunsch: Lamellen +3 €), Farbschrift +2 €
@@ -1221,8 +1225,12 @@ function computeTotals(items, couponCode) {
   if (couponCode) {
     const c = settings.coupons.find((x) => x.active && String(x.code || '').trim().toLowerCase() === String(couponCode).trim().toLowerCase());
     // Mindestbestellwert nicht (mehr) erreicht — z. B. Menge im Warenkorb verringert: mit Meldung statt still ohne Gutschein
-    // abrechnen (die Kasse zeigt sie, der Checkout lehnt mit 400 ab)
-    if (c && subtotal < (c.minOrder || 0)) couponError = `Gutschein „${c.code}“ gilt erst ab einem Bestellwert von ${money(c.minOrder)}.`;
+    // abrechnen (die Kasse zeigt sie, der Checkout lehnt mit 400 ab). Guthaben gilt ohne Mindestbestellwert (AGB § 14).
+    // Optionale Grenzen normaler Codes: gueltigBis (Datum, deutsche Zeit, einschließlich) und maxEinloesungen (Bestellungen, die
+    // den Code fest eingelöst oder gerade in der Kasse reserviert haben — gezählt wie beim Guthaben über couponUse)
+    if (c && !isGuthaben(c) && c.gueltigBis && heuteBerlin() > c.gueltigBis) couponError = `Gutschein „${c.code}“ ist abgelaufen (gültig bis ${dateDE(`${c.gueltigBis}T12:00:00Z`)}).`;
+    else if (c && !isGuthaben(c) && c.maxEinloesungen > 0 && couponEinloesungen(c) >= c.maxEinloesungen) couponError = `Gutschein „${c.code}“ ist bereits vergeben – er war ${c.maxEinloesungen === 1 ? 'nur einmal' : `nur ${c.maxEinloesungen}-mal`} einlösbar.`;
+    else if (c && !isGuthaben(c) && subtotal < (c.minOrder || 0)) couponError = `Gutschein „${c.code}“ gilt erst ab einem Bestellwert von ${money(c.minOrder)}.`;
     else if (c) {
       // Guthaben-Gutschein (Gutschrift): höchstens der noch offene Restwert
       const rest = isGuthaben(c) ? couponRest(c) : null;
@@ -1573,6 +1581,15 @@ function couponRest(c, { ohne = null } = {}) {
   }
   return Math.max(0, Math.round(((Number(c?.value) || 0) - used) * 100) / 100);
 }
+/** Zählende Einlösungen eines Codes (fest oder in der Reservierungszeit) — für maxEinloesungen normaler Gutscheine */
+function couponEinloesungen(c, { ohne = null } = {}) {
+  const now = Date.now();
+  let n = 0;
+  for (const [id, e] of couponUse.get(String(c?.code || '').trim().toUpperCase()) || []) if (id !== ohne && (e.fest || now - e.at < GUTHABEN_RESERVIERUNG_MS)) n++;
+  return n;
+}
+/** Heutiges Datum in deutscher Zeit als „JJJJ-MM-TT“ (Vergleich mit gueltigBis eines Gutscheins) */
+const heuteBerlin = (d = new Date()) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(d);
 /** Restwerte aller Guthaben-Gutscheine { CODE: Rest } für den Admin */
 const guthabenRest = () => Object.fromEntries(settings.coupons.filter(isGuthaben).map((c) => [String(c.code).trim().toUpperCase(), couponRest(c)]));
 /** Beim Start: Guthaben-Einlösungen und vergebene Belegnummern aus allen Bestellungen einlesen */
@@ -2138,6 +2155,206 @@ async function stornoBeleg(order, { nachholen = false } = {}) {
     if (existsSync(file)) { console.warn(`⚠️  ${order.orderId}: storno.html existiert bereits – ${nr} nicht als Datei geschrieben`); return; }
   }
   if (!existsSync(file)) await writeFileAtomic(file, stornoHTML(order));
+}
+
+// ---------------------------------------------------------------------------
+// Einstellungen aus dem Admin prüfen (POST /api/admin/settings) — jedes Feld nach Typ und Bereich, Fehler als 400 mit deutscher
+// Meldung und Feldname, bevor irgendetwas übernommen wird (nie 500, nie halb gespeichert). Beträge: Zahl ≥ 0 mit höchstens zwei
+// Nachkommastellen (sonst rechneten Browser und Server verschieden), Grundpreise > 0. Der Admin schickt immer vollständige
+// Objekte; Teil-Patches (ältere Skripte) werden mit dem gespeicherten Stand ergänzt. Gespeicherte Altwerte prüft loadSettings()
+// nachsichtig (preiseBeimLaden: nur auf Cent runden und fehlende Teile auffüllen).
+// ---------------------------------------------------------------------------
+/** Betrag in € aus dem Admin: Zahl (oder Zahl als Text), min ≤ n ≤ max, höchstens 2 Nachkommastellen → auf Cent */
+function betragAus(v, feld, { min = 0, max = 100000, groesserNull = false } = {}) {
+  const n = typeof v === 'string' && v.trim() !== '' ? Number(v.trim().replace(',', '.')) : v;
+  if (typeof n !== 'number' || !Number.isFinite(n)) throw httpError(400, `${feld}: bitte eine Zahl angeben`);
+  if (groesserNull && !(n > 0)) throw httpError(400, `${feld}: muss größer als 0 sein`);
+  if (n < min || n > max) throw httpError(400, `${feld}: muss zwischen ${min} und ${max} liegen`);
+  if (Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) throw httpError(400, `${feld}: höchstens zwei Nachkommastellen (Cent)`);
+  return Math.round(n * 100) / 100;
+}
+const objAus = (v, feld) => { if (!v || typeof v !== 'object' || Array.isArray(v)) throw httpError(400, `${feld}: ungültiges Format`); return v; };
+const boolAus = (v, feld) => { if (typeof v !== 'boolean') throw httpError(400, `${feld}: muss an oder aus sein (true/false)`); return v; };
+/** Mengenstaffel [{ qty 2–50 ganz, off 0 bis < 100 % }] — doppelte Mengen abgelehnt, nach Menge sortiert */
+function staffelAus(list, feld) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list) || list.length > 10) throw httpError(400, `${feld}: Liste mit höchstens 10 Stufen erwartet`);
+  const out = list.map((t, i) => {
+    objAus(t, `${feld}, Stufe ${i + 1}`);
+    const qty = Number(t.qty);
+    if (!Number.isInteger(qty) || qty < 2 || qty > 50) throw httpError(400, `${feld}, Stufe ${i + 1}: Menge muss eine ganze Zahl von 2 bis 50 sein`);
+    const off = betragAus(t.off, `${feld}, Stufe ${i + 1} (Rabatt %)`, { max: 99.99 });
+    return { qty, off };
+  }).sort((a, b) => a.qty - b.qty);
+  for (let i = 1; i < out.length; i++) if (out[i].qty === out[i - 1].qty) throw httpError(400, `${feld}: die Menge ${out[i].qty} steht doppelt`);
+  return out;
+}
+/** Preise (settings.pricing) prüfen — Teil-Patch wird mit dem gespeicherten Stand ergänzt; Rückgabe: vollständiges pricing */
+function preiseAus(raw) {
+  const alt = settings.pricing || {};
+  const p = { ...alt, ...objAus(raw, 'Preise') };
+  if (p.currency !== undefined && p.currency !== 'EUR') throw httpError(400, 'Preise: Währung muss EUR sein');
+  const produkt = (k, label) => {
+    const x = { ...plainObj(alt[k]), ...objAus(p[k] ?? {}, `Preise ${label}`) };
+    return {
+      ...x,
+      single: betragAus(x.single, `Grundpreis ${label}`, { groesserNull: true, max: 10000 }),
+      ...(k === 'eierbecher' ? { untersetzer: betragAus(x.untersetzer ?? 0, 'Untersetzer-Aufpreis', { max: 10000 }) } : {}),
+      discounts: staffelAus(x.discounts, `Mengenrabatt ${label}`),
+    };
+  };
+  const ship = { ...plainObj(alt.shipping), ...objAus(p.shipping ?? {}, 'Versand') };
+  const vol = { ...plainObj(alt.volumen), ...objAus(p.volumen ?? {}, 'Größenaufschlag') };
+  const muster = objAus(p.muster ?? {}, 'Muster-Aufpreise');
+  for (const k of Object.keys(muster)) if (MUSTER_KEYS.includes(k)) betragAus(muster[k] ?? 0, `Aufpreis ${k}`, { max: 10000 });
+  return {
+    ...p,
+    currency: 'EUR',
+    vase: produkt('vase', 'Vase'),
+    eierbecher: produkt('eierbecher', 'Eierbecher'),
+    gravur: betragAus(p.gravur ?? 0, 'Gravur-Aufpreis', { max: 10000 }),
+    farbschrift: betragAus(p.farbschrift ?? 0, 'Farbschrift-Aufpreis', { max: 10000 }),
+    muster: sanitizeMuster(muster),
+    volumen: { prozent: betragAus(vol.prozent ?? 0, 'Größenaufschlag %', { max: 1000 }), euro: betragAus(vol.euro ?? 0, 'Größenaufschlag €', { max: 10000 }) },
+    shipping: { flat: betragAus(ship.flat, 'Versand pauschal', { max: 1000 }), freeFrom: betragAus(ship.freeFrom, 'Versandfrei ab', { max: 100000 }) },
+  };
+}
+/** Filament-Farben prüfen: id (eindeutig), Name, Hex-Farbe, Finish, aktiv, Notiz, Bestand, Aufpreis */
+function farbenAus(list) {
+  if (!Array.isArray(list) || list.length > 200) throw httpError(400, 'Farben: Liste mit höchstens 200 Einträgen erwartet');
+  const ids = new Set();
+  return list.map((c, i) => {
+    objAus(c, `Farbe ${i + 1}`);
+    const name = oneLine(c.name, 40);
+    const pos = `Farbe „${name || i + 1}“`;
+    const id = String(c.id ?? '').trim();
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(id)) throw httpError(400, `${pos}: ungültige Kennung`);
+    if (ids.has(id)) throw httpError(400, `${pos}: Kennung „${id}“ doppelt`);
+    ids.add(id);
+    if (!name) throw httpError(400, `Farbe ${i + 1}: bitte einen Namen angeben`);
+    if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(c.hex ?? ''))) throw httpError(400, `${pos}: Farbwert muss eine Hex-Farbe sein (z. B. #a0a0a0)`);
+    const finish = c.finish === undefined || c.finish === '' ? 'matt' : c.finish;
+    if (!['matt', 'glanz', 'metall'].includes(finish)) throw httpError(400, `${pos}: Finish muss matt, glanz oder metall sein`);
+    const stock = c.stock === undefined || c.stock === null || c.stock === '' ? null : Number(c.stock);
+    if (stock !== null && !(Number.isFinite(stock) && stock >= 0 && stock <= 1e7)) throw httpError(400, `${pos}: Bestand muss eine Zahl ≥ 0 sein`);
+    return { ...c, id, name, hex: String(c.hex), finish, active: c.active === undefined ? true : !!c.active, note: oneLine(c.note, 200), stock,
+      aufpreis: betragAus(c.aufpreis ?? 0, `${pos}: Aufpreis`, { max: 10000 }) };
+  });
+}
+/** Gutscheine prüfen (nach mergeCoupons, Guthaben-Felder kommen vom Server): Code eindeutig, Art, Wert, Mindestbestellwert */
+function gutscheineAus(list) {
+  if (list.length > 500) throw httpError(400, 'Gutscheine: höchstens 500 Einträge');
+  const codes = new Set();
+  return list.map((c, i) => {
+    const code = String(c.code ?? '').trim().toUpperCase();
+    const pos = `Gutschein „${code || i + 1}“`;
+    if (!/^[A-Z0-9_-]{2,40}$/.test(code)) throw httpError(400, `${pos}: Code muss 2–40 Zeichen lang sein (Buchstaben A–Z, Ziffern, - oder _)`);
+    if (codes.has(code)) throw httpError(400, `${pos}: der Code steht doppelt`);
+    codes.add(code);
+    if (!['percent', 'fixed'].includes(c.type)) throw httpError(400, `${pos}: Art muss „% Rabatt“ oder „€ Betrag“ sein`);
+    const value = c.type === 'percent'
+      ? betragAus(c.value, `${pos}: Prozent`, { groesserNull: true, max: 100 })
+      : betragAus(c.value, `${pos}: Betrag`, { groesserNull: true, max: 10000 });
+    const g = !!c.guthaben;
+    // Guthaben (Gutschrift aus einer Reklamation) gilt laut Gutschrift und AGB § 14 ohne Mindestbestellwert und auch während einer Aktion
+    const minOrder = g ? 0 : betragAus(c.minOrder ?? 0, `${pos}: Mindestbestellwert`, { max: 100000 });
+    const gueltigBis = g || c.gueltigBis === undefined || c.gueltigBis === null || c.gueltigBis === '' ? null : String(c.gueltigBis);
+    if (gueltigBis !== null && !(/^\d{4}-\d{2}-\d{2}$/.test(gueltigBis) && Number.isFinite(Date.parse(gueltigBis)))) throw httpError(400, `${pos}: „gültig bis“ muss ein Datum sein`);
+    const maxEinloesungen = g || c.maxEinloesungen === undefined || c.maxEinloesungen === null || c.maxEinloesungen === '' ? null : Number(c.maxEinloesungen);
+    if (maxEinloesungen !== null && !(Number.isInteger(maxEinloesungen) && maxEinloesungen >= 1 && maxEinloesungen <= 100000)) throw httpError(400, `${pos}: „höchstens … Einlösungen“ muss eine ganze Zahl ab 1 sein`);
+    const out = { ...c, code: g ? c.code : code, value, minOrder, active: !!c.active, mitAktion: g ? true : !!c.mitAktion };
+    if (c.note !== undefined) out.note = oneLine(c.note, 200);
+    if (gueltigBis) out.gueltigBis = gueltigBis; else delete out.gueltigBis;
+    if (maxEinloesungen) out.maxEinloesungen = maxEinloesungen; else delete out.maxEinloesungen;
+    return out;
+  });
+}
+/** Druck-Schätzwerte: Minuten/Gramm je Stück > 0 */
+function druckAus(raw) {
+  const p = { ...DEFAULT_SETTINGS.printing, ...plainObj(settings.printing), ...objAus(raw, 'Druck-Schätzwerte') };
+  const out = {};
+  for (const k of Object.keys(DEFAULT_SETTINGS.printing)) {
+    const n = Number(p[k]);
+    if (!(Number.isFinite(n) && n > 0 && n <= 100000)) throw httpError(400, `Druck-Schätzwerte: ${k} muss eine Zahl größer als 0 sein`);
+    out[k] = n;
+  }
+  return out;
+}
+/** Host-Name eines SMTP-Servers (ohne Schema, Port, Pfad oder Leerzeichen) */
+const HOST_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+/**
+ * Mail-Einstellungen prüfen (zusammengeführter Stand next, Passwort-Maske schon angewendet): Host, Port 1–65535, Verschlüsselung,
+ * Adressen (Absender, Antwort, Admin — eine oder mehrere, mit Komma getrennt), öffentliche Shop-Adresse als absolute
+ * http(s)-Adresse ohne Pfad (Pflicht bei aktivem Versand: sonst zeigen alle Links in Kundenmails ins Leere). → next normalisiert
+ */
+function mailAus(next) {
+  for (const k of ['enabled', 'adminCopy', 'autoStatusMails', 'allowSelfSigned']) if (next[k] !== undefined) boolAus(next[k], `E-Mail: ${k}`);
+  for (const k of ['host', 'user', 'from', 'fromName', 'replyTo', 'adminTo', 'publicUrl']) {
+    if (next[k] === null || next[k] === undefined) next[k] = '';
+    if (typeof next[k] !== 'string' || next[k].length > 500 || /[\x00-\x1f\x7f]/.test(next[k])) throw httpError(400, `E-Mail: ${k} ungültig`);
+    next[k] = next[k].trim();
+  }
+  if (typeof next.pass !== 'string' || next.pass.length > 500) throw httpError(400, 'E-Mail: Passwort ungültig');
+  if (next.host && !HOST_RE.test(next.host)) throw httpError(400, 'E-Mail: Host ungültig – nur den Servernamen eintragen, z. B. smtp.example.de (ohne smtp:// und ohne Port)');
+  const port = typeof next.port === 'string' && next.port.trim() ? Number(next.port) : next.port;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw httpError(400, 'E-Mail: Port muss eine ganze Zahl von 1 bis 65535 sein');
+  next.port = port;
+  if (!['ssl', 'starttls', 'none'].includes(next.secure)) throw httpError(400, 'E-Mail: Verschlüsselung muss SSL/TLS, STARTTLS oder unverschlüsselt sein');
+  if (next.from && !isEmail(next.from)) throw httpError(400, 'E-Mail: Absender-Adresse ungültig');
+  if (next.replyTo && !isEmail(next.replyTo)) throw httpError(400, 'E-Mail: Antwort-Adresse (Reply-To) ungültig');
+  if (next.adminTo) {
+    const liste = next.adminTo.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    const falsch = liste.find((x) => !isEmail(x));
+    if (!liste.length || falsch) throw httpError(400, `E-Mail: Admin-Adresse „${falsch || next.adminTo}“ ungültig – mehrere Adressen mit Komma trennen`);
+    next.adminTo = liste.join(', ');
+  }
+  if (next.fromName.length > 100) throw httpError(400, 'E-Mail: Absender-Name zu lang (höchstens 100 Zeichen)');
+  if (next.publicUrl) {
+    let u = null;
+    try { u = new URL(next.publicUrl); } catch { u = null; }
+    if (!u || !['http:', 'https:'].includes(u.protocol) || u.username || u.password || u.search || u.hash || (u.pathname !== '/' && u.pathname !== '')) {
+      throw httpError(400, 'E-Mail: Öffentliche Shop-Adresse muss eine vollständige Adresse ohne Pfad sein, z. B. https://www.formsam.com');
+    }
+    next.publicUrl = u.origin;
+  }
+  if (next.enabled) {
+    if (!next.host) throw httpError(400, 'E-Mail: Für den Versand fehlt der Host des SMTP-Servers');
+    if (!next.publicUrl) throw httpError(400, 'E-Mail: Für den Versand fehlt die öffentliche Shop-Adresse (z. B. https://www.formsam.com) – sonst führen die Links in den Mails ins Leere');
+  }
+  return next;
+}
+/** PayPal-Angaben: Schalter als true/false, Client-ID nur aus Buchstaben/Ziffern/-/_ — aktiv nur mit Client-ID */
+function paypalAus(next) {
+  for (const k of ['enabled', 'sandbox']) boolAus(next[k], `PayPal: ${k === 'enabled' ? 'aktiv' : 'Sandbox'}`);
+  next.clientId = String(next.clientId ?? '').trim();
+  if (next.clientId.length > 200 || !/^[A-Za-z0-9_-]*$/.test(next.clientId)) throw httpError(400, 'PayPal: Client-ID ungültig');
+  if (typeof next.secret !== 'string' || next.secret.length > 500) throw httpError(400, 'PayPal: Secret ungültig');
+  if (next.enabled && !next.clientId) throw httpError(400, 'PayPal: Zum Einschalten fehlt die Client-ID');
+  return next;
+}
+/**
+ * Gespeicherte Preise beim Start: nur auf Cent runden (ältere Stände mit 3 Nachkommastellen) und fehlende Teile (Versand, Staffeln,
+ * Währung) aus den Standardwerten auffüllen — mit Meldung im Protokoll, ohne den Shop anzuhalten
+ */
+function preiseBeimLaden(pr) {
+  const p = plainObj(pr);
+  const warn = (t) => console.warn(`⚠️  Preise: ${t}`);
+  const cent = (obj, k, wo) => {
+    const n = Number(obj[k]);
+    if (Number.isFinite(n) && Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) { obj[k] = Math.round(n * 100) / 100; warn(`${wo} auf Cent gerundet (${n} → ${obj[k]})`); }
+  };
+  if (p.currency !== 'EUR') { if (p.currency !== undefined) warn(`Währung „${p.currency}“ → EUR`); p.currency = 'EUR'; }
+  for (const k of ['vase', 'eierbecher']) {
+    if (!p[k] || typeof p[k] !== 'object') { p[k] = structuredClone(DEFAULT_SETTINGS.pricing[k]); warn(`${k} fehlte – Standardpreise eingesetzt`); }
+    cent(p[k], 'single', `Grundpreis ${k}`);
+    if (k === 'eierbecher') cent(p[k], 'untersetzer', 'Untersetzer');
+    if (!Array.isArray(p[k].discounts)) p[k].discounts = [];
+  }
+  if (!p.shipping || typeof p.shipping !== 'object') { p.shipping = { ...DEFAULT_SETTINGS.pricing.shipping }; warn('Versand fehlte – Standard eingesetzt'); }
+  for (const k of ['flat', 'freeFrom']) cent(p.shipping, k, `Versand ${k}`);
+  cent(p, 'gravur', 'Gravur-Aufpreis');
+  if (p.volumen && typeof p.volumen === 'object') cent(p.volumen, 'euro', 'Größenaufschlag €');
+  return p;
 }
 
 // ---------------------------------------------------------------------------
@@ -3077,7 +3294,7 @@ const server = http.createServer(async (req, res) => {
       paypalPendingAufraeumen();
       const at = new Date().toISOString();
       paypalPending.set(String(j.id), { hash: kasseHash(k.items, data.couponCode), totals: t, beschaffenheitAt: at, at: Date.now() });
-      if (t.coupon?.guthaben) trackCouponUse({ orderId: `paypal:${j.id}`, coupon: t.coupon, status: 'neu', createdAt: at });
+      if (t.coupon?.guthaben || couponByCode(t.coupon?.code)?.maxEinloesungen) trackCouponUse({ orderId: `paypal:${j.id}`, coupon: t.coupon, status: 'neu', createdAt: at });
       return send(res, 200, { ok: true, id: j.id });
     }
     const mCap = p.match(/^\/api\/paypal\/capture\/([A-Z0-9]+)$/i);
@@ -3135,7 +3352,7 @@ const server = http.createServer(async (req, res) => {
       if (patch.aktionen !== undefined) {
         try { aktionen = sanitizeAktionen(patch.aktionen); } catch (err) { return send(res, err.httpCode || 400, { ok: false, error: err.message }); }
       }
-      if (patch.coupons !== undefined && !Array.isArray(patch.coupons)) return send(res, 400, { ok: false, error: 'Gutscheine: Liste erwartet' });
+      if (patch.coupons !== undefined && (!Array.isArray(patch.coupons) || patch.coupons.some((c) => !c || typeof c !== 'object' || Array.isArray(c)))) return send(res, 400, { ok: false, error: 'Gutscheine: Liste erwartet' });
       if (patch.couponsLoeschen !== undefined && !Array.isArray(patch.couponsLoeschen)) return send(res, 400, { ok: false, error: 'Gutscheine löschen: Liste erwartet' });
       // Produktschalter: Objekt { eierbecher: true|false } (ein mitgeschicktes vase wird ignoriert — Vasen sind immer an)
       if (patch.produkte !== undefined) {
@@ -3147,6 +3364,8 @@ const server = http.createServer(async (req, res) => {
       }
       // Firma, Shop- und Rechtsangaben: nur bekannte Felder, geprüft und gekürzt; fehlende Felder behalten den alten Stand
       let company, shop, legal, invoicePrefix = { prefix: null }, creditPrefix = { prefix: null };
+      // Preise, Farben, Gutscheine, Druckwerte, Mail, PayPal: geprüft (preiseAus, farbenAus … mailAus) — null = nicht im Patch
+      let pricingNeu = null, colorsNeu = null, couponsNeu = null, printingNeu = null, mailNeu = null, paypalNeu = null, nextCreditNeu = null;
       for (const k of ['company', 'shop', 'legal']) {
         if (patch[k] !== undefined && (!patch[k] || typeof patch[k] !== 'object' || Array.isArray(patch[k]))) {
           return send(res, 400, { ok: false, error: `${{ company: 'Firma', shop: 'Shop-Angaben', legal: 'Rechtsangaben' }[k]}: ungültiges Format` });
@@ -3159,6 +3378,35 @@ const server = http.createServer(async (req, res) => {
         // Nummernkreise: nur echte Änderungen (siehe belegPraefixAusPatch) — ein veralteter Admin-Tab setzt nichts zurück
         if (patch.invoicePrefix !== undefined) invoicePrefix = belegPraefixAusPatch('invoicePrefix', patch.invoicePrefix, 'Rechnungspräfix');
         if (patch.creditPrefix !== undefined) creditPrefix = belegPraefixAusPatch('creditPrefix', patch.creditPrefix, 'Gutschriftpräfix');
+        // Rechnungen und Gutschriften/Stornos brauchen getrennte Nummernkreise (sonst zwei Belege mit gleicher Nummernfolge)
+        const reP = String(invoicePrefix.prefix || settings.invoicePrefix || '').toUpperCase(), gsP = String(creditPrefix.prefix || settings.creditPrefix || '').toUpperCase();
+        if (reP && reP === gsP) throw httpError(400, 'Rechnungs- und Gutschrift-Präfix müssen sich unterscheiden (z. B. RE-2026- und GS-2026-)');
+        if (patch.nextCredit !== undefined) {
+          nextCreditNeu = Number(patch.nextCredit);
+          if (!Number.isInteger(nextCreditNeu) || nextCreditNeu < 1) throw httpError(400, 'Nächste Gutschriftnummer: ganze Zahl ab 1');
+        }
+        if (patch.pricing !== undefined) pricingNeu = preiseAus(patch.pricing);
+        if (patch.colors !== undefined) colorsNeu = farbenAus(patch.colors);
+        if (patch.printing !== undefined) printingNeu = druckAus(patch.printing);
+        if (patch.coupons !== undefined) couponsNeu = gutscheineAus(mergeCoupons(settings.coupons, patch.coupons, patch.couponsLoeschen));
+        if (patch.mail !== undefined) {
+          // Passwort-Maske — leer = gespeichertes behalten, null = löschen; dann den zusammengeführten Stand prüfen
+          const pm = objAus(patch.mail, 'E-Mail'), prev = settings.mail || {};
+          const next = { ...DEFAULT_SETTINGS.mail, ...prev };
+          for (const k of MAIL_KEYS) if (pm[k] !== undefined) next[k] = pm[k];
+          if (pm.pass === null) next.pass = '';
+          else if (!String(pm.pass ?? '')) next.pass = prev.pass || '';
+          mailNeu = mailSettings(mailAus(next));
+        }
+        if (patch.paypal !== undefined) {
+          // Secret-Maske wie beim SMTP-Passwort — leer = gespeichertes behalten, null = löschen
+          const pp = objAus(patch.paypal, 'PayPal'), prev = settings.paypal || {};
+          const next = { ...DEFAULT_SETTINGS.paypal, ...prev };
+          for (const k of ['enabled', 'sandbox', 'clientId']) if (pp[k] !== undefined) next[k] = pp[k];
+          if (pp.secret === null) next.secret = '';
+          else if (String(pp.secret ?? '')) next.secret = String(pp.secret);
+          paypalNeu = paypalAus(next);
+        }
       } catch (err) { return send(res, err.httpCode || 400, { ok: false, error: err.message }); }
       // Wartungsmodus: { aktiv, kennwort? } — Kennwort nur als Hash speichern; neues Kennwort = alle Freigaben ungültig
       let wartungNeu = null;
@@ -3175,12 +3423,11 @@ const server = http.createServer(async (req, res) => {
         if (neu.aktiv && !neu.hash) return send(res, 400, { ok: false, error: 'Wartungsmodus: bitte zuerst ein Zugangskennwort setzen' });
         wartungNeu = neu;
       }
-      const prevPricing = settings.pricing;
-      // Nur bekannte Wurzel-Schlüssel übernehmen (Gutscheine gesondert, siehe mergeCoupons)
-      for (const k of ['pricing', 'colors', 'printing']) {
-        if (patch[k] !== undefined) settings[k] = patch[k];
-      }
-      if (patch.coupons !== undefined) settings.coupons = mergeCoupons(settings.coupons, patch.coupons, patch.couponsLoeschen);
+      // Ab hier nur noch Übernahme geprüfter Werte (Gutscheine: mergeCoupons + gutscheineAus)
+      if (pricingNeu) settings.pricing = pricingNeu;
+      if (colorsNeu) settings.colors = colorsNeu;
+      if (printingNeu) settings.printing = printingNeu;
+      if (couponsNeu) settings.coupons = couponsNeu;
       if (company) settings.company = company;
       if (shop) settings.shop = shop;
       if (legal) settings.legal = legal;
@@ -3195,34 +3442,13 @@ const server = http.createServer(async (req, res) => {
       for (const c of settings.coupons) c.mitAktion = !!c.mitAktion;
       // Gutschrift-Nummernkreis: Präfix als Text (≤ 20 Zeichen), nächste Nummer als ganze Zahl ≥ 1
       if (creditPrefix.prefix) settings.creditPrefix = creditPrefix.prefix;
-      if (patch.nextCredit !== undefined) settings.nextCredit = Math.max(1, Math.round(Number(patch.nextCredit)) || 1);
-      // Aufpreise: Muster nur mit bekannten Keys, Zahlen ≥ 0; Farbschrift ≥ 0 — fehlen sie im Patch, bleiben die alten Werte
-      if (patch.pricing !== undefined) {
-        settings.pricing.muster = patch.pricing.muster !== undefined ? sanitizeMuster(patch.pricing.muster) : (prevPricing.muster || {});
-        settings.pricing.farbschrift = patch.pricing.farbschrift !== undefined ? euro(patch.pricing.farbschrift) : (prevPricing.farbschrift ?? 0);
-      }
-      // Farbaufpreis je Farbe: Zahl ≥ 0 erzwingen
-      if (Array.isArray(settings.colors)) for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
-      // PayPal: Secret-Maske wie beim SMTP-Passwort — leer = gespeichertes behalten, null = löschen
+      if (nextCreditNeu) settings.nextCredit = nextCreditNeu;
       if (wartungNeu) settings.wartung = wartungNeu;
-      if (patch.paypal && typeof patch.paypal === 'object') {
-        const prev = settings.paypal || {};
-        const next = { ...DEFAULT_SETTINGS.paypal, ...prev };
-        for (const k of ['enabled', 'sandbox', 'clientId']) if (patch.paypal[k] !== undefined) next[k] = patch.paypal[k];
-        if (patch.paypal.secret === null) next.secret = '';
-        else if (String(patch.paypal.secret ?? '')) next.secret = String(patch.paypal.secret);
-        settings.paypal = next;
-      }
+      if (paypalNeu) settings.paypal = paypalNeu;
       settings.printing = { ...DEFAULT_SETTINGS.printing, ...(settings.printing || {}) };
-      // E-Mail: nur bekannte Felder; Passwort-Maske — leer = gespeichertes behalten, null = löschen
-      if (patch.mail && typeof patch.mail === 'object') {
-        const prev = settings.mail || {};
-        const next = { ...DEFAULT_SETTINGS.mail, ...prev };
-        for (const k of MAIL_KEYS) if (patch.mail[k] !== undefined) next[k] = patch.mail[k];
-        if (patch.mail.pass === null) next.pass = '';
-        else if (!String(patch.mail.pass ?? '')) next.pass = prev.pass || '';
-        settings.mail = mailSettings(next);
-      } else settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
+      // E-Mail: nur bekannte Felder (geprüft in mailAus); ohne Patch bleibt der gespeicherte Stand
+      if (mailNeu) settings.mail = mailNeu;
+      else settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
       await saveSettings();
       // Wartungsmodus gerade eingeschaltet oder neues Kennwort: der Admin sperrt sich nicht selbst aus — Freigabe-Cookie gleich mit
       if (wartungNeu && wartungAktiv()) res.setHeader('Set-Cookie', wartungCookie(req));
