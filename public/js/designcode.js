@@ -1,5 +1,6 @@
 // formsam — Design-Codes: kurzer Code ⇄ komplettes Design (Form, Muster, Gravur, Farbe …)
 // Server vergibt den Code deterministisch (gleiches Design → gleicher Code), speichert die Konfiguration.
+import { showToast } from './mobile.js';
 const $ = (s) => document.querySelector(s);
 
 export const formatCode = (c) => c ? String(c).replace(/(.{3})(?=.)/g, '$1-') : '';
@@ -113,7 +114,20 @@ async function loadFromInput() {
   btn.disabled = false;
 }
 
-/** Beim Laden mit ?d=CODE bzw. #d=CODE das Design direkt öffnen */
+/** Parameter (d bzw. l) aus Adresse und Anker nehmen — ohne neuen History-Eintrag */
+export function stripURLParam(name) {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete(name);
+    if (new RegExp(`^#${name}=`).test(u.hash)) u.hash = '';
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  } catch { /* egal */ }
+}
+/** Fehlertext für einen Link-Code: Meldung des Servers („Diesen Design-Code gibt es nicht …“), bei Netzfehlern ein deutscher Satz */
+export const linkFehler = (e, was) => (e instanceof TypeError || !e?.message ? `${was} aus dem Link ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.` : e.message);
+
+/** Beim Laden mit ?d=CODE bzw. #d=CODE das Design direkt öffnen. Unbekannter Code (Tippfehler im Link): Meldung statt still das
+ *  Standard-Design — sonst hielte man es für das geteilte —, und der Code verschwindet aus der Adresse */
 export async function loadFromURL() {
   const m = (location.search + location.hash).match(/[?&#]d=([A-Za-z0-9-]{4,40})/);
   if (!m) return false;
@@ -121,7 +135,11 @@ export async function loadFromURL() {
     const { code, config } = await loadDesign(m[1]);
     await applyConfig(config, code);
     return code;
-  } catch { return false; }
+  } catch (e) {
+    showToast(`🔖 ${linkFehler(e, 'Der Design-Code')}`, 6000);
+    stripURLParam('d');
+    return false;
+  }
 }
 
 export function initDesignCodes(opts) {

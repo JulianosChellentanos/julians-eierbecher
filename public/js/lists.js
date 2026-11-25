@@ -4,7 +4,7 @@
 import { addToCart, itemTitle, itemSub, getPricing } from './cart.js';
 import { produktAktiv, zeilenProdukt, EIERBECHER_HINWEIS } from './produkte.js';
 import { showToast, IS_MOBILE } from './mobile.js';
-import { copyText, formatCode, normalizeCode, esc } from './designcode.js';
+import { copyText, formatCode, normalizeCode, esc, stripURLParam, linkFehler } from './designcode.js';
 
 const $ = (s) => document.querySelector(s);
 /** Farbwert für style-Attribute: nur #rgb/#rrggbb (Farben kommen aus den Einstellungen), sonst Grau */
@@ -159,16 +159,16 @@ function renderList(list) {
           ${off ? `<small class="ls-off-hint">${EIERBECHER_HINWEIS}</small>` : ''}
           <div class="ls-item-row">
             <button class="ci-code" data-code="${it.code}" title="Design-Code kopieren">🔖 ${formatCode(it.code)}</button>
-            ${own ? `<span class="ci-step"><button data-q="${i}" data-d="-1">−</button><span>${it.qty || 1}</span><button data-q="${i}" data-d="1">+</button></span>` : `<span class="ls-qty">${it.qty || 1} ×</span>`}
+            ${own ? `<span class="ci-step"><button type="button" data-q="${i}" data-d="-1" aria-label="Menge verringern">−</button><span aria-label="Menge">${it.qty || 1}</span><button type="button" data-q="${i}" data-d="1" aria-label="Menge erhöhen">+</button></span>` : `<span class="ls-qty">${it.qty || 1} ×</span>`}
           </div>
           <div class="ls-item-btns">
             <button class="btn btn-ghost" data-load="${i}"${off ? ' disabled' : ''}>👁 Ansehen</button>
             <button class="btn btn-primary" data-cart="${i}"${off ? ' disabled' : ''}>🛒 In den Warenkorb</button>
-            ${own ? `<button class="btn btn-ghost ls-del" data-del="${i}" title="Aus der Liste entfernen">🗑</button>` : ''}
+            ${own ? `<button class="btn btn-ghost ls-del" data-del="${i}" title="Aus der Liste entfernen" aria-label="Aus der Liste entfernen">🗑</button>` : ''}
           </div>
         </div>
       </div>`; }).join('')}</div>`
-      : `<p class="cart-empty">Noch leer.<br><small>${own ? 'Füge unten dein aktuelles Design hinzu oder gestalte im Konfigurator und wähle dort „Zu Liste hinzufügen“.' : 'Der Besitzer hat noch nichts hinzugefügt.'}</small></p>`}
+      : `<p class="cart-empty">Noch leer.<br><small>${own ? 'Füge unten dein aktuelles Design hinzu – oder gestalte im Konfigurator und wähle im Design-Code-Dialog „Zu einer Liste hinzufügen“.' : 'Der Besitzer hat noch nichts hinzugefügt.'}</small></p>`}
     <div class="ls-foot">
       ${own ? `<button class="btn btn-ghost" id="ls-addcur">➕ Aktuelles Design hinzufügen</button>` : `<button class="btn btn-ghost" id="ls-copy">📋 Als eigene Liste kopieren</button>`}
       ${totalOk ? `<button class="btn btn-primary" id="ls-allcart">🛒 Alle ${totalOk} in den Warenkorb</button>` : ''}
@@ -302,10 +302,12 @@ export async function createListFromCart(cartItems) {
   showToast('📋 Warenkorb als Liste gespeichert');
 }
 
+/** ?l=CODE bzw. #l=CODE: Liste öffnen; unbekannter Code → Meldung und Code raus aus der Adresse (wie bei Design-Codes) */
 export async function loadListFromURL() {
   const m = (location.search + location.hash).match(/[?&#]l=([A-Za-z0-9-]{4,20})/);
   if (!m) return false;
-  try { await openList(m[1]); return true; } catch { return false; }
+  try { await openList(m[1]); return true; }
+  catch (e) { showToast(`📋 ${linkFehler(e, 'Die Liste')}`, 6000); stripURLParam('l'); return false; }
 }
 
 export function initLists(h) {
