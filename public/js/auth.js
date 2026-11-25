@@ -118,6 +118,14 @@ function widerrufHtml(o) {
   const id = encodeURIComponent(o.orderId);
   return `<a class="ao-widerruf" href="/widerruf?order=${id}#widerrufen" target="_blank" rel="noopener">Vertrag widerrufen</a>`;
 }
+/** Eingegangene Widerrufe zur Bestellung (/api/auth/me → widerrufe [{ ref, at }]) — „Ist mein Widerruf angekommen?“ */
+function widerrufEingangHtml(o) {
+  const w = Array.isArray(o.widerrufe) ? o.widerrufe : [];
+  if (!w.length) return '';
+  const datum = (iso) => (iso ? new Date(iso).toLocaleDateString('de-DE') : '');
+  return `<div class="ao-widerruf-eingang" style="flex-basis:100%;font-size:.76rem;line-height:1.45;color:var(--ink-soft)">↩️ ${w.length > 1 ? 'Widerrufe' : 'Widerruf'} eingegangen: ` +
+    w.map((x) => `${esc(datum(x.at))} (${esc(x.ref)})`).join(', ') + '</div>';
+}
 /** Die letzten Schritte der Bestellung (Historie vom Server: at/status/note), kompakt in einer Zeile */
 function stepsHtml(o) {
   const steps = (o.history || []).slice(-3);
@@ -299,6 +307,7 @@ export function openAccount() {
         ${invoiceHtml(o)}
         ${widerrufHtml(o)}</div>
       ${stepsHtml(o)}
+      ${widerrufEingangHtml(o)}
       ${reklaHtml(o)}
     </div>`).join('')
     : `<p class="tiny" style="text-align:left">${currentUser.emailVerified ? 'Noch keine Bestellungen – dein erstes Unikat wartet im Konfigurator! 🎨' : 'Noch keine Bestellungen mit diesem Konto. Hast du ohne Anmeldung bestellt? Dann bestätige oben deine E-Mail-Adresse.'}</p>`;

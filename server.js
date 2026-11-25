@@ -4140,6 +4140,8 @@ const server = http.createServer(async (req, res) => {
             stornoNo: o.storno?.nr || '', stornoUrl: o.storno?.nr && links ? orderFileUrl(o, 'storno.html') : null,
             paidAt: o.paidAt || null, shippedAt: o.shippedAt || null,
             pieces: (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+            // eingegangene Widerrufe (Widerrufsfunktion, E-Mail passte) — nur Referenz und Zeitpunkt
+            widerrufe: (Array.isArray(o.widerrufe) ? o.widerrufe : []).filter((w) => w && w.ref).map((w) => ({ ref: String(w.ref), at: w.at || null })),
             reklamation: r ? {   // ohne IBAN/Grund/Notiz
               ...publicRekla(r), gutscheinCode: links ? (r.gutscheinCode || '') : '', gutscheinPerMail: !links && !!r.gutscheinCode,
               gutschriftUrl: r.gutschriftNo && links ? orderFileUrl(o, 'gutschrift.html') : null,
