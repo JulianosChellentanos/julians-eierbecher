@@ -1221,18 +1221,43 @@ function send(res, code, body, type = 'application/json; charset=utf-8') {
   res.writeHead(code, { 'Content-Type': type });
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
+/**
+ * Body lesen (höchstens limit Bytes). Zu groß → sofort Antwort 413 (JSON) und httpError 413 — eine Route, die Lesefehler selbst
+ * abfängt, kann die Antwort danach nicht mehr ändern (send() schreibt nichts mehr). Der Rest des Bodys wird noch angenommen und
+ * verworfen (bis 64 MB bzw. 10 s) — sonst ginge die Verbindung mit ungelesenen Daten zu und der Absender sähe nur einen
+ * Verbindungsabbruch statt der Meldung. Abgebrochene Anfrage → httpError 400.
+ */
+const ANTWORTEN = new WeakMap();   // Anfrage → Antwort (readBody beantwortet Überlänge selbst, auch in Routen mit eigenem try/catch)
 function readBody(req, limit = MAX_JSON) {
   return new Promise((resolve, reject) => {
-    let size = 0;
+    let size = 0, zuGross = false;
     const chunks = [];
+    const ablehnen = () => {
+      zuGross = true; chunks.length = 0;
+      const res = ANTWORTEN.get(req);
+      if (res && !res.headersSent) send(res, 413, { ok: false, error: 'Anfrage zu groß' });
+      reject(httpError(413, 'Anfrage zu groß'));
+      const t = setTimeout(() => req.destroy(), 10000);
+      req.once('end', () => clearTimeout(t)); req.once('close', () => clearTimeout(t));
+    };
+    if (Number(req.headers['content-length']) > limit) ablehnen();
     req.on('data', (c) => {
       size += c.length;
-      if (size > limit) { reject(new Error('Anfrage zu groß')); req.destroy(); return; }
+      if (zuGross) { if (size > limit + 64 * 1024 * 1024) req.destroy(); return; }
+      if (size > limit) { ablehnen(); return; }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    req.on('end', () => { if (!zuGross) resolve(Buffer.concat(chunks)); });
+    req.on('error', () => reject(httpError(400, 'Anfrage abgebrochen')));
   });
+}
+/** JSON-Body als Objekt lesen — kaputtes JSON, leerer Body, null, Liste oder Zahl → httpError 400 „Ungültige Anfrage“ */
+async function readJson(req, limit = MAX_JSON) {
+  const raw = (await readBody(req, limit)).toString('utf8');
+  let v = null;
+  try { v = JSON.parse(raw); } catch { /* unten 400 */ }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw httpError(400, 'Ungültige Anfrage');
+  return v;
 }
 /**
  * Schutz-Kopfzeilen für jede Antwort (vor writeHead gesetzt; Routen mit eigenen Werten überschreiben sie, z. B. Belege mit
@@ -2548,6 +2573,7 @@ async function handleComplete(req, res, id, url) {
 // ---------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
   schutzKopfzeilen(res);
+  ANTWORTEN.set(req, res);
   // URL-Parsen/Dekodieren geschützt: kaputte Prozentkodierung oder ein ungültiger Host-Header dürfen den
   // Prozess nicht beenden (400 statt unbehandelter Ausnahme). Der Host wird nirgends ausgewertet → feste Basis.
   let url, p;
@@ -2615,7 +2641,7 @@ const server = http.createServer(async (req, res) => {
       return runHook('userRegistered', { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
     }
     if (req.method === 'POST' && p === '/api/auth/login') {
-      const { email, password } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { email, password } = await readJson(req, 16 * 1024);
       const u = users.find((x) => x.email === String(email || '').trim().toLowerCase());
       const ok = u && crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(hashPw(password || '', u.salt), 'hex'));
       if (!ok) return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
@@ -2694,7 +2720,7 @@ const server = http.createServer(async (req, res) => {
       } catch (err) { console.error('Bestätigungsmail fehlgeschlagen:', err?.message || err); }
       return;
     }
-    if (p === '/api/auth/me') {
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/api/auth/me') {
       const u = userFromReq(req);
       if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       // Zuordnung: Bestellungen dieses Kontos (userId) immer; Bestellungen mit derselben E-Mail-Adresse (Gast, Altbestand)
@@ -2853,13 +2879,13 @@ const server = http.createServer(async (req, res) => {
 
     // --- Design-Listen
     if (req.method === 'POST' && p === '/api/list') {
-      let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
-      const name = String(b.name || '').trim().slice(0, 60) || 'Meine Liste';
+      const b = await readJson(req, 64 * 1024);
+      const name = (typeof b.name === 'string' ? oneLine(b.name, 60) : '') || 'Meine Liste';
       const code = newListCode();
       const token = crypto.randomBytes(16).toString('hex');
       const l = {
         code, token, name, occasion: LIST_OCCASIONS.includes(b.occasion) ? b.occasion : 'sonstiges',
-        note: String(b.note || '').slice(0, 300), items: cleanListItems(b.items),
+        note: typeof b.note === 'string' ? clipText(b.note, 300) : '', items: cleanListItems(b.items),
         createdAt: Date.now(), updatedAt: Date.now(),
       };
       lists[code] = l;
@@ -2872,13 +2898,13 @@ const server = http.createServer(async (req, res) => {
       const l = lists[code];
       if (!l) return send(res, 404, { ok: false, error: 'Diese Liste gibt es nicht – bitte den Code prüfen.' });
       if (req.method === 'GET') return send(res, 200, { ok: true, list: publicList(l) });
-      let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
+      const b = await readJson(req, 64 * 1024);
       if (!b.token || b.token !== l.token) return send(res, 403, { ok: false, error: 'Nur der Besitzer kann diese Liste ändern.' });
       if (req.method === 'DELETE') { delete lists[code]; await saveLists(); return send(res, 200, { ok: true }); }
       if (req.method === 'PUT') {
-        if (b.name !== undefined) l.name = String(b.name).trim().slice(0, 60) || l.name;
+        if (b.name !== undefined) l.name = oneLine(typeof b.name === 'string' ? b.name : '', 60) || l.name;
         if (b.occasion !== undefined && LIST_OCCASIONS.includes(b.occasion)) l.occasion = b.occasion;
-        if (b.note !== undefined) l.note = String(b.note).slice(0, 300);
+        if (b.note !== undefined) l.note = typeof b.note === 'string' ? clipText(b.note, 300) : '';
         if (b.items !== undefined) l.items = cleanListItems(b.items);
         l.updatedAt = Date.now();
         await saveLists();
@@ -2980,7 +3006,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/admin/settings') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const patch = JSON.parse((await readBody(req)).toString('utf8'));
+      const patch = await readJson(req);
       // Admin-Passwort: nur ein nicht-leerer String (≥ 8 Zeichen) — leer würde den Admin für alle öffnen, Nicht-Strings sperren aus
       if (patch.adminKey !== undefined) {
         if (typeof patch.adminKey !== 'string' || patch.adminKey.trim().length < 8) return send(res, 400, { ok: false, error: 'Admin-Passwort: mindestens 8 Zeichen' });
@@ -3094,7 +3120,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/admin/order-update') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      const body = await readJson(req);
       const { orderId, status, paymentStatus, trackingNo, carrier, adminNote, note } = body;
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (status !== undefined && !STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
@@ -3141,7 +3167,7 @@ const server = http.createServer(async (req, res) => {
     // Druckstatus je Position — mit Automatik für den Bestellstatus (im-druck / gedruckt)
     if (req.method === 'POST' && p === '/api/admin/line-print') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, idx, status, note } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { orderId, idx, status, note } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!PRINT_STATES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Druckstatus' });
       let order, prevStatus, wasPrinted;
@@ -3385,7 +3411,7 @@ const server = http.createServer(async (req, res) => {
     // Kompatibel: alter Kurz-Endpoint (nur Status)
     if (req.method === 'POST' && p === '/api/admin/order-status') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, status } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { orderId, status } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
       let order, prevStatus;
@@ -3491,7 +3517,17 @@ const server = http.createServer(async (req, res) => {
       return res.end(gz ? gzipSync(out, { level: zc.Z_BEST_SPEED }) : out);
     }
 
-    // --- Seiten & Dateien
+    // --- Unbekannte API-Adresse bzw. Methode: JSON statt Datei-Suche (405 nur für bekannte Nur-Lese-Adressen)
+    if (p.startsWith('/api/')) {
+      if (p === '/api/auth/me') { res.setHeader('Allow', 'GET, HEAD'); return send(res, 405, { ok: false, error: 'Methode nicht erlaubt' }); }
+      return sendNichtGefunden(req, res, p, url);
+    }
+
+    // --- Seiten & Dateien: nur GET/HEAD (POST /__wartung beantwortet wartungTor vorher)
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.setHeader('Allow', 'GET, HEAD');
+      return send(res, 405, 'Methode nicht erlaubt', 'text/plain; charset=utf-8');
+    }
     if (p === '/favicon.ico') {
       const ico = path.join(PUBLIC, 'favicon.ico');
       if (!existsSync(ico)) { res.writeHead(204); return res.end(); }
@@ -3559,6 +3595,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, headers);
     createReadStream(file).pipe(res);
   } catch (err) {
+    // Eingabefehler (httpError 4xx: kaputtes JSON → 400, zu großer Body → 413) sind kein Serverfehler
+    if (err?.httpCode >= 400 && err.httpCode < 500) return send(res, err.httpCode, { ok: false, error: err.message });
     console.error(err);
     send(res, 500, { ok: false, error: 'Serverfehler' });
   }
