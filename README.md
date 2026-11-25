@@ -325,6 +325,7 @@ tools/
   test-recht.mjs           Rechtstexte, Wartungsmodus, öffentliche Adresse, Produkthinweise (startet eigene Instanz)
   test-betrieb.mjs         Sicherungs- und Update-Skripte unter deploy/
   test-eingaben.mjs        Eingaben, Fehlerantworten, Schutz-Kopfzeilen, 404, Dateirechte (startet eine eigene Instanz)
+  test-paypal.mjs          PayPal-Einzug gegen eine PayPal-Attrappe (ohne Netz, eigene Instanz)
 deploy/                    Produktivserver: systemd, nginx (+ Logformat), Sicherung, Update, journald/logrotate, Mailserver
 docs/marke.md              Markenleitfaden
 docs/rechtstexte.md        Notiz zu den Rechtstexten (Annahmen, offene Punkte)
@@ -516,6 +517,7 @@ node tools/test-recht.mjs                          # Rechtstexte, Wartungstor, S
 node tools/test-betrieb.mjs                        # deploy/: Sicherung und prod-update.sh in einer Attrappe
 node tools/test-eingaben.mjs                       # Eingaben, 400/404/405/413, Kopfzeilen, Dateirechte (eigene Instanz, Port 4545–4549)
 node tools/test-daten.mjs                          # Dateien, Admin-Passwort, Bremsen, Uploads, Aufräumen, Konto (eigene Instanz)
+node tools/test-paypal.mjs                         # PayPal-Einzug gegen eine Attrappe (kein Aufruf bei PayPal, eigene Instanz)
 ```
 
 Der Validator prüft: Dateikonsistenz, degenerierte Dreiecke, NaN, Bounding Box,

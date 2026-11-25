@@ -3136,7 +3136,7 @@ function paypalBase() {
   return settings.paypal.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
 }
 // Zugriffstoken bis kurz vor Ablauf (expires_in) wiederverwenden — je Zugangsdaten; jeder PayPal-Aufruf mit Zeitlimit
-const PAYPAL_TIMEOUT_MS = 30_000;
+const PAYPAL_TIMEOUT_MS = Math.max(1000, parseInt(process.env.PAYPAL_TIMEOUT_MS || '30000', 10) || 30_000);   // Umgebung nur für tools/test-paypal.mjs
 let paypalTokenCache = null;   // { key: SHA-256(sandbox|clientId|secret), token, bis }
 async function paypalToken() {
   const key = sha256(`${!!settings.paypal.sandbox}|${settings.paypal.clientId}|${settings.paypal.secret}`);
