@@ -19,12 +19,15 @@ export async function saveDesign(config) {
   return r.code;
 }
 
+/** Fehler mit HTTP-Status (404 = gibt es nicht) — Antworten ohne JSON (Fehlerseite eines Proxys beim Neustart) ergeben einen deutschen Satz */
+export const apiFehler = (status, text) => Object.assign(new Error(text), { status });
 /** Code → Konfiguration */
 export async function loadDesign(code) {
   const c = normalizeCode(code);
-  if (c.length < 4) throw new Error('Bitte einen Design-Code eingeben (z. B. K7P-3QX).');
-  const r = await (await fetch(`/api/design/${encodeURIComponent(c)}`)).json();
-  if (!r.ok) throw new Error(r.error || 'Code unbekannt');
+  if (c.length < 4) throw apiFehler(400, 'Bitte einen Design-Code eingeben (z. B. K7P-3QX).');
+  const res = await fetch(`/api/design/${encodeURIComponent(c)}`);
+  const r = await res.json().catch(() => null);
+  if (!r?.ok) throw apiFehler(res.status, r?.error || (res.status === 404 ? 'Diesen Design-Code gibt es nicht – bitte prüfen.' : 'Der Design-Code ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.'));
   return { code: r.code, config: r.config };
 }
 
@@ -123,11 +126,15 @@ export function stripURLParam(name) {
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
   } catch { /* egal */ }
 }
-/** Fehlertext für einen Link-Code: Meldung des Servers („Diesen Design-Code gibt es nicht …“), bei Netzfehlern ein deutscher Satz */
-export const linkFehler = (e, was) => (e instanceof TypeError || !e?.message ? `${was} aus dem Link ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.` : e.message);
+/** Ein Link-Code ist endgültig unbrauchbar (gibt es nicht, ungültig, Produkt abgeschaltet) — nur dann verschwindet er aus der Adresse */
+export const linkUnbrauchbar = (e) => [400, 404].includes(e?.status) || !!e?.endgueltig;
+/** Fehlertext für einen Link-Code: bei endgültigen Fehlern die Meldung („Diesen Design-Code gibt es nicht …“), sonst (Netz, Neustart,
+ *  Fehlerseite eines Proxys) ein deutscher Satz statt technischer Meldungen */
+export const linkFehler = (e, was) => (linkUnbrauchbar(e) && e.message ? e.message : `${was} aus dem Link ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.`);
 
 /** Beim Laden mit ?d=CODE bzw. #d=CODE das Design direkt öffnen. Unbekannter Code (Tippfehler im Link): Meldung statt still das
- *  Standard-Design — sonst hielte man es für das geteilte —, und der Code verschwindet aus der Adresse */
+ *  Standard-Design — sonst hielte man es für das geteilte —, und der Code verschwindet aus der Adresse; bei vorübergehenden Fehlern
+ *  bleibt er stehen (Neuladen versucht es noch einmal) */
 export async function loadFromURL() {
   const m = (location.search + location.hash).match(/[?&#]d=([A-Za-z0-9-]{4,40})/);
   if (!m) return false;
@@ -137,7 +144,7 @@ export async function loadFromURL() {
     return code;
   } catch (e) {
     showToast(`🔖 ${linkFehler(e, 'Der Design-Code')}`, 6000);
-    stripURLParam('d');
+    if (linkUnbrauchbar(e)) stripURLParam('d');
     return false;
   }
 }

@@ -4,7 +4,7 @@
 import { addToCart, itemTitle, itemSub, getPricing } from './cart.js';
 import { produktAktiv, zeilenProdukt, EIERBECHER_HINWEIS } from './produkte.js';
 import { showToast, IS_MOBILE } from './mobile.js';
-import { copyText, formatCode, normalizeCode, esc, stripURLParam, linkFehler } from './designcode.js';
+import { copyText, formatCode, normalizeCode, esc, stripURLParam, linkFehler, linkUnbrauchbar, apiFehler } from './designcode.js';
 
 const $ = (s) => document.querySelector(s);
 /** Farbwert für style-Attribute: nur #rgb/#rrggbb (Farben kommen aus den Einstellungen), sonst Grau */
@@ -41,8 +41,8 @@ async function api(path, method = 'GET', body) {
     method, headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
-  const j = await r.json().catch(() => ({ ok: false, error: 'Serverfehler' }));
-  if (!j.ok) throw new Error(j.error || 'Fehler');
+  const j = await r.json().catch(() => ({ ok: false, error: 'Der Server antwortet gerade nicht – bitte versuch es gleich noch einmal.' }));
+  if (!j.ok) throw apiFehler(r.status, j.error || 'Fehler');
   return j;
 }
 
@@ -302,12 +302,13 @@ export async function createListFromCart(cartItems) {
   showToast('📋 Warenkorb als Liste gespeichert');
 }
 
-/** ?l=CODE bzw. #l=CODE: Liste öffnen; unbekannter Code → Meldung und Code raus aus der Adresse (wie bei Design-Codes) */
+/** ?l=CODE bzw. #l=CODE: Liste öffnen; unbekannter Code → Meldung und Code raus aus der Adresse (wie bei Design-Codes), vorübergehende
+ *  Fehler (Netz, Neustart) → deutscher Satz, der Code bleibt */
 export async function loadListFromURL() {
   const m = (location.search + location.hash).match(/[?&#]l=([A-Za-z0-9-]{4,20})/);
   if (!m) return false;
   try { await openList(m[1]); return true; }
-  catch (e) { showToast(`📋 ${linkFehler(e, 'Die Liste')}`, 6000); stripURLParam('l'); return false; }
+  catch (e) { showToast(`📋 ${linkFehler(e, 'Die Liste')}`, 6000); if (linkUnbrauchbar(e)) stripURLParam('l'); return false; }
 }
 
 export function initLists(h) {
