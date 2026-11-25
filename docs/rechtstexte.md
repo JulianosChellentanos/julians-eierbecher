@@ -211,8 +211,14 @@ PayPal gilt – genau wie im Shop – erst als angeboten, wenn „aktiv“ **und
 
 - `renderLegalPage(slug, { settings, baseUrl })` – die fünf Seiten.
 - `renderLegalPage(slug, { settings, baseUrl, forMail: true })` – dieselbe Seite ohne Skript/Formular, mit absoluten
-  Links (auch im Text, z. B. AGB § 10 → Widerrufsfunktion). Die Bestellbestätigung verschickt AGB und Widerrufsbelehrung so als Anhang (`formsam-AGB.html`,
-  `formsam-Widerrufsbelehrung.html`) – „dauerhafter Datenträger“ nach § 312f Abs. 2 BGB.
+  Links (auch im Text, z. B. AGB § 10 → Widerrufsfunktion). Rückfall-Anhang der Bestellbestätigung (`formsam-AGB.html`,
+  `formsam-Widerrufsbelehrung.html`), wenn die PDF-Fassung nicht entstehen kann (z. B. unvollständige Firmendaten).
+- `renderLegalPage(slug, { settings, baseUrl, forPdf: true, logoHtml })` – schlichte Druckfassung (A4, Text wie `forMail`,
+  absolute Links, `logoHtml` = fertiges Inline-SVG) als Vorlage für den eigenen PDF-Satz (`legalPdf` in `lib/html-pdf.js`).
+  Die Bestellbestätigung verschickt AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) so als PDF (`formsam-AGB.pdf`,
+  `formsam-Widerrufsbelehrung.pdf`) – „dauerhafter Datenträger“ nach § 312f Abs. 2 BGB; der verschickte Stand liegt je Bestellung
+  in `orders/<ID>/agb.pdf` und `widerruf.pdf`. Fehlen Pflichtangaben unter „Mein Unternehmen“ (Inhaber, vollständige Anschrift ohne
+  Platzhalter, gültige E-Mail), gibt es keine PDF und der Anhang geht wie früher als HTML mit (README „Rechnungen und Rechtstexte als PDF“).
 - `legalWarnings(settings)` – Liste fehlender oder vorläufiger Pflichtangaben (Platzhalter-Anschrift, fehlende
   Telefonnummer, Hoster/Serverstandort fehlt, AV-Vertrag nicht bestätigt, öffentliche Adresse fehlt …); steht im
   Startlog und als Hinweis in der Admin-Übersicht.
