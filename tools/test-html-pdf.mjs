@@ -909,6 +909,22 @@ check('Gegenprüfung: belegPdf/legalPdf — Dateiname bei jedem Nummernkreis, ab
   ok(!/Eri/.test(sc.message) && /Eri/.test(sc.context), `Text nicht in der Meldung: ${sc.message}`);
 });
 
+check('Einbau: @media nur für den Bildschirm (Handy-Ansicht der Belege) — im Druck übergangen, auch mit Grid/overflow/::before streng ohne Warnung', () => {
+  const full = fixture('rechnung-ust');
+  const screen = '@media screen and (max-width:640px){.pos{display:grid;overflow-x:auto}.pos td::before{content:"x"}.pos td{overflow-wrap:anywhere}}';
+  const a = belegPdf(full), b = belegPdf(full.replace('</style>', `${screen}</style>`));
+  ok(a.pages === b.pages && a.buffer.equals(b.buffer), 'Bildschirm-Block ändert die PDF nicht');
+  throwsCode(() => belegPdf(full.replace('</style>', '@media (max-width:640px){.pos{display:grid}}</style>')), 'UNSUPPORTED');   // „all“: kann im Druck gelten → weiter streng
+  throwsCode(() => belegPdf(full.replace('</style>', '@media print{.pos{display:grid}}</style>')), 'UNSUPPORTED');
+  const w = [], w0 = [];
+  styleTree(full.replace('</style>', '@media print{.pos{float:left}}</style>'), { media: 'screen', warnings: w });
+  styleTree(full, { media: 'screen', warnings: w0 });
+  ok(w.join('|') === w0.join('|'), 'Satz für den Bildschirm übergeht @media print');
+  const w2 = [];
+  parseCss(screen, w2);
+  ok(w2.length > 0, 'parseCss ohne Zielmedium meldet weiter alles');
+});
+
 check('Gegenprüfung: Schriften-Cache wächst nicht mit jeder neuen font-family (Schlüssel nach der Auflösung)', () => {
   const code = `import v8 from 'node:v8'; import { layoutDocument } from ${JSON.stringify(new URL('../lib/html-pdf.js', import.meta.url).href)};
     const doc = (i) => '<!DOCTYPE html><html><head><title>T</title></head><body><p style="font-family:\\'Hausschrift ' + i + '\\',Inter">x</p></body></html>';
