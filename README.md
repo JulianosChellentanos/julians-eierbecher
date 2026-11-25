@@ -129,8 +129,8 @@ Passwort beim nächsten Start wieder in den Hash.
 
 - **Neuinstallation** (keine `settings.json`): zufälliges Passwort, steht genau einmal im Protokoll (`journalctl -u formsam | grep Admin-Passwort`).
   Ein bekanntes Standard-Passwort gibt es nicht mehr.
-- **Umstellung:** Steht in `settings.json` noch ein Klartext-`adminKey` (ältere Fassung, Sandbox-Skripte), wird er beim Start in den Hash
-  umgestellt und entfernt — das Passwort bleibt dasselbe.
+- **Umstellung:** Steht in `settings.json` noch ein Klartext-`adminKey` (ältere Fassung, Sandbox- und Prüfskripte), wird er beim Start in
+  den Hash umgestellt; an seiner Stelle steht danach der Platzhalter — das Passwort bleibt dasselbe.
 - **Vergessen / neu setzen:** Shop-Server stoppen, `node tools/admin-passwort.mjs <neues-passwort>` (oder `--zufall`), wieder starten.
   Datenordner wie beim Server über `DATA_DIR=…`.
 - **Bremse:** 10 falsche Passwörter je IP (IPv6: je /64) in 15 Minuten → 429 für diese IP, auch mit richtigem Passwort. Jeder Versuch zählt
@@ -333,6 +333,9 @@ docs/marketing.md          Marketing-Plan (Stand der Eierbecher-Zeit, damals OVJ
    Protokoll-Einstellungen (siehe unten).
 
 Zurück auf den Stand vor dem letzten Update (nur Code, Daten bleiben): `bash /srv/formsam/deploy/prod-update.sh --zurueck`.
+Geht es dabei auf eine Fassung von vor dem Admin-Hash zurück, bleibt der Admin dort gesperrt (Platzhalter statt `formsam-admin`, siehe
+[Admin-Passwort](#admin-passwort)). Mails, die in diesem Moment noch auf einen weiteren Versuch warten, schickt eine Fassung von vor
+der Outbox-Version 2 nicht mehr (sie markiert sie als Fehler) — vorher im Admin unter ✉️ nachsehen, dass keine Mail mehr wartet.
 Nur prüfen: `bash /srv/formsam/deploy/prod-update.sh --pruefen`. Test der Skripte (Attrappe, ohne Server): `node tools/test-betrieb.mjs`.
 
 ### Sicherung

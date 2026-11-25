@@ -39,9 +39,11 @@ const KUNDE = { name: 'Erika Mustermann', email: 'kunde@example.test', street: '
 const V = (qty = 1, cfg = {}, rest = {}) => ({ product: 'vase', qty, saucer: false, color: 'elfenbein', colorName: 'Elfenbein', code: null, config: { ...VASE, ...cfg }, ...rest });
 const stl = () => { const b = Buffer.alloc(134); b.writeUInt32LE(1, 80); return b; };
 
-let base = '', child = null;
+let base = '', child = null, ipNr = 0;
+// Jede Anfrage aus einem eigenen Netz (TRUST_PROXY=1): die Missbrauchsbremsen (z. B. 20 Kassen je IP und Stunde) prüft test-daten
 async function req(method, pfad, body, headers = {}) {
-  const h = { ...headers };
+  ipNr++;
+  const h = { 'x-forwarded-for': `10.${(ipNr >> 8) & 255}.${ipNr & 255}.1`, ...headers };
   let data;
   if (Buffer.isBuffer(body)) { data = body; h['content-type'] = 'application/octet-stream'; } else if (body !== undefined) { data = JSON.stringify(body); h['content-type'] = 'application/json'; }
   const r = await fetch(base + pfad, { method, headers: h, body: data });
@@ -87,7 +89,7 @@ async function start() {
   writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify({ adminKey: ADMIN }));
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS, TRUST_PROXY: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   child.stdout.on('data', (d) => { log += d; }); child.stderr.on('data', (d) => { log += d; });
   for (let i = 0; i < 100; i++) {
@@ -113,6 +115,8 @@ try {
     { code: 'ALT', type: 'percent', value: 5, minOrder: 0, active: true, mitAktion: false, gueltigBis: '2020-01-31' },
     { code: 'EINMAL', type: 'fixed', value: 2, minOrder: 0, active: true, mitAktion: false, maxEinloesungen: 1 },
     { code: 'EINS', type: 'fixed', value: 3, minOrder: 0, active: true, mitAktion: false, maxEinloesungen: 1 },
+    ...['RACEA', 'RACEB', 'RACEC'].map((code) => ({ code, type: 'fixed', value: 2, minOrder: 0, active: true, mitAktion: false, maxEinloesungen: 1 })),
+    { code: 'GEWINN', type: 'percent', value: 100, minOrder: 0, active: true, mitAktion: true, maxEinloesungen: 1 },
   ];
   check((await setze({ coupons: coupons0 })).status === 200, 'Gutscheine (inkl. „gültig bis“ und Höchstzahl) speichern → 200');
 
@@ -194,6 +198,16 @@ try {
   const c1 = await abschluss(h1.orderId, h1.accessKey);
   check(c1.complete.status === 409 && c1.complete.json?.code === 'gutschein' && lies(h1.orderId).status === 'storniert' && !lies(h1.orderId).invoiceNo, 'erste Kasse danach abschließen → 409, storniert, keine Rechnung', c1.complete.json);
 
+  // Gleichzeitiger Abschluss zweier Kassen derselben Kundin mit einem Einmal-Code: nur eine bekommt eine Rechnung
+  for (const code of ['RACEA', 'RACEB', 'RACEC']) {
+    const ka = await bestelle([V(1)], code, { abschliessen: false }), kb = await bestelle([V(1)], code, { abschliessen: false });
+    for (const k of [ka, kb]) await req('PUT', `/api/order/${k.orderId}/stl/0`, stl(), { 'x-order-key': k.accessKey });
+    const [ca, cb] = await Promise.all([ka, kb].map((k) => req('POST', `/api/order/${k.orderId}/complete`, {}, { 'x-order-key': k.accessKey })));
+    const st = [ca.status, cb.status].sort().join('/');
+    const rechnungen = [ka, kb].filter((k) => lies(k.orderId).invoiceNo).length;
+    check(st === '200/409' && rechnungen === 1 && [ca, cb].some((c) => c.json?.code === 'gutschein'), `${code}: zwei gleichzeitige Abschlüsse (max. 1) → 200 + 409 „gutschein“, genau eine Rechnung`, { st, rechnungen });
+  }
+
   console.log('5) Storno aufheben, Reklamationsgrenzen');
   const g60 = await guthaben(60);
   const k1 = await bestelle([V(1)], g60), k2 = await bestelle([V(1)], g60);   // 29,80 + 29,80 = 59,60 (Guthaben deckt Ware + Versand)
@@ -212,6 +226,13 @@ try {
   check(/lautet über 0,00/.test(g0n) && !/gutgeschrieben/.test(g0n), 'Vermerk „Rechnung … lautet über 0,00 €“ (nicht „vollständig gutgeschrieben“)', g0n);
   const g0a = await status(g0.orderId, 'neu');
   check(g0a.status === 200 && lies(g0.orderId).status === 'neu' && lies(g0.orderId).paymentStatus === 'bezahlt', '„Storno aufheben“ bei 0-€-Rechnung → 200 (wieder neu, bezahlt)', g0a.json);
+  // Einmal-Code über 0,00 €: Storno gibt ihn frei; ist er danach anderweitig vergeben, lässt sich das Storno nicht mehr aufheben
+  const gwA = await bestelle([V(2)], 'GEWINN');   // 44,82 € Warenwert: versandfrei, 100 % → 0 €
+  check(gwA.invoiceNo && lies(gwA.orderId).total === 0 && (await status(gwA.orderId, 'storniert')).status === 200, 'GEWINN (100 %, max. 1): Rechnung über 0 €, storniert');
+  const gwB = await bestelle([V(2)], 'GEWINN', { kunde: { email: 'zweite@example.test' } });
+  check(!!gwB.invoiceNo, 'nach dem Storno löst eine andere Kundin GEWINN ein');
+  const gwAuf = await status(gwA.orderId, 'neu');
+  check(gwAuf.status === 409 && /inzwischen anderweitig eingelöst/.test(gwAuf.json?.error || '') && lies(gwA.orderId).status === 'storniert', '„Storno aufheben“ der ersten → 409 (Höchstzahl erreicht), bleibt storniert', gwAuf.json);
   const ohne = await bestelle([V(1)], null, { abschliessen: false });
   await status(ohne.orderId, 'storniert');
   check((await status(ohne.orderId, 'neu')).status === 200, 'ohne Rechnung (nie abgeschlossene Kasse) bleibt Aufheben als Korrekturweg');

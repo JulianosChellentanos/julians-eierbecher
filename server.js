@@ -2164,13 +2164,39 @@ function couponRest(c, { ohne = null } = {}) {
  * dass dieselbe Kundin den Code so nicht doppelt bekommt, prüft handleComplete beim Abschluss. email = null (Vorschau /api/quote,
  * Kundin noch unbekannt): nur feste. ohne = orderId, die nicht mitzählt (Nachprüfung beim Abschluss).
  */
-function couponEinloesungen(c, { ohne = null, email = null } = {}) {
+function couponEinloesungen(c, { ohne = null, email = null, paypalEigene = false } = {}) {
   const now = Date.now(), mail = String(email || '').trim().toLowerCase();
   let n = 0;
   for (const [id, e] of couponUse.get(String(c?.code || '').trim().toUpperCase()) || []) {
-    if (id !== ohne && (e.fest || (mail && e.email !== mail && now - e.at < GUTHABEN_RESERVIERUNG_MS))) n++;
+    // paypalEigene (Abschluss): auch eigene laufende PayPal-Zahlungen zählen — sie werden nach dem Einzug ohne weitere
+    // Gutschein-Prüfung zur Bestellung (Preisgarantie), eine eigene offene Vorkasse-Kasse dagegen nicht
+    const offen = now - e.at < GUTHABEN_RESERVIERUNG_MS && mail && (e.email !== mail || (paypalEigene && id.startsWith('paypal:')));
+    if (id !== ohne && (e.fest || offen)) n++;
   }
   return n;
+}
+/**
+ * Darf diese Bestellung ihren Gutschein bzw. ihr Guthaben jetzt fest einlösen? → null oder { code, note, error } (409).
+ * Guthaben: Rest ohne diese Bestellung reicht noch. Höchstzahl (maxEinloesungen): feste Einlösungen, offene Kassen anderer
+ * Kundinnen und laufende PayPal-Zahlungen (auch eigene) — handleComplete prüft das unmittelbar vor der Rechnungsnummer und
+ * vermerkt die Einlösung im selben Schritt als fest (trackCouponUse), damit ein gleichzeitiger Abschluss einer zweiten Kasse
+ * sie schon sieht. Per PayPal bezahlte Bestellungen sind schon fest (Einzug nach der Prüfung in /api/paypal/create).
+ */
+function einloesungGesperrt(order) {
+  if (!order.coupon || (order.paymentStatus === 'bezahlt' && Number(order.total) > 0) || order.status === 'storniert') return null;
+  const gc = couponByCode(order.coupon.code);
+  if (!gc) return null;
+  if (isGuthaben(gc)) {
+    if (couponRest(gc, { ohne: order.orderId }) + 0.005 >= euro(order.coupon.off)) return null;
+    return { code: 'guthaben', note: `Kasse abgebrochen: Guthaben „${gc.code}“ wurde inzwischen anderweitig eingelöst`,
+      error: `Dein Guthaben „${gc.code}“ wurde inzwischen eingelöst – bitte starte die Kasse neu.` };
+  }
+  if (gc.maxEinloesungen > 0 && !order.invoiceNo
+    && couponEinloesungen(gc, { ohne: order.orderId, email: order.customer?.email, paypalEigene: true }) >= gc.maxEinloesungen) {
+    return { code: 'gutschein', note: `Kasse abgebrochen: Gutschein „${gc.code}“ ist inzwischen vergeben (höchstens ${gc.maxEinloesungen}-mal einlösbar)`,
+      error: `Der Gutschein „${gc.code}“ ist inzwischen vergeben – bitte starte die Kasse neu.` };
+  }
+  return null;
 }
 /** Heutiges Datum in deutscher Zeit als „JJJJ-MM-TT“ (Vergleich mit gueltigBis eines Gutscheins) */
 const heuteBerlin = (d = new Date()) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(d);
@@ -2644,6 +2670,12 @@ function stornoAufhebenSperre(order) {
   if (gc && isGuthaben(gc)) {
     const rest = couponRest(gc, { ohne: order.orderId });
     if (rest + 0.005 < euro(order.coupon.off)) return `Das Guthaben „${gc.code}“ dieser Bestellung ist inzwischen anderweitig eingelöst (frei: ${money(rest)}) – das Storno lässt sich nicht zurücknehmen. Bitte eine neue Bestellung anlegen.`;
+  }
+  // Gutschein mit Höchstzahl: das Storno hat die Einlösung freigegeben (z. B. eine Rechnung über 0,00 € ohne Stornorechnung) —
+  // ist der Code seitdem anderweitig vergeben (feste Einlösungen und offene Kassen anderer Kundinnen), bleibt das Storno
+  if (gc && !isGuthaben(gc) && gc.maxEinloesungen > 0
+    && couponEinloesungen(gc, { ohne: order.orderId, email: order.customer?.email || '-' }) >= gc.maxEinloesungen) {
+    return `Der Gutschein „${gc.code}“ dieser Bestellung ist inzwischen anderweitig eingelöst (höchstens ${gc.maxEinloesungen}-mal) – das Storno lässt sich nicht zurücknehmen. Bitte eine neue Bestellung anlegen.`;
   }
   return null;
 }
@@ -3730,22 +3762,16 @@ async function handleComplete(req, res, id, url) {
     const z = orderZugriff(req, url, order, kasseOffen);
     if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
     if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
-    // Guthaben: die Reservierung einer nicht abgeschlossenen Kasse gilt nur GUTHABEN_RESERVIERUNG_MS — wurde der Betrag seitdem
-    // anderweitig eingelöst, wird diese Bestellung nicht mehr abgeschlossen (keine Rechnung), sondern als abgebrochen storniert
-    const gc = order.coupon && !(order.paymentStatus === 'bezahlt' && Number(order.total) > 0) && order.status !== 'storniert' ? couponByCode(order.coupon.code) : null;
-    if (gc && isGuthaben(gc) && couponRest(gc, { ohne: order.orderId }) + 0.005 < euro(order.coupon.off)) {
-      setOrderStatus(order, 'storniert', `Kasse abgebrochen: Guthaben „${gc.code}“ wurde inzwischen anderweitig eingelöst`, 'system');
+    // Guthaben (Reservierung einer offenen Kasse gilt nur GUTHABEN_RESERVIERUNG_MS) bzw. Gutschein mit Höchstzahl (eigene parallele
+    // Kassen zählen beim Anlegen nicht mit): inzwischen anderweitig eingelöst → nicht abschließen (keine Rechnung), als abgebrochen
+    // stornieren. Geprüft hier (früh, ohne Upload-Prüfung) und noch einmal unmittelbar vor der Rechnungsnummer (siehe unten).
+    const abbrechen = async (sperre) => {
+      setOrderStatus(order, 'storniert', sperre.note, 'system');
       await writeOrder(order);
-      return send(res, 409, { ok: false, code: 'guthaben', error: `Dein Guthaben „${gc.code}“ wurde inzwischen eingelöst – bitte starte die Kasse neu.` });
-    }
-    // Gutschein mit Höchstzahl (maxEinloesungen): beim Abschluss nachprüfen — die Reservierung gilt nur 2 Stunden, und eigene
-    // parallele Kassen zählen beim Anlegen nicht mit (couponEinloesungen); ist er inzwischen vergeben, wie beim Guthaben abbrechen
-    if (gc && !isGuthaben(gc) && gc.maxEinloesungen > 0 && !order.invoiceNo
-      && couponEinloesungen(gc, { ohne: order.orderId, email: order.customer?.email }) >= gc.maxEinloesungen) {
-      setOrderStatus(order, 'storniert', `Kasse abgebrochen: Gutschein „${gc.code}“ ist inzwischen vergeben (höchstens ${gc.maxEinloesungen}-mal einlösbar)`, 'system');
-      await writeOrder(order);
-      return send(res, 409, { ok: false, code: 'gutschein', error: `Der Gutschein „${gc.code}“ ist inzwischen vergeben – bitte starte die Kasse neu.` });
-    }
+      return send(res, 409, { ok: false, code: sperre.code, error: sperre.error });
+    };
+    const sperre = einloesungGesperrt(order);
+    if (sperre) return await abbrechen(sperre);
     if (order.status === 'storniert') return send(res, 409, { ok: false, error: 'Diese Bestellung wurde storniert – bitte starte die Kasse neu.' });
     // Rechnung nur, wenn jede Position eine vollständige, gültige Druckdatei hat (danach sind die Dateien unveränderlich)
     if (!order.invoiceNo) {
@@ -3754,8 +3780,17 @@ async function handleComplete(req, res, id, url) {
       if (fehlen.length) {
         return send(res, 409, { ok: false, code: 'dateien', error: `Die Druckdatei für ${fehlen.length > 1 ? 'die Positionen' : 'Position'} ${fehlen.join(', ')} fehlt noch oder ist unvollständig – bitte versuch es noch einmal.` });
       }
+      // Nach den Dateiprüfungen (await) noch einmal — ab hier ohne await bis zum Vormerken: zwei gleichzeitige Abschlüsse mit
+      // demselben Einmal-Code (zwei Kassen derselben Kundin) sehen sich so gegenseitig, nur einer bekommt eine Rechnung
+      const sperreJetzt = einloesungGesperrt(order);
+      if (sperreJetzt) return await abbrechen(sperreJetzt);
       order.invoiceNo = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
-      await rechnungFesthalten(order);
+      trackCouponUse(order);   // Einlösung fest vormerken (invoiceNo gesetzt), bevor rechnungFesthalten auf die Platte wartet
+      try { await rechnungFesthalten(order); } catch (err) {
+        // nicht gespeichert: Vormerkung auf den gespeicherten Stand zurücknehmen (Nummer gibt rechnungFesthalten selbst frei)
+        try { trackCouponUse(await readOrder(id)); } catch { untrackCouponUse(id); }
+        throw err;
+      }
     } else if (!order.steuer) steuerDerRechnung(order);
     order.filesComplete = order.lines.every((l) => existsSync(path.join(ORDERS, id, l.stlFile)));
     // Eine ausgestellte Rechnung wird nie neu geschrieben (GoBD) — ältere Bestellungen ohne completedAt behalten ihre Datei

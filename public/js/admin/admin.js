@@ -101,6 +101,14 @@ function stornoEndgueltig(o) {
   if (o.invoiceNo && gs > 0 && r2c(rechnungsbetrag(o) - gs) <= 0) return `Die Rechnung ${o.invoiceNo} ist mit Gutschrift ${r.gutschriftNo} vollständig gutgeschrieben – das Storno lässt sich nicht zurücknehmen. Für einen neuen Auftrag bitte eine neue Bestellung anlegen.`;
   const g = guthabenOff(o), rest = DATA?.couponRest?.[String(o.coupon?.code || '').trim().toUpperCase()];
   if (g > 0 && rest != null && rest + 0.005 < g) return `Das Guthaben „${o.coupon.code}“ ist inzwischen anderweitig eingelöst – das Storno lässt sich nicht zurücknehmen.`;
+  // Gutschein mit Höchstzahl (wie server.js stornoAufhebenSperre, hier nur die festen Einlösungen aus den geladenen Bestellungen)
+  const code = String(o.coupon?.code || '').trim().toUpperCase();
+  const gc = code && (DATA?.settings?.coupons || []).find((c) => c && !c.guthaben && String(c.code || '').trim().toUpperCase() === code);
+  if (gc && Number(gc.maxEinloesungen) > 0) {
+    const fest = (DATA.orders || []).filter((x) => x.orderId !== o.orderId && x.status !== 'storniert' && String(x.coupon?.code || '').trim().toUpperCase() === code
+      && (x.invoiceNo || x.completedAt || (x.paymentStatus === 'bezahlt' && Number(x.total) > 0))).length;
+    if (fest >= Number(gc.maxEinloesungen)) return `Der Gutschein „${o.coupon.code}“ ist inzwischen anderweitig eingelöst (höchstens ${Number(gc.maxEinloesungen)}-mal) – das Storno lässt sich nicht zurücknehmen.`;
+  }
   return '';
 }
 /** Mail-Phase zur aktuellen Reklamation: offen/ruecksendung → angelegt, sonst = Status */
