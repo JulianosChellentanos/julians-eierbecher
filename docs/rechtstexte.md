@@ -57,8 +57,8 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
     lizenzieren. Ohne das droht ein Vertriebsverbot – bitte vor dem Start erledigen.
 11. **Produktsicherheit (GPSR)**: Du bist Hersteller deiner Vasen. Die Verordnung verlangt die Angaben an zwei Stellen:
     - **Online (Art. 19 GPSR):** Name, Post- und E-Mail-Adresse des Herstellers und die Sicherheits-/Pflegehinweise
-      beim Angebot. Der Shop zeigt im Footer („Gut zu wissen“) die Zeile „Hersteller: …“ aus den Firmendaten
-      (`/api/pricing → anbieter`). Die Pflegehinweise (nicht spülmaschinengeeignet, nicht über 50 °C) stehen im Footer
+      beim Angebot. Der Shop zeigt im Footer („Gut zu wissen“) und in der Kasse (unter dem Hinweis zu AGB und
+      Widerruf) die Zeile „Hersteller: …“ aus den Firmendaten (`/api/pricing → anbieter`). Die Pflegehinweise (nicht spülmaschinengeeignet, nicht über 50 °C) stehen im Footer
       („Gut zu wissen“), im Konfigurator (Vasen-Hinweis, `content.json → hinweise.vase`), in der Kasse
       (`hinweise.checkout`), in den FAQ, in § 13 AGB und auf der Rechnung.
     - **Im Paket (Art. 9 Abs. 6 und 7 GPSR):** Name, Post- und E-Mail-Adresse des Herstellers und die Sicherheits- und
