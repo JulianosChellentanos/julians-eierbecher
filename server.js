@@ -2171,9 +2171,10 @@ function pruefeKasse(data, { garantie = null } = {}) {
   const items = data?.items;
   if (!Array.isArray(items) || !items.length) return { status: 400, error: 'Warenkorb ist leer', customer };
   if (items.length > MAX_POSITIONEN) return { status: 400, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.`, customer };
-  const ungueltig = positionenFehler(items);   // Werte wie im Konfigurator, bekannte Farben (lib/eingaben.js)
-  if (ungueltig) return { status: 400, error: ungueltig, customer };
   if (garantie) return { customer, items, totals: garantie.totals };
+  // Werte wie im Konfigurator, bekannte Farben (lib/eingaben.js) — bei PayPal schon vor der Zahlung geprüft (garantie = dieselben Positionen)
+  const ungueltig = positionenFehler(items);
+  if (ungueltig) return { status: 400, error: ungueltig, customer };
   // Produktschalter (derzeit Eierbecher) und aus dem Shop genommene Farben vor der Preisberechnung abweisen
   const sperre = produktSperre(items) || farbSperre(items);
   if (sperre) return { status: 400, error: sperre, customer };
