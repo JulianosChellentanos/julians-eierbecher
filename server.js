@@ -961,7 +961,9 @@ async function mailErgebnis(e) {
     try { o = await readOrder(orderId); } catch { return; }
     if (e.status === 'gesendet') {
       if (key) o.mailsSent[key] = e.sentAt || new Date().toISOString();
-      addHistory(o, o.status, `E-Mail „${e.subject}“ → ${e.to}`, 'mail');
+      // Altbestand (e.vermerkt): der alte Code hat dieselbe Zeile schon beim Einreihen geschrieben — nicht doppelt
+      const note = `E-Mail „${e.subject}“ → ${e.to}`;
+      if (!(e.vermerkt && (o.history || []).some((h) => h?.note === note))) addHistory(o, o.status, note, 'mail');
     } else {
       if (key && e.reserviert && o.mailsSent[key] === e.reserviert) delete o.mailsSent[key];
       addHistory(o, o.status, e.status === 'deaktiviert'
@@ -988,6 +990,16 @@ function stornoMailInfo(order) {
   const { gutschrift, guth } = stornoBetraege(order);
   return { gutschrift, gutschriftNo: gutschrift > 0 ? String(order.reklamation?.gutschriftNo || '') : '', guthaben: guth ? { code: guth.code, off: guth.off } : null };
 }
+/**
+ * Zahlungserinnerung höchstens einmal je Kalendertag (deutsche Zeit): Uhrzeit der heutigen (zugestellten) Erinnerung, sonst ''.
+ * erinnerungLaeuft = Bestellungen, deren Erinnerung gerade gesendet wird — so kommt bei Doppelklick oder zwei Admin-Tabs nur eine an.
+ */
+function erinnertHeute(order) {
+  const z = order?.mailsSent?.zahlungserinnerung;
+  const tag = (t) => new Date(t).toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin' });
+  return z && tag(z) === tag(Date.now()) ? new Date(z).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }) : '';
+}
+const erinnerungLaeuft = new Set();
 // „Erneut“ im Versandprotokoll bei Mails, deren Inhalt nicht mehr gespeichert ist (zugestellt) oder deren Anhänge fehlen:
 // aus Bestellung bzw. Widerruf neu erzeugen — wie „senden“ im Bestell-Drawer. Passwort-/Bestätigungslinks und Freitext nicht.
 function mailNeuBaubar(e) {
@@ -1008,6 +1020,9 @@ async function mailNeuBauen(e) {
   let order;
   try { order = await readOrder(orderId); } catch { throw new Error(`Bestellung ${orderId} nicht gefunden`); }
   if (kind === 'admin-neu') return { to: adminEmpfaenger(), replyTo: antwortAn(order.customer?.email), ...adminNewOrder({ order, settings, baseUrl }) };
+  // „Erneut“ einer zugestellten Zahlungserinnerung: dieselbe Tagesgrenze wie der Knopf im Drawer
+  const um = kind === 'zahlungserinnerung' ? erinnertHeute(order) : '';
+  if (um || (kind === 'zahlungserinnerung' && erinnerungLaeuft.has(orderId))) throw new Error(`Heute ist schon eine Zahlungserinnerung rausgegangen${um ? ` (um ${um} Uhr)` : ''} – eine je Tag`);
   const body = kind.startsWith('status:') ? { kind: 'status', status: kind.slice(7) }
     : kind.startsWith('reklamation:') ? { kind: 'reklamation', phase: kind.slice(12) } : { kind };
   const attachments = kind === 'bestaetigung' ? await legalAttachments() : [];
@@ -1060,6 +1075,10 @@ function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge =
       // Nur für offene Vorkasse mit Betrag — nach Zahlung oder Storno gibt es nichts zu erinnern
       if (order.payment === 'paypal' || order.paymentStatus === 'bezahlt' || order.status === 'storniert' || !(euro(order.total) > 0)) {
         throw httpError(400, 'Eine Zahlungserinnerung gibt es nur für offene Vorkasse-Bestellungen (nicht bezahlt, nicht storniert, Betrag über 0 €)');
+      }
+      // Nie abgeschlossene Kasse (keine Rechnung, keine Bestätigung — wie „Kasse abgebrochen“ im Admin): kein Vertrag, keine Zahlungspflicht
+      if (!order.completedAt && !order.invoiceNo && (order.status || 'neu') === 'neu') {
+        throw httpError(400, 'Die Kasse dieser Bestellung wurde nie abgeschlossen (keine Rechnung, keine Bestätigung) – dafür gibt es keine Zahlungserinnerung');
       }
       return { key: 'zahlungserinnerung', kind, ...zahlungserinnerung({ order, settings, baseUrl }) };
     }
@@ -1115,12 +1134,15 @@ hooks.reklamation = async (order, phase, { notify = true } = {}) => {
 // Widerruf eingegangen → Eingangsbestätigung an die angegebene Adresse (sofort, mit Inhalt, Datum/Uhrzeit, Referenz) und
 // Meldung an den Shop (adminTo, sonst Firmen-Adresse) — die Meldung geht unabhängig von „Kopie an den Shop“ raus,
 // ein Widerruf darf nicht untergehen. Zugeordnete Bestellung: Zustellung dort vermerkt (mailsSent['widerruf:<Referenz>'] + Historie).
+// w.bestaetigungGebremst (Bremse für Widerruf-Mails an dieselbe Adresse): keine Eingangsbestätigung, die Meldung an den Shop geht trotzdem.
 hooks.widerruf = async (w) => {
   const baseUrl = baseUrlFor(settings);
   const m = widerrufEingang({ widerruf: w, settings, baseUrl });
   const msg = { to: { name: w.name, email: w.email }, subject: m.subject, text: m.text, html: m.html, kind: 'widerruf', ref: w.ref };
-  if (w.orderMatched) await queueOrderMail({ orderId: w.orderId }, `widerruf:${w.ref}`, msg);
-  else await mailer.queue(msg);
+  if (!w.bestaetigungGebremst) {
+    if (w.orderMatched) await queueOrderMail({ orderId: w.orderId }, `widerruf:${w.ref}`, msg);
+    else await mailer.queue(msg);
+  }
   const admins = adminEmpfaenger();
   if (admins.length) {
     const a = adminWiderruf({ widerruf: w, settings, baseUrl });
@@ -3451,19 +3473,25 @@ const server = http.createServer(async (req, res) => {
         const cust = customerAddress(order);
         if (p === '/api/admin/mail-preview') return send(res, 200, { ok: true, subject: m.subject, html: m.html, text: m.text, to: cust.email, kind: m.kind });
         if (!isEmail(cust.email)) return send(res, 400, { ok: false, error: 'Die Bestellung hat keine gültige Kunden-E-Mail' });
-        // Zahlungserinnerung höchstens einmal je Kalendertag (deutsche Zeit)
-        if (m.key === 'zahlungserinnerung' && order.mailsSent?.zahlungserinnerung) {
-          const tag = (iso) => new Date(iso).toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin' });
-          const zuletzt = order.mailsSent.zahlungserinnerung;
-          if (tag(zuletzt) === tag(Date.now())) {
-            const um = new Date(zuletzt).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' });
-            return send(res, 409, { ok: false, error: `Heute ist schon eine Zahlungserinnerung rausgegangen (um ${um} Uhr) – eine je Tag` });
-          }
+        // Zahlungserinnerung höchstens einmal je Kalendertag (deutsche Zeit): für die Dauer des Versands reserviert (erinnerungLaeuft),
+        // geprüft an der frisch gelesenen Bestellung — mailErgebnis hat eine eben zugestellte Erinnerung dort schon vermerkt
+        const erinnerung = m.key === 'zahlungserinnerung';
+        if (erinnerung) {
+          if (erinnerungLaeuft.has(order.orderId)) return send(res, 409, { ok: false, error: 'Die Zahlungserinnerung wird gerade gesendet – eine je Tag' });
+          erinnerungLaeuft.add(order.orderId);
         }
-        // Vermerk an der Bestellung (Historie, mailsSent[key]) schreibt der Mailer über mailErgebnis — auch bei Fehlern
-        const r = await mailer.send({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: m.kind, ref: order.orderId, orderId: order.orderId, key: m.key });
-        if (!r.ok && /nicht eingerichtet/.test(r.error || '')) r.error += ' – die Nachricht liegt im Versandprotokoll und kann nach der Einrichtung erneut gesendet werden';
-        return send(res, 200, { ok: !!r.ok, id: r.id, error: r.error || '' });
+        try {
+          if (erinnerung) {
+            let frisch = order;
+            try { frisch = await readOrder(order.orderId); } catch { /* wie oben gelesen */ }
+            const um = erinnertHeute(frisch);
+            if (um) return send(res, 409, { ok: false, error: `Heute ist schon eine Zahlungserinnerung rausgegangen (um ${um} Uhr) – eine je Tag` });
+          }
+          // Vermerk an der Bestellung (Historie, mailsSent[key]) schreibt der Mailer über mailErgebnis — auch bei Fehlern
+          const r = await mailer.send({ to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: m.kind, ref: order.orderId, orderId: order.orderId, key: m.key });
+          if (!r.ok && /nicht eingerichtet/.test(r.error || '')) r.error += ' – die Nachricht liegt im Versandprotokoll und kann nach der Einrichtung erneut gesendet werden';
+          return send(res, 200, { ok: !!r.ok, id: r.id, error: r.error || '' });
+        } finally { if (erinnerung) erinnerungLaeuft.delete(order.orderId); }
       } catch (err) {
         return send(res, err.httpCode || 500, { ok: false, error: err.message || 'Serverfehler' });
       }
