@@ -371,6 +371,8 @@ function loadSettings() {
     // Guthaben gilt ohne Mindestbestellwert und auch während einer Aktion (Gutschrift-Beleg, AGB § 14) — ältere Einstellungen angleichen
     if (c.guthaben) { c.minOrder = 0; c.mitAktion = true; }
   }
+  // Preise: auf Cent runden, fehlende Teile (Versand, Produkte, Währung) auffüllen — Altstände laufen ohne Handarbeit weiter
+  settings.pricing = preiseBeimLaden(settings.pricing);
   // Aktionen: Array erzwingen, kaputte Einträge verwerfen (Meldung im Log)
   settings.aktionen = sanitizeAktionen(settings.aktionen, { lenient: true });
   // Ein leeres/ungültiges Admin-Passwort würde den Admin entweder für alle öffnen oder dauerhaft aussperren
@@ -378,8 +380,6 @@ function loadSettings() {
     console.warn('⚠️  settings.adminKey ungültig – Standard-Passwort wird verwendet');
     settings.adminKey = DEFAULT_SETTINGS.adminKey;
   }
-  // Preise: auf Cent runden, fehlende Teile (Versand, Produkte, Währung) auffüllen — Altstände laufen ohne Handarbeit weiter
-  settings.pricing = preiseBeimLaden(settings.pricing);
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
   // Migration Aufpreise: Muster (Betreiber-Wunsch: Lamellen +3 €), Farbschrift +2 €
@@ -3478,7 +3478,9 @@ const server = http.createServer(async (req, res) => {
       if (creditPrefix.prefix) settings.creditPrefix = creditPrefix.prefix;
       if (nextCreditNeu) settings.nextCredit = nextCreditNeu;
       if (wartungNeu) settings.wartung = wartungNeu;
-      if (paypalNeu) settings.paypal = paypalNeu;
+      if (patch.paypal && typeof patch.paypal === 'object') {
+        settings.paypal = paypalNeu;   // geprüft oben (paypalAus, Secret-Maske angewendet)
+      }
       settings.printing = { ...DEFAULT_SETTINGS.printing, ...(settings.printing || {}) };
       // E-Mail: nur bekannte Felder (geprüft in mailAus); ohne Patch bleibt der gespeicherte Stand
       if (mailNeu) settings.mail = mailNeu;
