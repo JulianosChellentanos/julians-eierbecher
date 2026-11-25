@@ -3264,9 +3264,29 @@ const kasseHash = (items, couponCode) => sha256(JSON.stringify({ items, coupon: 
 function paypalPendingAufraeumen(now = Date.now()) {
   for (const [id, e] of paypalPending) if (now - e.at > PAYPAL_PENDING_TTL) paypalPending.delete(id);
 }
-/** Kundendaten aus der Kasse: nur die bekannten Felder, ohne Steuerzeichen, mit Längengrenzen (Notiz darf Zeilenumbrüche haben) */
+/**
+ * Unsichtbare Formatzeichen (Unicode Cf: Bidi-Marken und -Einbettungen, Null-Breiten-Zeichen, weiches Trennzeichen, BOM …) entfernen
+ * — sie kommen beim Kopieren aus Kontakten mit, sind auf Belegen unsichtbar und könnten die Leserichtung verdrehen
+ */
+const ohneFormatzeichen = (v) => String(v ?? '').replace(/\p{Cf}+/gu, '');
+/**
+ * Gravurtext und Farbname einer Position für Bestellung und Belege: ohne C0/C1-Steuer- und Formatzeichen, Gravur höchstens
+ * GRAVUR_MAX Zeichen wie das Kassenfeld (maxlength; ein Ersatzpaar wird nicht zerteilt). Die Druckdatei kommt vom Konfigurator,
+ * der dieselbe Grenze hat — gekürzt wird also nur, was nicht aus dem Shop stammt.
+ */
+const GRAVUR_MAX = 30;
+const positionsText = (v) => ohneFormatzeichen(v).replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ');
+function positionSauber(l) {
+  const config = l.config && typeof l.config.text === 'string'
+    ? { ...l.config, text: positionsText(l.config.text).slice(0, GRAVUR_MAX).replace(/[\ud800-\udbff]$/, '') } : l.config;
+  return { config, colorName: typeof l.colorName === 'string' ? positionsText(l.colorName).trim().slice(0, 80) : l.colorName };
+}
+/**
+ * Kundendaten aus der Kasse: nur die bekannten Felder, ohne Steuerzeichen (C0/C1) und unsichtbare Formatzeichen, mit
+ * Längengrenzen (Notiz darf Zeilenumbrüche haben) — auf Rechnung und PDF stehen so nur sichtbare Zeichen
+ */
 function kundeAus(raw) {
-  const clip = (v, n, nl = false) => String(v ?? '').replace(nl ? /[^\S\n]+|[\x00-\x08\x0b-\x1f\x7f]+/g : /[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, n);
+  const clip = (v, n, nl = false) => ohneFormatzeichen(v).replace(nl ? /[^\S\n]+|[\x00-\x08\x0b-\x1f\x7f-\x9f]+/g : /[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').trim().slice(0, n);
   return {
     name: clip(raw?.name, 120), email: clip(raw?.email, 254).toLowerCase(),
     street: clip(raw?.street, 200), zip: clip(raw?.zip, 20), city: clip(raw?.city, 120),
@@ -3780,10 +3800,11 @@ async function handleCheckout(req, res) {
     paypalOrderId: paypalCap ? ppId : null,
     customer,
     lines: totals.lines.map((l, i) => ({
-      product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
+      // Gravur und Farbname ohne Steuer-/Formatzeichen, Gravur auf die Länge des Kassenfelds (positionSauber)
+      product: l.product, qty: l.qty, saucer: !!l.saucer, config: positionSauber(l).config,
       // Design-Code der Zeile (Warenkorb schickt ihn mit) — für Druckzettel, Admin, Rechnung und Nachbestellung; nur in Normalform
       code: typeof l.code === 'string' && /^[A-Z0-9]{4,20}$/.test(normalizeCode(l.code)) ? normalizeCode(l.code) : null,
-      color: l.color, colorName: l.colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
+      color: l.color, colorName: positionSauber(l).colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
       // Aktion: uvp = Normalpreis (Preis vor der Aktion, Feldname historisch), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
       // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
       uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName ?? null, aktionId: l.aktionId ?? null,
