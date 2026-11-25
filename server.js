@@ -58,6 +58,7 @@ const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.hdr': 'application/octet-stream',
   '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8',
 };
 
 // ---------------------------------------------------------------------------
@@ -1651,11 +1652,11 @@ function logoHTML(height = 34) {
   const w = Math.round((LOGO_SVG.w / LOGO_SVG.h) * height * 10) / 10;
   return `<svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${LOGO_SVG.w} ${LOGO_SVG.h}" width="${w}" height="${height}" role="img" aria-label="${BRAND}"><title>${BRAND}</title>${LOGO_SVG.paths}</svg>`;
 }
-/** Öffentlicher Host für Fußzeilen: aus mail.publicUrl (wenn gesetzt), sonst formsam.de */
+/** Öffentlicher Host für Fußzeilen: aus mail.publicUrl (wenn gesetzt), sonst die Hauptadresse (www.formsam.com → formsam.com) */
 function publicHost() {
   const u = String(settings.mail?.publicUrl || '').trim();
   try { if (/^https?:\/\//i.test(u)) return new URL(u).host.replace(/^www\./, ''); } catch { /* ungültig → Standard */ }
-  return 'formsam.de';
+  return new URL(HAUPTADRESSE).host.replace(/^www\./, '');
 }
 /** „00000 Musterstadt“ + Land (nur außerhalb Deutschlands) */
 function companyOrt(co) {
@@ -2381,6 +2382,51 @@ function legalFallbackHTML(slug) {
   <p><b>Anbieter</b><br>${anbieter}${co.email ? `<br>E-Mail: ${esc(co.email)}` : ''}</p>
   ${slug === 'widerruf' && co.email ? `<p>Du möchtest einen Vertrag widerrufen? Schreib mir einfach eine E-Mail an ${esc(co.email)}.</p>` : ''}
   <p><a href="/">Zurück zum Shop</a></p></body></html>`;
+}
+
+// ---------------------------------------------------------------------------
+// Öffentliche Adresse für Suchmaschinen und Link-Vorschau: Startseite (Canonical, og:url, og:image, twitter:image),
+// robots.txt und sitemap.xml nehmen mail.publicUrl; leer oder lokal (localhost/127.…) → Hauptadresse www.formsam.com
+// ---------------------------------------------------------------------------
+const HAUPTADRESSE = 'https://www.formsam.com';
+function oeffentlicheAdresse() {
+  const u = String(settings.mail?.publicUrl || '').trim().replace(/\/+$/, '');
+  return /^https?:\/\/[^\s"'<>]+$/i.test(u) && !/^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(u) ? u : HAUPTADRESSE;
+}
+/**
+ * robots.txt: Admin, Belege und Konto-/Admin-API nicht crawlen; Preise, Farben, Texte, Skripte und Stile bleiben frei (braucht
+ * die Suchmaschine zum Darstellen der Startseite). Im Wartungsmodus alles sperren (die Datei ist dann ohne Kennwort erreichbar).
+ */
+function robotsTxt() {
+  if (wartungAktiv()) return 'User-agent: *\nDisallow: /\n';
+  return ['User-agent: *', 'Disallow: /admin', 'Disallow: /orders/', 'Disallow: /api/admin/', 'Disallow: /api/auth/', '',
+    `Sitemap: ${oeffentlicheAdresse()}/sitemap.xml`, ''].join('\n');
+}
+/** sitemap.xml: Startseite und die fünf Rechtsseiten (ohne lastmod — die Rechtsseiten ändern sich mit den Einstellungen) */
+function sitemapXml() {
+  const base = oeffentlicheAdresse();
+  const urls = ['/', ...LEGAL_ROUTES.map((r) => `/${r}`)].map((u) => `  <url><loc>${esc(base + u)}</loc></url>`);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
+}
+/**
+ * Startseite (public/index.html) mit Canonical und Vorschau-Adressen aus der öffentlichen Adresse. Zwischengespeichert je
+ * Dateistand und Adresse; das ETag kommt aus dem Ergebnis (ändert sich also auch, wenn nur die Adresse im Admin wechselt).
+ */
+let startseiteCache = null;   // { key, html, gz, etag }
+function startseite() {
+  const file = path.join(PUBLIC, 'index.html');
+  if (!existsSync(file)) return null;
+  const st = statSync(file), base = oeffentlicheAdresse();
+  const key = `${st.mtimeMs}|${st.size}|${base}`;
+  if (startseiteCache?.key === key) return startseiteCache;
+  const b = esc(base);
+  const html = readFileSync(file, 'utf8')
+    .replace(/(<link rel="canonical" href=")[^"]*(")/, `$1${b}/$2`)
+    .replace(/(<meta property="og:url" content=")[^"]*(")/, `$1${b}/$2`)
+    .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*?(\/img\/brand\/og\.jpg")/g, `$1${b}$2`);
+  const etag = `"s-${crypto.createHash('sha1').update(html).digest('base64url').slice(0, 20)}"`;
+  startseiteCache = { key, html, gz: gzipSync(html, { level: zc.Z_BEST_SPEED }), etag };
+  return startseiteCache;
 }
 
 /**
@@ -3509,6 +3555,25 @@ const server = http.createServer(async (req, res) => {
       });
       if (req.method === 'HEAD') return res.end();
       return res.end(gz ? gzipSync(out, { level: zc.Z_BEST_SPEED }) : out);
+    }
+
+    // --- robots.txt und sitemap.xml aus der öffentlichen Adresse (robots.txt ist auch im Wartungsmodus erreichbar: „Disallow: /“)
+    if ((p === '/robots.txt' || p === '/sitemap.xml') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const txt = p === '/robots.txt' ? robotsTxt() : sitemapXml();
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(p)], 'Cache-Control': 'no-cache', 'Content-Length': Buffer.byteLength(txt) });
+      return res.end(req.method === 'HEAD' ? undefined : txt);
+    }
+    // --- Startseite: Canonical und Vorschau-Adressen aus der öffentlichen Adresse (sonst wie eine statische HTML-Datei)
+    if ((p === '/' || p === '/index.html') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const sp = startseite();
+      if (sp) {
+        const headers = { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', ETag: sp.etag, Vary: 'Accept-Encoding' };
+        if (req.headers['if-none-match'] === sp.etag) { res.writeHead(304, headers); return res.end(); }
+        const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+        const body = gz ? sp.gz : Buffer.from(sp.html);
+        res.writeHead(200, { ...headers, ...(gz ? { 'Content-Encoding': 'gzip' } : {}), 'Content-Length': body.length });
+        return res.end(req.method === 'HEAD' ? undefined : body);
+      }
     }
 
     // --- Seiten & Dateien
