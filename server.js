@@ -1,9 +1,9 @@
 // formsam — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal + Rechtsseiten + Widerruf
-// Start: node server.js   →   http://<host>:4488   (Admin: /admin, Standard-Passwort bei Neuinstallation: formsam-admin)
+// Start: node server.js   →   http://<host>:4488   (Admin: /admin — bei einer Neuinstallation steht ein zufälliges Admin-Passwort einmal im Protokoll)
 import http from 'node:http';
 import { createGzip, gzipSync, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
-import { mkdir, writeFile, readdir, readFile, rm, rename } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile, rm, rename, open, stat, statfs, link } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { produktHinweise, BESCHAFFENHEIT_FASSUNG } from './lib/produkthinweise.js';
@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings, addressList, keepStoredPass } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
-  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung } from './lib/mail-templates.js';
+  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung, passwortGeaendert } from './lib/mail-templates.js';
 import { isEmail, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
 import { chmodSync } from 'node:fs';   // Dateirechte der Bestandsordner (unten bei process.umask)
 
@@ -41,7 +41,9 @@ for (const dir of [DATA, path.join(DATA, 'thumbs'), ORDERS]) {
   }
 }
 const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
-const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
+// pro Modell-Datei: größte bestellbare Konfiguration 126,5 MB (gehämmert, 220 mm, Breite 115 %, Tiefe 1,6, Wulstrand, Gravur 12 mm
+// „Anna & Tom“ in Marcellus — gemessen mit buildModel wie im Browser) + 50 % Reserve; nginx: client_max_body_size 200m
+const MAX_STL = 190 * 1000 * 1000;
 
 // ---------------------------------------------------------------------------
 // Hooks — werden im Abschnitt „E-Mail-Versand“ (unten) mit den Mail-Aktionen befüllt.
@@ -233,8 +235,8 @@ const positionenFehler = (items) => pruefePositionen(items, {
   farbe: colorOfItem, schriftfarbe: (id) => (settings.colors || []).find((x) => x?.id === id) || null,
 });
 
+// Kein Standard-Admin-Passwort: settings.adminKeyHash entsteht beim Start (Klartext umstellen oder zufällig erzeugen, siehe loadSettings)
 const DEFAULT_SETTINGS = {
-  adminKey: 'formsam-admin',
   invoicePrefix: 'RE-2026-',
   nextInvoice: 1,
   // Gutschriften (Reklamation): eigener Nummernkreis, vierstellig
@@ -381,6 +383,9 @@ function settingsHinweise() {
   }
   if (historieDefekt) out.push(`Preis-Historie war beim Start unlesbar (gesichert als ${historieDefekt}) – die Streichpreise der nächsten 30 Tage (niedrigster Preis vor einer Aktion) bitte prüfen.`);
   if (historieGesperrt) out.push('Preis-Historie (data/preis-historie.json) ist nicht lesbar und wird nicht fortgeschrieben – bitte Datei prüfen und den Shop neu starten.');
+  if (speicherZuletzt !== null && speicherZuletzt < 2 * MIN_FREI) out.push(`Speicher fast voll: nur noch ${(speicherZuletzt / 1e9).toFixed(1).replace('.', ',')} GB frei – unter 1 GB nimmt die Kasse keine Druckdateien mehr an.`);
+  if (Object.keys(designs).length > 50_000 || Object.keys(lists).length > 10_000) out.push(`Ungewöhnlich viele Design-Codes (${Object.keys(designs).length}) bzw. Listen (${Object.keys(lists).length}) – bitte data/designs.json und data/lists.json prüfen (Missbrauch?).`);
+  if (bestellungenDefekt.size) out.push(`Bestellung ${[...bestellungenDefekt].join(', ')}: order.json ist beschädigt und fehlt in der Liste – bitte aus der Sicherung (/var/backups/formsam) zurückholen.`);
   let legal = null;
   try { legal = typeof legalMod?.legalWarnings === 'function' ? legalMod.legalWarnings(settings) : null; } catch { legal = null; }
   if (Array.isArray(legal)) out.push(...legal.map(String));
@@ -391,11 +396,10 @@ function settingsHinweise() {
 let settings;
 function loadSettings() {
   mkdirSync(DATA, { recursive: true });
-  try {
-    settings = { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) };
-  } catch {
-    settings = structuredClone(DEFAULT_SETTINGS);
-  }
+  // Fehlt settings.json, ist das eine Neuinstallation (Standardwerte). Ist sie da, aber unlesbar, bricht der Start ab (ladeDatei) —
+  // nie still mit Standardwerten weiterlaufen (anderes Admin-Passwort, Mail aus, Gutscheine und Nummernkreise zurückgesetzt)
+  const gespeichert = ladeDatei(SETTINGS_FILE, { pruefe: nurObjekt });
+  settings = gespeichert ? { ...DEFAULT_SETTINGS, ...gespeichert } : structuredClone(DEFAULT_SETTINGS);
   // Filament-Farben einmalig aus content.json übernehmen
   if (!Array.isArray(settings.colors)) {
     try {
@@ -420,11 +424,20 @@ function loadSettings() {
   settings.pricing = preiseBeimLaden(settings.pricing);
   // Aktionen: Array erzwingen, kaputte Einträge verwerfen (Meldung im Log)
   settings.aktionen = sanitizeAktionen(settings.aktionen, { lenient: true });
-  // Ein leeres/ungültiges Admin-Passwort würde den Admin entweder für alle öffnen oder dauerhaft aussperren
-  if (typeof settings.adminKey !== 'string' || !settings.adminKey.trim()) {
-    console.warn('⚠️  settings.adminKey ungültig – Standard-Passwort wird verwendet');
-    settings.adminKey = DEFAULT_SETTINGS.adminKey;
+  // Admin-Passwort nur als scrypt-Hash (adminKeyHash). Ein Klartext-adminKey (ältere settings.json, von Hand oder per Skript
+  // gesetzt) wird umgestellt — dasselbe Passwort gilt weiter. Fehlt beides oder ist der Hash kaputt, gibt es ein zufälliges Passwort,
+  // das genau einmal im Protokoll steht (kein bekanntes Standard-Passwort mehr). An der Stelle von adminKey steht danach ein
+  // Platzhalter (adminKeyPlatzhalter, siehe adminPlatzhalterSetzen) — den erkennt diese Fassung und lässt ihn stehen
+  const platzhalter = adminKeyIstPlatzhalter(settings);
+  if (!platzhalter && typeof settings.adminKey === 'string' && settings.adminKey.trim()) {
+    settings.adminKeyHash = pwHashSync(settings.adminKey);
+    console.log('🔐 Admin-Passwort: Klartext in settings.json durch einen scrypt-Hash ersetzt (das Passwort bleibt gleich)');
+  } else if (!pwHashGueltig(settings.adminKeyHash)) {
+    const neu = crypto.randomBytes(15).toString('base64url');
+    settings.adminKeyHash = pwHashSync(neu);
+    console.warn(`🔐 ${gespeichert ? 'settings.json ohne gültiges Admin-Passwort' : 'Neuinstallation'} – neues Admin-Passwort (steht nur hier, bitte notieren und im Admin unter System ändern): ${neu}`);
   }
+  if (!platzhalter) adminPlatzhalterSetzen(settings);
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
   // Migration Aufpreise: Muster (Betreiber-Wunsch: Lamellen +3 €), Farbschrift +2 €
@@ -487,6 +500,100 @@ async function writeFileAtomic(file, data) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Datendateien (settings, users, sessions, designs, lists, paypal-captures): Laden beim Start, Speichern atomar und nacheinander.
+//   Fehlt eine Datei, beginnt sie leer (Neuinstallation). Ist sie da, aber nicht lesbar oder kein gültiges JSON, bricht der Start
+//   mit klarer Meldung ab (startAbbruch) — sonst liefe der Shop mit leeren Konten/Codes oder Standard-Einstellungen weiter und
+//   überschriebe die Datei beim nächsten Speichern. Ausnahme sessions.json (nur Anmeldungen): als .defekt-<Zeit> beiseitelegen,
+//   laut warnen, leer weiter. Gespeichert wird über writeFileAtomic in einer Kette je Datei (speicherKette).
+// ---------------------------------------------------------------------------
+const SICHERUNG_HINWEIS = 'Sicherungen: /var/backups/formsam auf dem Produktivserver (täglich, 14 Tage). Datei von dort zurückholen oder reparieren, dann den Shop neu starten (README, Abschnitt „Daten, Sicherung und defekte Dateien“).';
+/** JSON-Datei lesen → Wert (geprüft) | null, wenn sie fehlt; unlesbar → beiseitelegen (beiseite) oder Startabbruch */
+function ladeDatei(file, { pruefe = (v) => v, beiseite = false } = {}) {
+  let text;
+  try { text = readFileSync(file, 'utf8'); } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    return dateiDefekt(file, `nicht lesbar (${err.code || err.message})`, beiseite);
+  }
+  try { return pruefe(JSON.parse(text)); } catch (err) { return dateiDefekt(file, `beschädigt (${err.message})`, beiseite); }
+}
+function dateiDefekt(file, grund, beiseite) {
+  if (beiseite) {
+    const backup = `${file}.defekt-${Date.now()}`;
+    try {
+      renameSync(file, backup);
+      console.error(`⚠️  ${path.basename(file)} ${grund} – gesichert als ${path.basename(backup)}, leer weiter`);
+      return null;
+    } catch (e2) { grund += `; Sichern als ${path.basename(backup)} fehlgeschlagen (${e2.code || e2.message})`; }
+  }
+  throw Object.assign(new Error(`${file} ist ${grund}`), { startAbbruch: true });
+}
+const nurObjekt = (v) => { if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('kein JSON-Objekt'); return v; };
+/**
+ * Speichern je Datei: atomar (writeFileAtomic) und nacheinander. Wer speichert, während ein Schreibvorgang noch wartet, fährt in
+ * diesem mit — serialisiert wird erst beim Start des Schreibens, also immer der neueste Stand. → () => Promise (nach dem Schreiben)
+ */
+function speicherKette(file, stand) {
+  let letzte = Promise.resolve(), wartend = null;
+  return () => {
+    if (wartend) return wartend;
+    wartend = letzte.catch(() => {}).then(() => { wartend = null; return writeFileAtomic(file, stand()); });
+    letzte = wartend;
+    return wartend;
+  };
+}
+const speicherFehler = (was) => (err) => console.error(`${was} konnte nicht gespeichert werden:`, err?.message || err);
+
+// --- Passwörter (Kundenkonten, Admin): crypto.scrypt asynchron — blockiert den Shop nicht wie scryptSync. Höchstens SCRYPT_PARALLEL
+//   Rechnungen gleichzeitig: scrypt läuft im libuv-Threadpool (4 Plätze), den auch jeder Dateizugriff braucht — ein Schub
+//   Rateversuche darf Seiten, Skripte und Druckdateien nicht ausbremsen. Prüfungen (pruefung = true: Anmeldung, Admin-Passwort)
+//   scheitern sofort mit code 'ueberlast' (Anmeldung → 503, Admin → 429), wenn schon SCRYPT_WARTEND_MAX warten — die Warteschlange
+//   wächst nicht unbegrenzt. Neue Passwörter (Registrierung, Reset, Wechsel; vorher gebremst) warten immer.
+const SCRYPT_PARALLEL = 2, SCRYPT_WARTEND_MAX = 100;
+const UEBERLAST = { ok: false, error: 'Gerade ist sehr viel los – bitte versuch es in einer Minute noch einmal.' };
+let scryptLaeuft = 0;
+const scryptWarten = [];
+function scryptAsync(pw, salt, len, pruefung = false) {
+  if (pruefung && scryptLaeuft >= SCRYPT_PARALLEL && scryptWarten.length >= SCRYPT_WARTEND_MAX) return Promise.reject(Object.assign(new Error('scrypt ausgelastet'), { code: 'ueberlast' }));
+  return new Promise((ok, fail) => {
+    const los = () => {
+      scryptLaeuft++;
+      const fertig = (err, key) => { scryptLaeuft--; scryptWarten.shift()?.(); if (err) fail(err); else ok(key); };
+      try { crypto.scrypt(String(pw), salt, len, fertig); } catch (err) { fertig(err); }
+    };
+    if (scryptLaeuft < SCRYPT_PARALLEL) los(); else scryptWarten.push(los);
+  });
+}
+/**
+ * Platzhalter statt adminKey: Eine ältere Fassung (Rückkehr per git nach einem Update) kennt nur settings.adminKey und nähme ohne ihn
+ * das früher bekannte Standard-Passwort „formsam-admin“. Deshalb steht dort ein zufälliger, nirgends angezeigter Wert — die alte
+ * Fassung sperrt den Admin damit zu, statt ihn zu öffnen. adminKeyPlatzhalter = SHA-256 davon: Daran erkennt diese Fassung den
+ * Platzhalter. Hat die alte Fassung adminKey inzwischen geändert (Admin → System), passt der SHA-256 nicht mehr → das neue Passwort
+ * wird beim nächsten Start in den Hash übernommen. Gleiches Verfahren in tools/admin-passwort.mjs.
+ */
+function adminPlatzhalterSetzen(s) {
+  s.adminKey = crypto.randomBytes(24).toString('base64url');
+  s.adminKeyPlatzhalter = crypto.createHash('sha256').update(s.adminKey).digest('hex');
+}
+const adminKeyIstPlatzhalter = (s) => typeof s.adminKey === 'string' && typeof s.adminKeyPlatzhalter === 'string'
+  && s.adminKeyPlatzhalter === crypto.createHash('sha256').update(s.adminKey).digest('hex');
+/** Admin-Passwort → 'scrypt$salt$hash' (32 Bytes, wie das Wartungskennwort); synchron nur beim Start und in tools/admin-passwort.mjs */
+function pwHashSync(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `scrypt$${salt}$${crypto.scryptSync(String(pw), salt, 32).toString('hex')}`;
+}
+async function pwHash(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return `scrypt$${salt}$${(await scryptAsync(pw, salt, 32)).toString('hex')}`;
+}
+const pwHashGueltig = (h) => /^scrypt\$[0-9a-f]{16,64}\$[0-9a-f]{64}$/.test(String(h || ''));
+async function pwHashStimmt(pw, h) {
+  if (!pwHashGueltig(h) || typeof pw !== 'string') return false;
+  const [, salt, hex] = h.split('$');
+  const a = await scryptAsync(pw, salt, 32, true), b = Buffer.from(hex, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 // ---------------------------------------------------------------------------
@@ -655,14 +762,15 @@ const SESS_FILE = path.join(DATA, 'sessions.json');
 let users = [];
 let sessions = {};
 function loadUsers() {
-  try { users = JSON.parse(readFileSync(USERS_FILE, 'utf8')).users || []; } catch { users = []; }
-  try { sessions = JSON.parse(readFileSync(SESS_FILE, 'utf8')); } catch { sessions = {}; }
+  // users.json kaputt → Startabbruch (ladeDatei); sessions.json kaputt → beiseitelegen, alle müssen sich neu anmelden
+  users = ladeDatei(USERS_FILE, { pruefe: (v) => { if (!Array.isArray(nurObjekt(v).users)) throw new Error('Liste „users“ fehlt'); return v.users; } }) || [];
+  sessions = ladeDatei(SESS_FILE, { pruefe: nurObjekt, beiseite: true }) || {};
   // alte Sessions (> 90 Tage) aufräumen
   const cutoff = Date.now() - SESSION_TTL;
   for (const [t, s] of Object.entries(sessions)) if (s.createdAt < cutoff) delete sessions[t];
 }
 const SESSION_TTL = 90 * 864e5;   // Anmeldung gilt 90 Tage — danach wird sie beim nächsten Zugriff bzw. Serverstart entfernt
-const saveUsers = () => writeFile(USERS_FILE, JSON.stringify({ users }, null, 2));
+const saveUsers = speicherKette(USERS_FILE, () => JSON.stringify({ users }, null, 2));
 
 // ---------------------------------------------------------------------------
 // Design-Codes (data/designs.json): kurzer Code ⇄ komplette Konfiguration.
@@ -674,9 +782,18 @@ const DESIGN_KEYS = ['product', 'preset', 'height', 'width', 'pattern', 'ribs', 
   'text', 'textSize', 'textPos', 'font', 'textStyle', 'textColor', 'saucer', 'customPoints', 'color', 'rim'];
 let designs = {};
 function loadDesigns() {
-  try { designs = JSON.parse(readFileSync(DESIGNS_FILE, 'utf8')); } catch { designs = {}; }
+  designs = ladeDatei(DESIGNS_FILE, { pruefe: nurObjekt }) || {};
 }
-const saveDesigns = () => writeFile(DESIGNS_FILE, JSON.stringify(designs));
+const saveDesigns = speicherKette(DESIGNS_FILE, () => JSON.stringify(designs));
+// Abrufzähler (loads/lastLoad) gebündelt schreiben: ein Code-Abruf merkt sich nur die Änderung, gespeichert wird höchstens
+// einmal je DESIGN_ZAEHLER_MS (vorher schrieb jeder Abruf die ganze designs.json neu). Beim Beenden kann ein Rest fehlen — egal.
+const DESIGN_ZAEHLER_MS = 60_000;
+let designZaehlerOffen = false;
+setInterval(() => {
+  if (!designZaehlerOffen) return;
+  designZaehlerOffen = false;
+  saveDesigns().catch(speicherFehler('designs.json (Abrufzähler)'));
+}, DESIGN_ZAEHLER_MS).unref();
 function canonicalDesign(cfg) {
   const out = {};
   for (const k of DESIGN_KEYS) {
@@ -717,8 +834,8 @@ const THUMBS = path.join(DATA, 'thumbs');
 // ---------------------------------------------------------------------------
 const LISTS_FILE = path.join(DATA, 'lists.json');
 let lists = {};
-function loadLists() { try { lists = JSON.parse(readFileSync(LISTS_FILE, 'utf8')); } catch { lists = {}; } }
-const saveLists = () => writeFile(LISTS_FILE, JSON.stringify(lists));
+function loadLists() { lists = ladeDatei(LISTS_FILE, { pruefe: nurObjekt }) || {}; }
+const saveLists = speicherKette(LISTS_FILE, () => JSON.stringify(lists));
 function newListCode() {
   for (;;) {
     let c = 'L';
@@ -746,13 +863,33 @@ function publicList(l) {
   };
 }
 
-const saveSessions = () => writeFile(SESS_FILE, JSON.stringify(sessions));
-const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
+const saveSessions = speicherKette(SESS_FILE, () => JSON.stringify(sessions));
+// Kundenpasswörter: scrypt (64 Bytes, Salz je Konto), asynchron. Neue Passwörter: Text mit 8–200 Zeichen (bestehende kürzere
+// gelten weiter). Bei unbekannter Adresse rechnet die Anmeldung einen Schein-Hash — die Antwortzeit verrät nicht, ob es das Konto gibt.
+const hashPw = async (pw, salt, pruefung = false) => (await scryptAsync(pw, salt, 64, pruefung)).toString('hex');
+const PW_MIN = 8, PW_MAX = 200;
+const pwRegel = (pw) => (typeof pw === 'string' && pw.length >= PW_MIN && pw.length <= PW_MAX ? null : `Passwort: ${PW_MIN} bis ${PW_MAX} Zeichen`);
+const SCHEIN_SALZ = crypto.randomBytes(16).toString('hex');
+async function passwortStimmt(u, pw) {
+  const text = typeof pw === 'string' && pw.length <= 1024 ? pw : '';
+  const h = await hashPw(text, u?.salt || SCHEIN_SALZ, true);
+  if (!u || !text || !/^[0-9a-f]{128}$/.test(String(u.hash || ''))) return false;
+  return crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(h, 'hex'));
+}
+const SESSIONS_JE_KONTO = 20;   // gleichzeitige Anmeldungen je Konto — darüber fallen die ältesten weg
 function createSession(userId) {
   const token = crypto.randomBytes(24).toString('hex');
   sessions[token] = { userId, createdAt: Date.now() };
-  saveSessions();
+  const eigene = Object.entries(sessions).filter(([, x]) => x.userId === userId).sort((a, b) => a[1].createdAt - b[1].createdAt);
+  for (const [t] of eigene.slice(0, Math.max(0, eigene.length - SESSIONS_JE_KONTO))) delete sessions[t];
+  saveSessions().catch(speicherFehler('sessions.json'));
   return token;
+}
+/** Alle Anmeldungen eines Kontos beenden — außer der Kennung ausser (z. B. die eigene beim Passwortwechsel); → Anzahl */
+function sitzungenBeenden(userId, ausser = null) {
+  let n = 0;
+  for (const [t, x] of Object.entries(sessions)) if (x.userId === userId && t !== ausser) { delete sessions[t]; n++; }
+  return n;
 }
 function userFromReq(req) {
   const t = String(req.headers['x-auth'] || '');
@@ -768,9 +905,22 @@ function userFromReq(req) {
 }
 // emailVerified: Adresse per Link bestätigt (user.emailVerifiedAt) — erst dann zeigt das Konto Gastbestellungen mit dieser Adresse
 const publicUser = (u) => ({ name: u.name, email: u.email, address: u.address || null, emailVerified: !!u.emailVerifiedAt });
+/**
+ * Kontoname für Mails an die Kontoadresse (Willkommen, Passwort vergessen/geändert, Bestätigungslink: Anrede, Betreff, Empfängername):
+ * nur, wenn er wie ein Name aussieht — bis 6 Wörter aus Buchstaben, Bindestrich, Apostroph, höchstens ein Punkt am Ende („Dr.“).
+ * Sonst leer (→ „Hallo!“): Wer ein Konto mit fremder Adresse anlegt, darf darüber keinen eigenen Text (Links, Domains) verschicken.
+ */
+function kontoMailName(name) {
+  const s = String(name || '').trim().replace(/ {2,}/g, ' ');
+  const woerter = s.split(' ');
+  return s.length <= 80 && woerter.length <= 6 && woerter.every((w) => /^\p{L}[\p{L}\p{M}'’-]*\.?$/u.test(w)) ? s : '';
+}
 
-// --- Passwort vergessen: Token nur als SHA-256-Hash im Konto (user.reset = { hash, exp }), 60 Minuten gültig
+// --- Passwort vergessen: Token nur als SHA-256-Hash im Konto, 60 Minuten gültig. user.reset = [{ hash, exp }, …] — die letzten
+//   RESET_LINKS verschickten Links gelten (eine verspätete Mail oder ein Dritter, der neue Links anfordert, entwertet keinen gerade
+//   angekommenen); ein erfolgreicher Reset entwertet alle. Ältere Konten haben noch ein einzelnes Objekt { hash, exp }.
 const RESET_TTL = 60 * 60 * 1000;
+const RESET_LINKS = 3;
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 /** Konto zu einem Mail-Token (field 'reset' = Passwort vergessen, 'verify' = E-Mail bestätigen) — nur gültige, nicht abgelaufene */
 function userByToken(token, field) {
@@ -780,13 +930,67 @@ function userByToken(token, field) {
   const now = Date.now();
   let found = null;
   for (const u of users) {   // alle Konten durchgehen (kein Abbruch → keine Zeitmessung möglich)
-    const r = u[field];
-    if (!r || !/^[0-9a-f]{64}$/.test(String(r.hash || ''))) continue;
-    if (crypto.timingSafeEqual(h, Buffer.from(r.hash, 'hex')) && Number(r.exp) > now) found = u;
+    for (const r of [].concat(u[field] || [])) {
+      if (!r || !/^[0-9a-f]{64}$/.test(String(r.hash || ''))) continue;
+      if (crypto.timingSafeEqual(h, Buffer.from(r.hash, 'hex')) && Number(r.exp) > now) found = u;
+    }
   }
   return found;
 }
 const userByResetToken = (token) => userByToken(token, 'reset');
+
+/**
+ * Kundenkonto löschen (Kundin selbst oder Admin): Konto und alle Anmeldungen weg. Bestellungen bleiben wegen der
+ * Aufbewahrungspflicht (Rechnungen, § 147 AO) erhalten, verlieren aber den Kontobezug (userId → null, Vermerk in der Historie).
+ * → Zahl der Bestellungen, die zum Konto gehörten
+ */
+async function kontoLoeschen(u, wer) {
+  const i = users.indexOf(u);
+  if (i >= 0) users.splice(i, 1);
+  sitzungenBeenden(u.id);
+  await saveUsers();
+  await saveSessions();
+  let n = 0;
+  for (const o of await listOrders()) {
+    if (o.userId !== u.id) continue;
+    const release = await lockOrder(o.orderId);
+    try {
+      const x = await readOrder(o.orderId);
+      if (x.userId === u.id) {
+        x.userId = null;
+        addHistory(x, x.status, 'Kundenkonto gelöscht – die Bestellung bleibt (Aufbewahrungspflicht), ohne Kontobezug', 'system');
+        await writeOrder(x);
+        n++;
+      }
+    } catch (err) { console.error(`Konto ${u.id}: Bestellung ${o.orderId} nicht gelöst:`, err?.message || err); }
+    finally { release(); }
+  }
+  console.log(`🗑️  Kundenkonto ${u.id} gelöscht (${wer}) – ${n} Bestellung(en) ohne Kontobezug`);
+  return n;
+}
+/** Datenauskunft zu einem Kundenkonto (Admin, Art. 15 DSGVO): Konto ohne Passwort-Hash, Anmeldungen, Bestellungen, Widerrufe und
+ *  Einträge im Mail-Protokoll an diese Adresse. Was nur über die E-Mail-Adresse zugeordnet ist (Gastbestellungen, Widerrufe, Mails dazu),
+ *  gehört nur bei bestätigter Adresse dazu — wie im Konto; sonst könnte es jemand anderem gehören, der die Adresse wirklich hat. */
+async function kontoExport(u) {
+  const { salt, hash, reset, verify, ...konto } = u;
+  const bestaetigt = !!u.emailVerifiedAt;
+  const bestellungen = (await listOrders())
+    .filter((o) => o.userId === u.id || (bestaetigt && String(o.customer?.email || '').trim().toLowerCase() === u.email)).map(ohneSchluessel);
+  const eigene = new Set([u.id, ...bestellungen.map((o) => o.orderId)]);
+  const widerrufe = await withWiderrufe((l) => ({ result: l.filter((w) => w.email === u.email && (bestaetigt || eigene.has(w.orderId))) })).catch(() => []);
+  for (const w of widerrufe) eigene.add(w.ref);
+  let mails = [];
+  try {
+    mails = (await mailer.list({ limit: 100000 })).filter((m) => String(m.to || '').toLowerCase().split(/,\s*/).includes(u.email) && (bestaetigt || eigene.has(m.ref)))
+      .map(({ createdAt, sentAt, subject, kind, status }) => ({ createdAt, sentAt, subject, kind, status }));
+  } catch { /* Protokoll nicht lesbar → ohne Mails */ }
+  return {
+    exportiertAm: new Date().toISOString(), anbieter: settings.company?.name || BRAND,
+    konto: { ...konto, emailBestaetigt: !!u.emailVerifiedAt },
+    anmeldungen: Object.values(sessions).filter((x) => x.userId === u.id).map((x) => ({ seit: new Date(x.createdAt).toISOString() })),
+    bestellungen, widerrufe, mails,
+  };
+}
 
 // --- E-Mail-Adresse bestätigen (Double-Opt-in): bei der Registrierung wird die Adresse nicht geprüft — wer sie nur eintippt,
 //   darf keine fremden Gastbestellungen (Status, Sendungsnummer, Guthaben-Code, Altbestand-Rechnungen) sehen. Der Link aus der
@@ -802,41 +1006,105 @@ function newVerifyToken(u) {
   return token;
 }
 const verifyLinkFor = (token) => `${baseUrlFor(settings)}/?verify=${token}`;
-// Rate-Limit für „Passwort vergessen“ (im Speicher): max. 3 Anfragen je E-Mail in 15 Minuten,
-// je IP großzügiger (10), damit ein Proxy ohne X-Forwarded-For nicht alle Kunden gemeinsam sperrt.
-// Der Speicher ist hart gedeckelt (FORGOT_MAX_KEYS) und wird höchstens einmal pro Minute durchgekehrt.
+// Bremsen (im Speicher): forgotLimited(key, max, fenster) zählt einen Versuch und meldet true, wenn schon max im Zeitfenster liegen;
+// rateLimitReached(key, max, fenster) sieht nur nach (für Sperren, die nur Fehlgriffe zählen). Schlüssel je IP nutzen clientIp(),
+// das IPv6 auf das /64-Netz kürzt. Jeder Schlüssel merkt sich sein Zeitfenster (Tagesgrenzen überleben das Durchkehren nach
+// 15-Minuten-Schlüsseln); der Speicher ist hart gedeckelt (FORGOT_MAX_KEYS), bei Überlauf fallen die am längsten unbenutzten
+// Schlüssel weg. Ein Neustart setzt alle Zähler zurück (bewusst: kein Angreifer kann den Shop neu starten).
+// „Passwort vergessen“: 3 je E-Mail und 10 je IP in 15 Minuten (je IP großzügiger, damit ein Proxy ohne X-Forwarded-For nicht alle
+// Kunden gemeinsam sperrt).
 const FORGOT_IP_MAX = 10;
 const FORGOT_MAX_KEYS = 5000;
-const forgotHits = new Map();
+const STUNDE_MS = 3600e3;
+const forgotHits = new Map();   // Schlüssel → { win: Zeitfenster ms, hits: [Zeitpunkte] }
 let forgotSweep = 0;
 function forgotLimited(key, max = 3, windowMs = 15 * 60 * 1000) {
   const now = Date.now();
-  const hits = (forgotHits.get(key) || []).filter((t) => now - t < windowMs);
-  if (hits.length >= max) { forgotHits.set(key, hits); return true; }
+  const alt = forgotHits.get(key);
+  const hits = (alt?.hits || []).filter((t) => now - t < windowMs);
+  forgotHits.delete(key);   // ans Ende der (einfügegeordneten) Map: zuletzt benutzt
+  forgotHits.set(key, { win: Math.max(windowMs, alt?.win || 0), hits });
+  if (hits.length >= max) return true;
   hits.push(now);
-  forgotHits.set(key, hits);
   if (forgotHits.size > FORGOT_MAX_KEYS && now - forgotSweep > 60_000) {
     forgotSweep = now;
-    for (const [k, v] of forgotHits) if (!v.some((t) => now - t < windowMs)) forgotHits.delete(k);
+    for (const [k, v] of forgotHits) if (!v.hits.some((t) => now - t < v.win)) forgotHits.delete(k);
   }
-  // Map ist einfügegeordnet → bei Überlauf fliegen die ältesten Schlüssel raus
   while (forgotHits.size > FORGOT_MAX_KEYS) forgotHits.delete(forgotHits.keys().next().value);
   return false;
 }
 /** Nur nachsehen (ohne zu zählen): ist das Limit für key im Zeitfenster erreicht? — für Sperren, die nur Fehlgriffe zählen */
 function rateLimitReached(key, max, windowMs = 15 * 60 * 1000) {
   const now = Date.now();
-  return (forgotHits.get(key) || []).filter((t) => now - t < windowMs).length >= max;
+  return (forgotHits.get(key)?.hits || []).filter((t) => now - t < windowMs).length >= max;
+}
+/**
+ * Fehlversuch vorab belegen (Passwortprüfungen): zählt sofort, noch bevor die Prüfung (scrypt) fertig ist — sonst kämen parallel
+ * abgeschickte Rateversuche alle an der Bremse vorbei, weil keiner fertig ist, wenn der nächste nachsieht. → Zeitpunkt des Eintrags
+ * (für bremseFrei, wenn das Passwort stimmt) oder 0, wenn die Grenze schon erreicht ist (dann wird nichts belegt).
+ */
+function bremsePlatz(key, max, windowMs = 15 * 60 * 1000) {
+  return forgotLimited(key, max, windowMs) ? 0 : (forgotHits.get(key)?.hits.at(-1) || 0);
+}
+function bremseFrei(key, t) {
+  const hits = forgotHits.get(key)?.hits;
+  const i = t && hits ? hits.lastIndexOf(t) : -1;
+  if (i >= 0) hits.splice(i, 1);
+}
+/** Anmeldeversuch (Login, Passwort ändern, Konto löschen) in beiden Bremsen belegen — je IP + Konto und je IP → { frei() } oder null */
+function anmeldePlatz(ip, mail) {
+  const kk = `login:${ip}|${mail}`, ki = `login-ip:${ip}`;
+  const a = bremsePlatz(kk, LOGIN_FEHL_KONTO);
+  if (!a) return null;
+  const b = bremsePlatz(ki, LOGIN_FEHL_IP);
+  if (!b) { bremseFrei(kk, a); return null; }
+  return { frei: () => { bremseFrei(kk, a); bremseFrei(ki, b); } };
+}
+/**
+ * Adresse für Bremsen: IPv4 (auch IPv4-mapped ::ffff:a.b.c.d) unverändert, IPv6 auf das /64-Netz gekürzt („2001:db8:1:2::/64“) —
+ * ein gewöhnlicher Anschluss hat ein ganzes /64, sonst zählte jede seiner Adressen einzeln.
+ */
+function ipNetz(raw) {
+  let ip = String(raw || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '');
+  const v4 = ip.match(/^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4) return v4[1];
+  if (!ip.includes(':') || !/^[0-9a-f:.]+$/.test(ip)) return ip;
+  ip = ip.replace(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/, (_, a, b, c, d) => `${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`);
+  const teile = ip.split('::');
+  if (teile.length > 2) return ip;
+  const links = teile[0] ? teile[0].split(':') : [], rechts = teile[1] ? teile[1].split(':') : [];
+  const gruppen = teile.length === 2 ? [...links, ...Array(Math.max(0, 8 - links.length - rechts.length)).fill('0'), ...rechts] : links;
+  if (gruppen.length !== 8) return ip;
+  return `${gruppen.slice(0, 4).map((g) => parseInt(g || '0', 16).toString(16)).join(':')}::/64`;
 }
 // X-Forwarded-For ist clientgesteuert — nur hinter eigenem Reverse-Proxy auswerten (TRUST_PROXY=1 = ein Proxy,
-// der seinen Wert hinten anhängt); ohne Proxy zählt die Socket-Adresse
+// der seinen Wert hinten anhängt); ohne Proxy zählt die Socket-Adresse. Ergebnis ist der Bremsen-Schlüssel (ipNetz).
 const TRUST_PROXY = Math.max(0, parseInt(process.env.TRUST_PROXY || '0', 10) || 0);
 function clientIp(req) {
   const ip = req.socket?.remoteAddress || '';
-  if (!TRUST_PROXY) return ip;
+  if (!TRUST_PROXY) return ipNetz(ip);
   const list = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-  return list[list.length - TRUST_PROXY] || ip;
+  return ipNetz(list[list.length - TRUST_PROXY] || ip);
 }
+// Weitere Bremsen (Richtwerte; über der Grenze 429 mit Meldung, außer beim Widerruf — siehe dort)
+const LOGIN_FEHL_KONTO = 10;    // falsche Passwörter je IP + Konto in 15 Minuten (kein Sperren des Kontos selbst: Fremde können
+const LOGIN_FEHL_IP = 30;       //   den Inhaber nicht aussperren) — und je IP über alle Konten
+const PW_WECHSEL_MAX = 5;       // Passwortwechsel je Konto und Stunde (jeder schickt eine Hinweis-Mail — die ist zusätzlich gedeckelt)
+const REG_IP_MAX = 5;           // Registrierungen je IP und Stunde
+const REG_MAIL_MAX = 3;         // Konten (= Willkommensmails) je Empfängeradresse und Tag
+const REG_ALLE_MAX = 30;        // Registrierungen insgesamt je Stunde
+const WIDERRUF_MAIL_MAX = 3;    // Eingangsbestätigungen je Empfänger und Tag
+const WIDERRUF_ALLE_MAX = 30;   // Eingangsbestätigungen insgesamt je Stunde (beides nur für nicht zugeordnete Widerrufe)
+const WIDERRUF_BESTELLUNG_MAX = 5;   // Eingangsbestätigungen zugeordneter Widerrufe je Bestellung und Tag
+const KASSE_IP_MAX = 20;        // neue Kassen (Bestellungen, PayPal-Zahlungen) je IP und Stunde
+const DESIGN_IP_MAX = 300;      // neue Design-Codes je IP und Stunde — der Konfigurator speichert bei jeder Code-Anzeige, normaler
+const DESIGN_ALLE_MAX = 5000;   //   Gebrauch bleibt weit darunter; insgesamt je Stunde
+const THUMB_IP_MAX = 600;       // Vorschaubilder je IP und Stunde
+const LISTE_IP_MAX = 30;        // neue Listen je IP und Stunde
+const LISTE_AENDERN_IP_MAX = 600;   // Listen ändern/löschen je IP und Stunde
+const UPLOAD_IP_BYTES = 4e9;    // Modelldateien je IP und Stunde (Bytes) — 20 Positionen der größten Konfiguration ≈ 2,5 GB
+const LOGIN_GEBREMST = { ok: false, error: 'Zu viele Fehlversuche – bitte in 15 Minuten noch einmal versuchen oder „Passwort vergessen?“ nutzen.' };
+const GEBREMST = (wann = 'in einer Stunde') => ({ ok: false, error: `Zu viele Anfragen von deinem Anschluss – bitte ${wann} noch einmal versuchen.` });
 
 // ---------------------------------------------------------------------------
 // Wartungsmodus (settings.wartung): vor dem ganzen Shop steht eine Seite mit Zugangskennwort. Wer es kennt, bekommt ein
@@ -1047,7 +1315,7 @@ const customerAddress = (order) => ({ name: String(order.customer?.name || '').t
 const httpError = (code, message) => Object.assign(new Error(message), { httpCode: code });
 /** Einstellungen fürs Admin-UI/Export: Geheimnisse maskiert (leer + …Set) — SMTP-Passwort, PayPal-Secret und Admin-Passwort verlassen den Server nie. */
 const adminSettingsView = () => {
-  const { adminKey, ...rest } = settings;
+  const { adminKey, adminKeyHash, adminKeyPlatzhalter, ...rest } = settings;
   return {
     ...rest,
     mail: { ...settings.mail, pass: '', passSet: !!settings.mail?.pass },
@@ -1619,15 +1887,61 @@ function belegPraefixAusPatch(key, raw, label) {
   if (j.gewechselt) throw httpError(400, `${label}: Die Jahreszahl in „${neu}“ liegt vor dem aktuellen Jahr – der Zähler würde neu beginnen und Nummern doppelt vergeben.`);
   return { prefix: neu };
 }
-/** Vergleich mit dem Admin-Passwort in konstanter Zeit; ein leeres/ungültiges Passwort passt nie. */
-function adminKeyMatches(k) {
-  const a = Buffer.from(typeof settings.adminKey === 'string' ? settings.adminKey : '');
-  const s = Buffer.from(String(k ?? ''));
-  return a.length > 0 && s.length === a.length && crypto.timingSafeEqual(s, a);
+// ---------------------------------------------------------------------------
+// Admin-Anmeldung: Passwort im Kopf x-admin-key, geprüft gegen settings.adminKeyHash (scrypt) — einmal je Anfrage ganz oben im
+// Request-Handler (adminAnmeldung); isAdmin(req) liest danach nur das Ergebnis. Ein richtig geprüftes Passwort merkt sich der
+// Server als SHA-256 bis ADMIN_CACHE_MS nach der letzten Anfrage, damit nicht jede Admin-Anfrage scrypt rechnet. Fehlversuche je IP (IPv6: /64) bremsen:
+// nach ADMIN_FEHL_IP in 15 Minuten 429 — auch mit richtigem Passwort von dieser IP, sonst ginge das Raten weiter. Gezählt wird
+// jede Prüfung schon beim Start (bremsePlatz) und bei richtigem Passwort wieder freigegeben: parallel abgeschickte Versuche zählen
+// so sofort, aus einer IP laufen nie mehr als ADMIN_FEHL_IP Prüfungen. Gesamtbremse: liegen insgesamt ADMIN_FEHL_GESAMT Fehlversuche
+// im Fenster (verteilter Angriff, mindestens 10 Netze), hat jede IP nur noch einen Fehlversuch frei — wer sich nicht vertippt,
+// kommt immer durch. Ist scrypt ausgelastet (scryptAsync), gibt es 429 ohne Zählung.
+// ---------------------------------------------------------------------------
+const ADMIN_FEHL_IP = 10;
+const ADMIN_FEHL_GESAMT = 100;
+const ADMIN_CACHE_MS = 5 * 60e3;
+const adminCache = new Map();        // SHA-256(Passwort) → gültig bis (ms); leer nach jedem Passwortwechsel
+const adminPruefungen = new Map();   // IP|SHA-256(Passwort) → laufende Prüfung (gleichzeitige Anfragen eines Tabs rechnen nur einmal)
+const adminAnfragen = new WeakSet(); // Anfragen mit geprüftem Admin-Passwort
+/** → 'ok' | 'falsch' | 'gebremst' | 'ohne' (kein Kopf) */
+async function adminAnmeldung(req) {
+  const k = req.headers['x-admin-key'];
+  if (typeof k !== 'string' || !k) return 'ohne';
+  // Bremse vor dem Cache: sonst käme ein gesperrter Rater mit dem richtigen (gerade gemerkten) Passwort doch durch
+  const ip = clientIp(req), kIp = `admin-fehl:${ip}`;
+  const breit = rateLimitReached('admin-fehl', ADMIN_FEHL_GESAMT);
+  if (rateLimitReached(kIp, breit ? 1 : ADMIN_FEHL_IP)) return 'gebremst';
+  const h = sha256(k), now = Date.now();
+  if (adminCache.get(h) > now) { adminCache.set(h, now + ADMIN_CACHE_MS); adminAnfragen.add(req); return 'ok'; }   // gleitend: 5 min nach der letzten Anfrage
+  const schluessel = `${ip}|${h}`;
+  let pruefung = adminPruefungen.get(schluessel);
+  if (!pruefung) {
+    const tIp = bremsePlatz(kIp, breit ? 1 : ADMIN_FEHL_IP);
+    if (!tIp) return 'gebremst';
+    const tAlle = bremsePlatz('admin-fehl', ADMIN_FEHL_GESAMT);
+    pruefung = (k.length <= 200 ? pwHashStimmt(k, settings.adminKeyHash) : Promise.resolve(false))
+      .catch((err) => (err?.code === 'ueberlast' ? null : false))
+      .then((stimmt) => {
+        if (stimmt !== false) { bremseFrei(kIp, tIp); bremseFrei('admin-fehl', tAlle); }   // richtig oder nicht geprüft → kein Fehlversuch
+        else if (rateLimitReached(kIp, ADMIN_FEHL_IP) && !forgotLimited(`admin-warn:${ip}`, 1)) {
+          console.warn(`🔐 Admin: ${ADMIN_FEHL_IP} falsche Passwörter von ${ip} – Anmeldung von dort 15 Minuten gesperrt`);
+        }
+        return stimmt;
+      });
+    adminPruefungen.set(schluessel, pruefung);
+    pruefung.finally(() => adminPruefungen.delete(schluessel));
+  }
+  const stimmt = await pruefung;
+  if (stimmt === null) return 'gebremst';
+  if (stimmt) {
+    if (adminCache.size > 20) adminCache.clear();
+    adminCache.set(h, now + ADMIN_CACHE_MS);
+    adminAnfragen.add(req);
+    return 'ok';
+  }
+  return 'falsch';
 }
-function isAdmin(req) {
-  return adminKeyMatches(req.headers['x-admin-key']);
-}
+const isAdmin = (req) => adminAnfragen.has(req);
 
 // ---------------------------------------------------------------------------
 // Zugriffsschlüssel für Belege und Modelldateien (orders/<ID>/rechnung.html, gutschrift.html, *.stl, *.3mf)
@@ -2042,7 +2356,7 @@ function lieferMonat(fromIso, lieferzeit) {
 }
 
 // ---------------------------------------------------------------------------
-// Druckzettel (A4, schwarz/weiß-tauglich) — GET /admin/druckzettel/<ID>?k=<adminKey>
+// Druckzettel (A4, schwarz/weiß-tauglich) — GET /admin/druckzettel/<ID> mit Kopf x-admin-key
 // ---------------------------------------------------------------------------
 function druckzettelHTML(order) {
   const cu = order.customer || {};
@@ -2654,11 +2968,13 @@ const PAYPAL_ID_RE = /^[A-Z0-9]{10,30}$/;
 const CAPTURES_FILE = path.join(DATA, 'paypal-captures.json');
 const CAPTURES_MAX = 500;
 let paypalCaptures = {};
-function loadCaptures() { try { paypalCaptures = JSON.parse(readFileSync(CAPTURES_FILE, 'utf8')) || {}; } catch { paypalCaptures = {}; } }
+// Unlesbar beim Start → Startabbruch wie users.json (leer weiterzulaufen hieße, eine eingelöste Zahlung ein zweites Mal anzunehmen)
+function loadCaptures() { paypalCaptures = ladeDatei(CAPTURES_FILE, { pruefe: (v) => (v === null ? {} : nurObjekt(v)) }) || {}; }
+const capturesSchreiben = speicherKette(CAPTURES_FILE, () => JSON.stringify(paypalCaptures, null, 2));
 async function saveCaptures() {
   const ids = Object.keys(paypalCaptures);
   if (ids.length > CAPTURES_MAX) for (const id of ids.slice(0, ids.length - CAPTURES_MAX)) delete paypalCaptures[id];   // älteste zuerst (Einfügereihenfolge)
-  await writeFile(CAPTURES_FILE, JSON.stringify(paypalCaptures, null, 2));
+  await capturesSchreiben();
 }
 /** Betrag/Währung aus einer PayPal-Order-Antwort (Capture bevorzugt, sonst purchase_unit) */
 function paypalAmountOf(j) {
@@ -3082,15 +3398,96 @@ function sendNichtGefunden(req, res, p, url) {
 // ---------------------------------------------------------------------------
 // Bestellungen
 // ---------------------------------------------------------------------------
+const bestellungenDefekt = new Set();   // Ordner mit unlesbarer order.json — Hinweis im Admin (settingsHinweise)
 async function listOrders() {
   if (!existsSync(ORDERS)) return [];
   const dirs = (await readdir(ORDERS, { withFileTypes: true }))
     .filter((d) => d.isDirectory()).map((d) => d.name).sort().reverse();
   const orders = [];
   for (const d of dirs) {
-    try { orders.push(await readOrder(d)); } catch { /* unvollständig */ }
+    try { orders.push(await readOrder(d)); bestellungenDefekt.delete(d); } catch (err) {
+      // fehlt order.json (Kasse legt den Ordner gerade an) → still überspringen; beschädigt → laut melden statt still verschwinden
+      if (err?.code === 'ENOENT') continue;
+      if (!bestellungenDefekt.has(d)) console.error(`⚠️  Bestellung ${d}: order.json unlesbar (${err?.message || err}) – sie fehlt im Admin`);
+      bestellungenDefekt.add(d);
+    }
   }
   return orders;
+}
+
+// ---------------------------------------------------------------------------
+// Abgebrochene Kassen aufräumen (Datensparsamkeit — ohne Abschluss gibt es keinen Vertrag): Bestellungen, die nach
+// KASSE_AUFRAEUMEN_TAGE noch immer ohne Abschluss, Rechnung und Zahlung sind, werden samt Ordner (Adresse, Modelldateien) gelöscht.
+// Ihre Druckdateien (bis 190 MB je Position) schon nach KASSE_DATEIEN_STUNDEN — bei weniger als SPEICHER_KNAPP freiem Speicher nach
+// einer Stunde (dann stößt auch ein Upload den Lauf an, höchstens alle 10 Minuten): Wer die Platte mit nie abgeschlossenen Kassen
+// füllen will, hält sie so nicht lange belegt. Eine echte Kasse lädt hoch und schließt gleich danach ab.
+// Nie angefasst wird, was eine Rechnung/Gutschrift/Storno, eine Zahlung (auch PayPal), einen Status über „neu“, eine Reklamation,
+// einen Widerruf, eine Notiz oder Sendungsnummer, eine Admin-Änderung oder eine verschickte Mail hat — und keine Bestellung von
+// vor der Rechnungsnummer (die Kasse schreibt seit jeher invoiceNo: null und filesComplete: false). Lauf beim Start und stündlich.
+// ---------------------------------------------------------------------------
+const KASSE_AUFRAEUMEN_TAGE = 14;
+const KASSE_DATEIEN_STUNDEN = 48;
+/** Nie abgeschlossene, unberührte Kasse, die mindestens alterMs alt ist */
+function kasseAbgebrochen(o, id, now = Date.now(), alterMs = KASSE_AUFRAEUMEN_TAGE * TAG_MS) {
+  const at = Date.parse(o?.createdAt);
+  return !!o && typeof o === 'object' && o.orderId === id && Number.isFinite(at) && now - at >= alterMs
+    && o.invoiceNo === null && o.filesComplete === false && !o.completedAt
+    && o.status === 'neu' && (o.paymentStatus ?? 'offen') === 'offen' && o.payment !== 'paypal' && !o.paypalOrderId && !o.paidAt
+    && !o.storno && !o.reklamation && !(Array.isArray(o.widerrufe) && o.widerrufe.length)
+    && !String(o.adminNote || '').trim() && !String(o.trackingNo || '').trim()
+    && !Object.keys(o.mailsSent || {}).length && !(o.history || []).some((h) => h?.by === 'admin');
+}
+async function abgebrocheneKassenAufraeumen(now = Date.now(), knapp = false) {
+  if (!existsSync(ORDERS)) return 0;
+  const frei = await speicherFrei();   // auch Messwert für den Admin-Hinweis
+  const dateienNach = knapp || (frei !== null && frei < SPEICHER_KNAPP) ? STUNDE_MS : KASSE_DATEIEN_STUNDEN * STUNDE_MS;
+  let n = 0;
+  for (const d of await readdir(ORDERS, { withFileTypes: true })) {
+    if (!d.isDirectory() || !ORDER_ID_RE.test(d.name)) continue;
+    const dir = path.join(ORDERS, d.name);
+    const release = await lockOrder(d.name);
+    try {
+      let o;
+      try { o = JSON.parse(await readFile(path.join(dir, 'order.json'), 'utf8')); } catch { continue; }   // unlesbar → nie anfassen
+      if (!kasseAbgebrochen(o, d.name, now, dateienNach)) continue;
+      const dateien = await readdir(dir);
+      if (dateien.some((f) => /^(rechnung|gutschrift|storno)\.html$/.test(f))) continue;
+      if (kasseAbgebrochen(o, d.name, now)) {
+        await rm(dir, { recursive: true, force: true });
+        untrackCouponUse(d.name);
+        n++;
+        console.log(`🧹 Abgebrochene Kasse ${d.name} vom ${dateDE(o.createdAt)} gelöscht (nie abgeschlossen, keine Rechnung, keine Zahlung)`);
+        continue;
+      }
+      // Nur die Druckdateien (und liegengebliebene Temp-Dateien; ein laufender Upload schreibt seine gerade noch → jünger als 20 min)
+      let bytes = 0, k = 0;
+      for (const f of dateien) {
+        if (!/^modell-\d+-[a-z]+\.(stl|3mf)$|\.tmp$/.test(f)) continue;
+        const st = await stat(path.join(dir, f)).catch(() => null);
+        if (!st || (f.endsWith('.tmp') && Date.now() - st.mtimeMs < 20 * 60e3)) continue;
+        await rm(path.join(dir, f), { force: true });
+        bytes += st.size; k++;
+      }
+      if (k) console.log(`🧹 Druckdateien der nie abgeschlossenen Kasse ${d.name} gelöscht (${k} Datei(en), ${Math.round(bytes / 1e6)} MB) – die Bestellung selbst bleibt bis zum ${KASSE_AUFRAEUMEN_TAGE}. Tag`);
+    } catch (err) { console.error(`Aufräumen ${d.name} fehlgeschlagen:`, err?.message || err); }
+    finally { release(); }
+  }
+  return n;
+}
+let aufraeumenLauf = null, aufraeumenKnappZuletzt = 0;
+/** Ein Lauf zur Zeit (Start, stündlich, knapper Speicher teilen sich einen laufenden) */
+function kassenAufraeumen(knapp = false) {
+  aufraeumenLauf ||= abgebrocheneKassenAufraeumen(Date.now(), knapp).catch((err) => console.error('Aufräumen abgebrochener Kassen fehlgeschlagen:', err?.message || err))
+    .finally(() => { aufraeumenLauf = null; });
+  return aufraeumenLauf;
+}
+/** Upload bei knappem Speicher: vorher aufräumen (höchstens alle 10 Minuten ein neuer Lauf) */
+function kassenAufraeumenKnapp() {
+  if (aufraeumenLauf) return aufraeumenLauf;
+  if (Date.now() - aufraeumenKnappZuletzt < 10 * 60e3) return Promise.resolve();
+  aufraeumenKnappZuletzt = Date.now();
+  console.warn('💾 Weniger als 5 GB frei – Druckdateien nie abgeschlossener Kassen (älter als 1 Stunde) werden jetzt gelöscht');
+  return kassenAufraeumen(true);
 }
 
 async function handleCheckout(req, res) {
@@ -3098,6 +3495,10 @@ async function handleCheckout(req, res) {
   try { data = JSON.parse((await readBody(req)).toString('utf8')); } catch { data = null; }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return send(res, 400, { ok: false, error: 'Ungültige Anfrage' });
   const { payment, paypalOrderId } = data;
+  // Bremse: höchstens KASSE_IP_MAX neue Kassen je IP und Stunde (gezählt wird nur, was eine Bestellung anlegt). Eine bezahlte
+  // PayPal-Kasse wird nie gebremst — das Geld ist schon eingezogen (die Zahlung selbst zählt in /api/paypal/create)
+  const kasseKey = `kasse:${clientIp(req)}`;
+  if (payment !== 'paypal' && rateLimitReached(kasseKey, KASSE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
   // PayPal zuerst: Zahlung serverseitig bestätigen (Capture-Speicher bzw. Nachfrage bei PayPal) — ist das Geld schon eingezogen,
   // endet jede Ablehnung danach mit automatischer Erstattung (kasseAbgelehntNachZahlung), nie mit „bezahlt, aber keine Bestellung“.
   // Die PayPal-ID darf nur einmal verwendet werden; Betrag/Währung müssen zur Bestellung passen.
@@ -3131,7 +3532,10 @@ async function handleCheckout(req, res) {
   if (gc && isGuthaben(gc) && !paypalCap && couponRest(gc) + 0.005 < totals.coupon.off) {
     return send(res, 400, { ok: false, error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst – bitte prüf den Betrag in der Kasse.` });
   }
-  const orderId = newOrderId();
+  if (!paypalCap) forgotLimited(kasseKey, KASSE_IP_MAX, STUNDE_MS);
+  // neue Nummer, die es noch nicht gibt (synchron geprüft — ein vorhandener Ordner würde sonst überschrieben)
+  let orderId;
+  do orderId = newOrderId(); while (existsSync(path.join(ORDERS, orderId)));
   const createdAt = new Date().toISOString();
   if (paypalCap) untrackCouponUse(`paypal:${ppId}`);   // Reservierung aus /api/paypal/create geht auf die Bestellung über
   if (totals.coupon) trackCouponUse({ orderId, coupon: totals.coupon, status: 'neu', createdAt, paymentStatus: paypalCap ? 'bezahlt' : 'offen', customer });
@@ -3181,25 +3585,136 @@ async function handleCheckout(req, res) {
   send(res, 200, { ok: true, orderId, accessKey: order.accessKey, itemCount: order.lines.length, total: order.total });
 }
 
+// ---------------------------------------------------------------------------
+// Modelldateien der Kasse (PUT /api/order/<ID>/stl/<i>): Der Upload landet in einer Temp-Datei und ersetzt die Druckdatei erst,
+// wenn er vollständig angekommen ist und inhaltlich passt (modellPruefen) — ein Abbruch hinterlässt weder Teildatei noch offenen
+// Dateideskriptor. Abgelehnt werden: abgeschlossene/stornierte Bestellungen (409, die Datei ist ab dem Abschluss unveränderlich),
+// mehr als MAX_STL (413), weniger als MIN_FREI freier Speicher (507), mehr als UPLOAD_IP_BYTES je IP und Stunde (429).
+// ---------------------------------------------------------------------------
+const MIN_FREI = 1024 ** 3;   // 1 GB muss frei bleiben (Bestellungen, Einstellungen, Mailserver auf derselben Platte)
+const UPLOAD_ZEIT_MS = 15 * 60e3;   // ganze Anfrage (server.requestTimeout): 126 MB brauchen bei 1,2 Mbit/s Upload knapp 15 Minuten
+const SPEICHER_KNAPP = 5 * 1024 ** 3;   // darunter räumt ein Upload vorher Druckdateien nie abgeschlossener Kassen auf (siehe unten)
+const uploadMengen = new Map();   // IP → [{ t, n }] (Bytes je Upload, Fenster 1 Stunde; laufende Uploads zählen ab dem Start mit)
+let speicherZuletzt = null;   // freie Bytes bei der letzten Messung (Upload, Start, stündlich) — Hinweis im Admin unter 2 GB
+async function speicherFrei() {
+  try { const st = await statfs(ORDERS); speicherZuletzt = st.bavail * st.bsize; } catch (err) { console.error('Freier Speicher nicht ermittelbar:', err?.message || err); return null; }
+  return speicherZuletzt;
+}
+/** Bytes der IP in der letzten Stunde (mit eintrag: diesen Upload dazunehmen — sein n wächst beim Lesen mit) */
+function uploadMenge(ip, eintrag = null) {
+  const now = Date.now();
+  const liste = (uploadMengen.get(ip) || []).filter((e) => now - e.t < STUNDE_MS);
+  if (eintrag) liste.push(eintrag);
+  uploadMengen.delete(ip);
+  if (liste.length) uploadMengen.set(ip, liste);
+  while (uploadMengen.size > FORGOT_MAX_KEYS) uploadMengen.delete(uploadMengen.keys().next().value);
+  return liste.reduce((s, e) => s + e.n, 0);
+}
+/** Abgebrochener oder abgelehnter Upload: belegt nichts auf der Platte → zählt nicht */
+function uploadFrei(ip, eintrag) {
+  const liste = uploadMengen.get(ip) || [];
+  if (liste.includes(eintrag)) liste.splice(liste.indexOf(eintrag), 1);
+}
+/**
+ * Inhalt einer Druckdatei prüfen → null (in Ordnung) oder Fehlertext. STL binär: 80 Bytes Kopf + Dreieckszahl n + 50·n Bytes;
+ * STL als Text: beginnt mit „solid“ und endet mit „endsolid“; 3MF: ZIP (Signatur am Anfang, Endsatz in den letzten 64 KB).
+ */
+async function modellPruefen(file, ext) {
+  let fh;
+  try { fh = await open(file, 'r'); } catch { return 'Datei fehlt'; }
+  try {
+    const { size } = await fh.stat();
+    if (size < 84) return 'Datei leer oder zu klein';
+    const lies = async (pos, len) => { const b = Buffer.alloc(len); await fh.read(b, 0, len, pos); return b; };
+    const kopf = await lies(0, 84), ende = await lies(Math.max(0, size - 65_557), Math.min(size, 65_557));
+    if (ext === '.3mf') {
+      if (kopf.readUInt32LE(0) !== 0x04034b50) return 'keine 3MF-Datei';
+      return ende.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) >= 0 ? null : '3MF-Datei unvollständig';
+    }
+    const n = kopf.readUInt32LE(80);
+    if (n > 0 && 84 + 50 * n === size) return null;
+    if (/^\s*solid\b/i.test(kopf.toString('latin1'))) return /endsolid[^\n]*\s*$/i.test(ende.subarray(-1024).toString('latin1')) ? null : 'STL-Datei unvollständig';
+    return 'keine gültige STL-Datei';
+  } catch (err) {
+    return `Datei nicht lesbar (${err.code || err.message})`;
+  } finally { await fh.close().catch(() => {}); }
+}
+let uploadSeq = 0;
 // Upload und Abschluss nur mit Schlüssel (x-order-key) — sonst 404 wie bei einer unbekannten Bestellung (siehe orderZugriff)
 async function handleStlUpload(req, res, id, idx, url) {
   let order = null;
   try { order = await readOrder(id); } catch { order = null; }
   const z = orderZugriff(req, url, order, kasseOffen);
-  if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
-  if (order.filesComplete) return send(res, 400, { ok: false, error: 'Bestellung abgeschlossen' });
+  // Antwort vor dem Lesen des Körpers: Verbindung danach schließen, statt den Rest (bis 190 MB) anzunehmen
+  const ablehnen = (code, body) => { res.setHeader('Connection', 'close'); return send(res, code, body); };
+  if (z !== 'ok') return z === 'gesperrt' ? ablehnen(429, TOO_MANY) : ablehnen(404, { ok: false, error: 'Bestellung unbekannt' });
+  if (order.completedAt || order.filesComplete || order.status === 'storniert') {
+    return ablehnen(409, { ok: false, error: 'Die Bestellung ist abgeschlossen – ihre Druckdateien lassen sich nicht mehr ändern.' });
+  }
   const i = parseInt(idx, 10);
-  if (!(i >= 0 && i < order.lines.length)) return send(res, 400, { ok: false, error: 'Ungültiger Index' });
+  if (!(i >= 0 && i < order.lines.length)) return ablehnen(400, { ok: false, error: 'Ungültiger Index' });
+  const laenge = Number(req.headers['content-length']);
+  if (laenge > MAX_STL) return ablehnen(413, { ok: false, error: 'Die Druckdatei ist zu groß.' });
+  // Bremse je IP: die angekündigte Größe zählt sofort (gleichzeitige Uploads sehen einander), ohne Content-Length wächst der Anteil
+  // beim Lesen mit; ein abgebrochener oder abgelehnter Upload gibt seinen Anteil wieder frei
+  const ip = clientIp(req);
+  const anteil = { t: Date.now(), n: laenge || 0 };
+  if (uploadMenge(ip, anteil) > UPLOAD_IP_BYTES) { uploadFrei(ip, anteil); return ablehnen(429, GEBREMST()); }
+  let frei = await speicherFrei();
+  if (frei !== null && frei - (laenge || 0) < SPEICHER_KNAPP) { await kassenAufraeumenKnapp(); frei = await speicherFrei(); }
+  if (frei !== null && frei - (laenge || 0) < MIN_FREI) {
+    uploadFrei(ip, anteil);
+    console.error(`💾 Upload ${id}/${i} abgelehnt: weniger als 1 GB frei (${Math.round(frei / 1e6)} MB)`);
+    return ablehnen(507, { ok: false, error: 'Der Speicher des Shops ist gerade voll – bitte versuch es später noch einmal oder schreib mir eine E-Mail.' });
+  }
   const file = path.join(ORDERS, id, order.lines[i].stlFile);
-  const out = createWriteStream(file);
-  let size = 0, aborted = false;
+  const tmp = `${file}.upload-${process.pid}-${(++uploadSeq).toString(36)}.tmp`;
+  const out = createWriteStream(tmp, { flags: 'wx' });
+  let size = 0, fertig = false;
+  // Abbruch (Verbindung weg, zu groß, Schreibfehler): Temp-Datei schließen und löschen; Antwort nur, solange die Verbindung steht
+  const abbrechen = (code, body) => {
+    if (fertig) return;
+    fertig = true;
+    uploadFrei(ip, anteil);
+    req.unpipe(out);
+    out.once('close', () => rm(tmp, { force: true }).catch(() => {}));   // erst nach dem Schließen: kein Schreibvorgang legt sie neu an
+    out.destroy();
+    if (code) { ablehnen(code, body); req.resume(); }
+  };
   req.on('data', (c) => {
     size += c.length;
-    if (size > MAX_STL && !aborted) { aborted = true; out.destroy(); req.destroy(); send(res, 413, { ok: false, error: 'Datei zu groß' }); }
+    if (size > MAX_STL) return abbrechen(413, { ok: false, error: 'Die Druckdatei ist zu groß.' });
+    if (size > anteil.n) { anteil.n = size; if (uploadMenge(ip) > UPLOAD_IP_BYTES) abbrechen(429, GEBREMST()); }
+  });
+  req.on('close', () => { if (!req.complete) abbrechen(); });
+  req.on('error', () => abbrechen());
+  out.on('error', (err) => abbrechen(err?.code === 'ENOSPC' ? 507 : 500, { ok: false, error: 'Die Druckdatei konnte nicht gespeichert werden – bitte versuch es noch einmal.' }));
+  out.on('close', async () => {
+    if (fertig) return;
+    fertig = true;
+    anteil.n = size;
+    const fehler = await modellPruefen(tmp, path.extname(file).toLowerCase());
+    if (fehler) {
+      uploadFrei(ip, anteil);
+      await rm(tmp, { force: true }).catch(() => {});
+      return send(res, 400, { ok: false, error: `Druckdatei abgelehnt: ${fehler}.` });
+    }
+    // Stand nach dem Hochladen: inzwischen abgeschlossen oder storniert → die Datei bleibt, wie sie war
+    let jetzt = null;
+    try { jetzt = await readOrder(id); } catch { jetzt = null; }
+    if (!jetzt || jetzt.completedAt || jetzt.filesComplete || jetzt.status === 'storniert') {
+      uploadFrei(ip, anteil);
+      await rm(tmp, { force: true }).catch(() => {});
+      return send(res, 409, { ok: false, error: 'Die Bestellung ist abgeschlossen – ihre Druckdateien lassen sich nicht mehr ändern.' });
+    }
+    try { await rename(tmp, file); } catch (err) {
+      uploadFrei(ip, anteil);
+      await rm(tmp, { force: true }).catch(() => {});
+      return send(res, 500, { ok: false, error: 'Die Druckdatei konnte nicht gespeichert werden – bitte versuch es noch einmal.' });
+    }
+    send(res, 200, { ok: true, bytes: size });
   });
   req.pipe(out);
-  out.on('finish', () => { if (!aborted) send(res, 200, { ok: true, bytes: size }); });
-  out.on('error', () => { if (!aborted) send(res, 500, { ok: false, error: 'Speicherfehler' }); });
 }
 
 // Idempotent: ein zweiter Aufruf (Retry, Doppelklick, Dritte) liefert nur noch die Rechnungsdaten —
@@ -3229,7 +3744,13 @@ async function handleComplete(req, res, id, url) {
       return send(res, 409, { ok: false, code: 'gutschein', error: `Der Gutschein „${gc.code}“ ist inzwischen vergeben – bitte starte die Kasse neu.` });
     }
     if (order.status === 'storniert') return send(res, 409, { ok: false, error: 'Diese Bestellung wurde storniert – bitte starte die Kasse neu.' });
+    // Rechnung nur, wenn jede Position eine vollständige, gültige Druckdatei hat (danach sind die Dateien unveränderlich)
     if (!order.invoiceNo) {
+      const fehlen = [];
+      for (const [i, l] of order.lines.entries()) if (!l.stlFile || await modellPruefen(path.join(ORDERS, id, l.stlFile), path.extname(l.stlFile).toLowerCase())) fehlen.push(i + 1);
+      if (fehlen.length) {
+        return send(res, 409, { ok: false, code: 'dateien', error: `Die Druckdatei für ${fehlen.length > 1 ? 'die Positionen' : 'Position'} ${fehlen.join(', ')} fehlt noch oder ist unvollständig – bitte versuch es noch einmal.` });
+      }
       order.invoiceNo = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
       await rechnungFesthalten(order);
     } else if (!order.steuer) steuerDerRechnung(order);
@@ -3266,6 +3787,11 @@ const server = http.createServer(async (req, res) => {
   try {
     // --- Wartungsmodus: ohne Freigabe nur die Wartungsseite
     if (await wartungTor(req, res, p, url)) return;
+    // --- Admin-Passwort (Kopf x-admin-key) einmal je Anfrage prüfen; zu viele Fehlversuche → 429 auf Admin-Wegen
+    if (await adminAnmeldung(req) === 'gebremst' && (p.startsWith('/api/admin/') || p.startsWith('/admin/'))) {
+      res.setHeader('Retry-After', '900');
+      return send(res, 429, { ok: false, error: 'Zu viele falsche Admin-Passwörter – bitte in 15 Minuten noch einmal versuchen.' });
+    }
 
     // --- öffentliche API
     if (p === '/api/pricing') {
@@ -3310,21 +3836,43 @@ const server = http.createServer(async (req, res) => {
       if (nameFehler) return send(res, 400, { ok: false, error: nameFehler });
       const mail = typeof email === 'string' ? email.trim().toLowerCase() : '';
       if (!isEmail(mail)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an.' });
-      if (String(password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
+      const pwFehler = pwRegel(password);
+      if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
+      // Bremsen vor der Kontoanlage (jedes neue Konto verschickt eine Mail an die angegebene Adresse): je IP 5 Versuche je Stunde
+      // (zählt auch „existiert schon“ → Konten lassen sich nicht massenhaft abfragen), je Empfänger 3 Konten am Tag, 30 je Stunde insgesamt
+      if (forgotLimited(`register-ip:${clientIp(req)}`, REG_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
       if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto – bitte anmelden' });
+      if (rateLimitReached(`register-mail:${mail}`, REG_MAIL_MAX, TAG_MS) || rateLimitReached('register-alle', REG_ALLE_MAX, STUNDE_MS)) {
+        console.warn(`⚠️  Registrierung gebremst (${rateLimitReached('register-alle', REG_ALLE_MAX, STUNDE_MS) ? `${REG_ALLE_MAX} je Stunde erreicht` : 'Empfänger-Grenze'})`);
+        return send(res, 429, GEBREMST('später'));
+      }
+      forgotLimited(`register-mail:${mail}`, REG_MAIL_MAX, TAG_MS);
+      forgotLimited('register-alle', REG_ALLE_MAX, STUNDE_MS);
       const salt = crypto.randomBytes(16).toString('hex');
-      const user = { id: crypto.randomUUID(), name, email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
+      const user = { id: crypto.randomUUID(), name, email: mail, salt, hash: await hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
+      if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto – bitte anmelden' });   // parallel angelegt
       const verifyToken = newVerifyToken(user);   // Bestätigungslink kommt mit der Willkommensmail
       users.push(user);
       await saveUsers();
       send(res, 200, { ok: true, token: createSession(user.id), user: publicUser(user) });
-      return runHook('userRegistered', { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
+      return runHook('userRegistered', { id: user.id, name: kontoMailName(user.name), email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
     }
+    // Anmeldung: Fehlversuche je IP + Konto (10) und je IP (30) in 15 Minuten → 429; das Konto selbst wird nie gesperrt. Jeder Versuch
+    // belegt seinen Platz vor der Prüfung (anmeldePlatz) — auch parallel abgeschickte zählen; ein richtiges Passwort gibt ihn frei
     if (req.method === 'POST' && p === '/api/auth/login') {
       const { email, password } = await readJson(req, 16 * 1024);
-      const u = users.find((x) => x.email === String(email || '').trim().toLowerCase());
-      const ok = u && crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(hashPw(password || '', u.salt), 'hex'));
-      if (!ok) return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
+      const mail = String(email || '').trim().toLowerCase().slice(0, 254);
+      const platz = anmeldePlatz(clientIp(req), mail);
+      if (!platz) return send(res, 429, LOGIN_GEBREMST);
+      const u = users.find((x) => x.email === mail);
+      let stimmt;
+      try { stimmt = await passwortStimmt(u, password); } catch (err) {
+        platz.frei();
+        if (err?.code === 'ueberlast') return send(res, 503, UEBERLAST);
+        throw err;
+      }
+      if (!stimmt) return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
+      platz.frei();
       return send(res, 200, { ok: true, token: createSession(u.id), user: publicUser(u) });
     }
     if (req.method === 'POST' && p === '/api/auth/logout') {
@@ -3337,19 +3885,19 @@ const server = http.createServer(async (req, res) => {
       let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
       const mail = String(body?.email || '').trim().toLowerCase();
       if (mail.length > 254 || !isEmail(mail)) return send(res, 400, { ok: false, error: 'Bitte eine gültige E-Mail-Adresse angeben' });   // 254 = RFC-5321-Maximum
-      // IP-Limit zuerst und kurzschließend: eine gesperrte IP legt keine neuen Mail-Schlüssel mehr an
-      if (forgotLimited(`ip:${clientIp(req)}`, FORGOT_IP_MAX) || forgotLimited(`mail:${mail}`)) {
-        return send(res, 429, { ok: false, error: 'Zu viele Anfragen – bitte in 15 Minuten noch einmal versuchen.' });
-      }
+      // IP-Limit zuerst und kurzschließend: eine gesperrte IP legt keine neuen Mail-Schlüssel mehr an. Gebremst: trotzdem 200, aber
+      // keine neue Mail und kein neuer Link — die zuletzt verschickten Links bleiben gültig (Dritte können den Inhaber nicht aussperren)
+      const gebremst = forgotLimited(`ip:${clientIp(req)}`, FORGOT_IP_MAX) || forgotLimited(`mail:${mail}`);
       send(res, 200, { ok: true });
       const u = users.find((x) => x.email === mail);
-      if (!u) return;
+      if (!u || gebremst) return;
       try {
         const token = crypto.randomBytes(24).toString('base64url');
-        u.reset = { hash: sha256(token), exp: Date.now() + RESET_TTL };
+        const frueher = [].concat(u.reset || []).filter((r) => r && Number(r.exp) > Date.now()).slice(-(RESET_LINKS - 1));
+        u.reset = [...frueher, { hash: sha256(token), exp: Date.now() + RESET_TTL }];
         await saveUsers();
-        const m = passwordReset({ user: { name: u.name, email: u.email }, link: `${baseUrlFor(settings)}/?reset=${token}`, settings });
-        await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-reset', ref: u.id });
+        const m = passwordReset({ user: { name: kontoMailName(u.name), email: u.email }, link: `${baseUrlFor(settings)}/?reset=${token}`, settings });
+        await mailer.queue({ to: { name: kontoMailName(u.name), email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-reset', ref: u.id });
       } catch (err) { console.error('Passwort-Reset-Mail fehlgeschlagen:', err?.message || err); }
       return;
     }
@@ -3358,14 +3906,17 @@ const server = http.createServer(async (req, res) => {
       let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
       const u = userByResetToken(body?.token);
       if (!u) return send(res, 400, { ok: false, error: 'Link ungültig oder abgelaufen' });
-      if (String(body?.password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
-      u.salt = crypto.randomBytes(16).toString('hex');
-      u.hash = hashPw(body.password, u.salt);
-      delete u.reset;
+      const pwFehler = pwRegel(body?.password);
+      if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
+      const salt = crypto.randomBytes(16).toString('hex'), hash = await hashPw(body.password, salt);
+      if (userByResetToken(body?.token) !== u) return send(res, 400, { ok: false, error: 'Link ungültig oder abgelaufen' });   // inzwischen benutzt
+      u.salt = salt;
+      u.hash = hash;
+      delete u.reset;   // alle Links aus „Passwort vergessen“ sind damit verbraucht
       // Der Reset-Link kam per Mail an diese Adresse → sie gehört der Person, die jetzt das Passwort setzt
       if (!u.emailVerifiedAt) u.emailVerifiedAt = new Date().toISOString();
       delete u.verify;
-      for (const [t, s] of Object.entries(sessions)) if (s.userId === u.id) delete sessions[t];
+      sitzungenBeenden(u.id);
       await saveUsers();
       return send(res, 200, { ok: true, token: createSession(u.id), user: publicUser(u) });
     }
@@ -3395,8 +3946,8 @@ const server = http.createServer(async (req, res) => {
       await saveUsers();
       send(res, 200, { ok: true });
       try {
-        const m = emailBestaetigung({ user: { name: u.name, email: u.email }, link: verifyLinkFor(token), settings, baseUrl: baseUrlFor(settings) });
-        await mailer.queue({ to: { name: u.name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'email-bestaetigung', ref: u.id });
+        const m = emailBestaetigung({ user: { name: kontoMailName(u.name), email: u.email }, link: verifyLinkFor(token), settings, baseUrl: baseUrlFor(settings) });
+        await mailer.queue({ to: { name: kontoMailName(u.name), email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'email-bestaetigung', ref: u.id });
       } catch (err) { console.error('Bestätigungsmail fehlgeschlagen:', err?.message || err); }
       return;
     }
@@ -3443,6 +3994,57 @@ const server = http.createServer(async (req, res) => {
       await saveUsers();
       return send(res, 200, { ok: true });
     }
+    // Konto (angemeldet): Passwort ändern (altes Passwort; beendet alle anderen Anmeldungen, Mail „Passwort geändert“),
+    // auf allen Geräten abmelden, Konto löschen (Passwort zur Bestätigung). Falsche Passwörter zählen wie bei der Anmeldung.
+    if (req.method === 'POST' && (p === '/api/auth/password' || p === '/api/auth/delete' || p === '/api/auth/logout-all')) {
+      const u = userFromReq(req);
+      if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const token = String(req.headers['x-auth'] || '');
+      if (p === '/api/auth/logout-all') {
+        const n = sitzungenBeenden(u.id);
+        await saveSessions();
+        return send(res, 200, { ok: true, beendet: n });
+      }
+      let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
+      // Passwortwechsel je Konto höchstens PW_WECHSEL_MAX je Stunde (jeder verschickt eine Mail, siehe unten)
+      if (p === '/api/auth/password' && forgotLimited(`pw-wechsel:${u.id}`, PW_WECHSEL_MAX, STUNDE_MS)) {
+        return send(res, 429, { ok: false, error: 'Du hast dein Passwort gerade mehrmals geändert – bitte versuch es in einer Stunde noch einmal.' });
+      }
+      const platz = anmeldePlatz(clientIp(req), u.email);
+      if (!platz) return send(res, 429, LOGIN_GEBREMST);
+      const altes = p === '/api/auth/password' ? body?.altesPasswort : body?.passwort;
+      let stimmt;
+      try { stimmt = await passwortStimmt(u, altes); } catch (err) {
+        platz.frei();
+        if (err?.code === 'ueberlast') return send(res, 503, UEBERLAST);
+        throw err;
+      }
+      if (!stimmt) return send(res, 400, { ok: false, error: p === '/api/auth/password' ? 'Das bisherige Passwort stimmt nicht.' : 'Das Passwort stimmt nicht.' });
+      platz.frei();
+      if (p === '/api/auth/delete') {
+        await kontoLoeschen(u, 'auf Wunsch im Konto');
+        return send(res, 200, { ok: true });
+      }
+      const pwFehler = pwRegel(body?.neuesPasswort);
+      if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
+      if (!users.includes(u)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });   // inzwischen gelöscht
+      u.salt = crypto.randomBytes(16).toString('hex');
+      u.hash = await hashPw(body.neuesPasswort, u.salt);
+      delete u.reset;
+      const beendet = sitzungenBeenden(u.id, token);
+      await saveUsers();
+      await saveSessions();
+      send(res, 200, { ok: true, beendet });
+      // Hinweis-Mail an die Kontoadresse: je Adresse und Tag höchstens 3, solange sie nicht bestätigt ist nur 1 — wer ein Konto mit
+      // fremder Adresse anlegt, kann darüber keine Mail-Flut an Dritte auslösen
+      if (forgotLimited(`pw-mail:${u.email}`, u.emailVerifiedAt ? 3 : 1, TAG_MS)) return console.log(`🔐 Passwort von Konto ${u.id} geändert – Hinweis-Mail heute schon verschickt, keine weitere`);
+      try {
+        const name = kontoMailName(u.name);
+        const m = passwortGeaendert({ user: { name, email: u.email }, settings, baseUrl: baseUrlFor(settings) });
+        await mailer.queue({ to: { name, email: u.email }, subject: m.subject, text: m.text, html: m.html, kind: 'passwort-geaendert', ref: u.id });
+      } catch (err) { console.error('Mail „Passwort geändert“ fehlgeschlagen:', err?.message || err); }
+      return;
+    }
 
     // --- Widerruf (elektronische Widerrufsfunktion): speichern, Bestellung zuordnen, bestätigen — Antwort immer gleich
     if (req.method === 'POST' && p === '/api/widerruf') {
@@ -3464,8 +4066,16 @@ const server = http.createServer(async (req, res) => {
       let order = null;
       if (orderId) { try { order = await readOrder(orderId); } catch { order = null; } }
       const orderMatched = !!order && String(order.customer?.email || '').trim().toLowerCase() === email;
+      // Eingangsbestätigung je Empfänger höchstens 3 am Tag und insgesamt 30 je Stunde — darüber wird die Erklärung trotzdem gespeichert
+      // und dem Shop gemeldet (ein Widerruf geht nie verloren), nur die Mail an die angegebene Adresse entfällt (bestaetigungGebremst).
+      // Zugeordnete Widerrufe (Bestellnummer UND Adresse passen) zählen dort nicht mit und werden immer bestätigt — Spam ohne echte
+      // Bestellung kann ihnen die Bestätigung nicht nehmen; nur je Bestellung höchstens WIDERRUF_BESTELLUNG_MAX am Tag (Wiederholungen)
+      const gebremst = orderMatched
+        ? forgotLimited(`widerruf-bestellung:${orderId}`, WIDERRUF_BESTELLUNG_MAX, TAG_MS)
+        : rateLimitReached(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS) || rateLimitReached('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS);
+      if (!gebremst && !orderMatched) { forgotLimited(`widerruf-mail:${email}`, WIDERRUF_MAIL_MAX, TAG_MS); forgotLimited('widerruf-alle', WIDERRUF_ALLE_MAX, STUNDE_MS); }
       const entry = await withWiderrufe((list) => {
-        const w = { ref: newWiderrufRef(list), at: new Date().toISOString(), orderId: orderId || '', name, email, nachricht, orderMatched, status: 'offen', notiz: '' };
+        const w = { ref: newWiderrufRef(list), at: new Date().toISOString(), orderId: orderId || '', name, email, nachricht, orderMatched, status: 'offen', notiz: '', ...(gebremst ? { bestaetigungGebremst: true } : {}) };
         list.push(w);
         return { changed: true, result: w };
       });
@@ -3479,7 +4089,7 @@ const server = http.createServer(async (req, res) => {
         } catch (err) { console.error(`Widerruf ${entry.ref}: Vermerk in ${orderId} fehlgeschlagen:`, err?.message || err); }
         finally { release(); }
       }
-      console.log(`↩️  Widerruf ${entry.ref}${orderId ? ` zu ${orderId}` : ''} (${orderMatched ? 'zugeordnet' : 'nicht zugeordnet'})`);
+      console.log(`↩️  Widerruf ${entry.ref}${orderId ? ` zu ${orderId}` : ''} (${orderMatched ? 'zugeordnet' : 'nicht zugeordnet'})${gebremst ? ' – Eingangsbestätigung gebremst, nur Meldung an den Shop' : ''}`);
       send(res, 200, { ok: true, ref: entry.ref, at: entry.at });
       return runHook('widerruf', entry);
     }
@@ -3528,6 +4138,8 @@ const server = http.createServer(async (req, res) => {
         const k = pruefeKonfig(cfg, { farbeBekannt: (id) => (settings.colors || []).some((c) => c?.id === id) });
         if (k) return send(res, 400, { ok: false, error: `Ungültiges Design (${KONFIG_LABEL[k] || k})` });
         if (!produktAktiv(cfg.product)) return send(res, 400, { ok: false, error: EIERBECHER_GESPERRT });
+        // nur neue Codes zählen (je IP und insgesamt je Stunde) — ein schon bekanntes Design kostet keinen Speicher
+        if (forgotLimited(`design:${clientIp(req)}`, DESIGN_IP_MAX, STUNDE_MS) || forgotLimited('design-alle', DESIGN_ALLE_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
         designs[code] = { config: canon, createdAt: Date.now(), loads: 0 };
         await saveDesigns();
       }
@@ -3539,7 +4151,7 @@ const server = http.createServer(async (req, res) => {
       const d = designs[code];
       if (!d) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht – bitte prüfen (z. B. B statt 8).' });
       d.loads = (d.loads || 0) + 1; d.lastLoad = Date.now();
-      saveDesigns();
+      designZaehlerOffen = true;   // gespeichert wird gebündelt (DESIGN_ZAEHLER_MS)
       return send(res, 200, { ok: true, code, config: d.config });
     }
 
@@ -3550,17 +4162,23 @@ const server = http.createServer(async (req, res) => {
       const file = path.join(THUMBS, `${code}.jpg`);
       if (req.method === 'PUT') {
         if (!designs[code]) return send(res, 404, { ok: false, error: 'Design unbekannt' });
+        if (forgotLimited(`thumb:${clientIp(req)}`, THUMB_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
         const raw = (await readBody(req, 120 * 1024)).toString('utf8');
         const m = raw.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/);
         const jpeg = m ? Buffer.from(m[1], 'base64') : null;
         if (!jpeg || jpeg.length < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8 || jpeg[2] !== 0xff) return send(res, 400, { ok: false, error: 'Nur JPEG (data-URL)' });
         // Nur das erste Bild gilt: es entsteht aus derselben Konfiguration wie jedes spätere — so kann niemand das Vorschaubild
-        // eines fremden Codes (geteilte Listen) austauschen. 'wx' legt die Datei nur an, wenn es sie noch nicht gibt.
+        // eines fremden Codes (geteilte Listen) austauschen. Erst vollständig in eine Temp-Datei schreiben, dann per link()
+        // anlegen: das schlägt fehl, wenn es die Datei schon gibt (wie 'wx'), und niemand sieht ein halbes Bild (wie writeFileAtomic).
         await mkdir(THUMBS, { recursive: true });
-        try { await writeFile(file, jpeg, { flag: 'wx' }); } catch (err) {
+        const tmp = `${file}.${process.pid}.${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}.tmp`;
+        try {
+          await writeFile(tmp, jpeg);
+          await link(tmp, file);
+        } catch (err) {
           if (err?.code === 'EEXIST') return send(res, 200, { ok: true, vorhanden: true });
           throw err;
-        }
+        } finally { await rm(tmp, { force: true }).catch(() => {}); }
         return send(res, 200, { ok: true });
       }
       if (req.method === 'GET') {
@@ -3581,6 +4199,7 @@ const server = http.createServer(async (req, res) => {
 
     // --- Design-Listen
     if (req.method === 'POST' && p === '/api/list') {
+      if (forgotLimited(`liste:${clientIp(req)}`, LISTE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
       const b = await readJson(req, 64 * 1024);
       const name = (typeof b.name === 'string' ? oneLine(b.name, 60) : '') || 'Meine Liste';
       const code = newListCode();
@@ -3600,6 +4219,7 @@ const server = http.createServer(async (req, res) => {
       const l = lists[code];
       if (!l) return send(res, 404, { ok: false, error: 'Diese Liste gibt es nicht – bitte den Code prüfen.' });
       if (req.method === 'GET') return send(res, 200, { ok: true, list: publicList(l) });
+      if (forgotLimited(`liste-aendern:${clientIp(req)}`, LISTE_AENDERN_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());
       const b = await readJson(req, 64 * 1024);
       if (!b.token || b.token !== l.token) return send(res, 403, { ok: false, error: 'Nur der Besitzer kann diese Liste ändern.' });
       if (req.method === 'DELETE') { delete lists[code]; await saveLists(); return send(res, 200, { ok: true }); }
@@ -3648,6 +4268,7 @@ const server = http.createServer(async (req, res) => {
       // Betrag) — sonst wäre bezahlt, die Bestellung aber abgelehnt
       const k = pruefeKasse(data);
       if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) });
+      if (forgotLimited(`kasse:${clientIp(req)}`, KASSE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());   // wie /api/checkout
       const t = k.totals;
       // 0 € (Gutschein/Guthaben deckt alles): PayPal nimmt keine Zahlung über 0,00 € an — die Kasse bestellt dann ohne Zahlung
       if (!(t.total > 0)) return send(res, 400, { ok: false, error: 'Es ist nichts zu zahlen – bitte bestell über „Zahlungspflichtig bestellen“ ohne PayPal.' });
@@ -3711,10 +4332,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/admin/settings') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const patch = await readJson(req);
-      // Admin-Passwort: nur ein nicht-leerer String (≥ 8 Zeichen) — leer würde den Admin für alle öffnen, Nicht-Strings sperren aus
+      // Admin-Passwort: Text mit 8–200 Zeichen (leer würde den Admin für alle öffnen, Nicht-Strings sperren aus) — gespeichert wird nur
+      // der scrypt-Hash (übernommen erst, wenn der ganze Patch geprüft ist); danach gilt der Speicher-Cache nicht mehr
+      let adminHashNeu = null;
       if (patch.adminKey !== undefined) {
-        if (typeof patch.adminKey !== 'string' || patch.adminKey.trim().length < 8) return send(res, 400, { ok: false, error: 'Admin-Passwort: mindestens 8 Zeichen' });
-        settings.adminKey = patch.adminKey.trim();
+        if (typeof patch.adminKey !== 'string' || patch.adminKey.trim().length < 8 || patch.adminKey.trim().length > 200) return send(res, 400, { ok: false, error: 'Admin-Passwort: 8 bis 200 Zeichen' });
+        adminHashNeu = await pwHash(patch.adminKey.trim());
       }
       if (patch.pricing !== undefined && (!patch.pricing || typeof patch.pricing !== 'object' || Array.isArray(patch.pricing))) {
         return send(res, 400, { ok: false, error: 'Preise: ungültiges Format' });
@@ -3819,6 +4442,7 @@ const server = http.createServer(async (req, res) => {
       if (creditPrefix.prefix) settings.creditPrefix = creditPrefix.prefix;
       if (nextCreditNeu) settings.nextCredit = nextCreditNeu;
       if (wartungNeu) settings.wartung = wartungNeu;
+      if (adminHashNeu) { settings.adminKeyHash = adminHashNeu; adminPlatzhalterSetzen(settings); adminCache.clear(); }
       if (patch.paypal && typeof patch.paypal === 'object') {
         settings.paypal = paypalNeu;   // geprüft oben (paypalAus, Secret-Maske angewendet)
       }
@@ -4109,6 +4733,21 @@ const server = http.createServer(async (req, res) => {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       return send(res, 200, { ok: true, users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt, address: u.address || null, emailVerifiedAt: u.emailVerifiedAt || null })) });
     }
+    // Kundenkonto (Admin): Datenauskunft als JSON (Art. 15 DSGVO) bzw. löschen (Bestellungen bleiben, ohne Kontobezug)
+    if ((req.method === 'GET' && p === '/api/admin/user-export') || (req.method === 'POST' && p === '/api/admin/user-delete')) {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      let id = url.searchParams.get('id');
+      if (req.method === 'POST') { try { id = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8'))?.id; } catch { id = null; } }
+      const u = typeof id === 'string' ? users.find((x) => x.id === id) : null;
+      if (!u) return send(res, 404, { ok: false, error: 'Kundenkonto unbekannt' });
+      if (req.method === 'GET') {
+        res.setHeader('Content-Disposition', `attachment; filename="formsam-konto-${u.id.slice(0, 8)}.json"`);
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, await kontoExport(u));
+      }
+      const n = await kontoLoeschen(u, 'im Admin');
+      return send(res, 200, { ok: true, bestellungen: n });
+    }
     const mAdminOrder = p.match(/^\/api\/admin\/order\/([A-Z0-9-]+)$/);
     if (req.method === 'GET' && mAdminOrder) {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
@@ -4269,10 +4908,10 @@ const server = http.createServer(async (req, res) => {
         return send(res, 500, { ok: false, error: err.message || 'Serverfehler' });
       }
     }
-    // Druckzettel (Seite, A4) — Key per Header oder ?k=
+    // Druckzettel (Seite, A4) — nur mit Admin-Kopf (die Oberfläche lädt ihn per fetch; ein Passwort in der URL landet in Verlauf und Logs)
     const mZettel = p.match(/^\/admin\/druckzettel\/([A-Z0-9-]+)$/);
     if (req.method === 'GET' && mZettel) {
-      if (!isAdmin(req) && !adminKeyMatches(url.searchParams.get('k'))) return send(res, 401, 'Nicht angemeldet – bitte über den Admin-Bereich öffnen.', 'text/plain; charset=utf-8');
+      if (!isAdmin(req)) return send(res, 401, 'Nicht angemeldet – bitte über den Admin-Bereich öffnen.', 'text/plain; charset=utf-8');
       let order;
       try { order = await readOrder(mZettel[1]); } catch { return send(res, 404, 'Bestellung unbekannt', 'text/plain; charset=utf-8'); }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -4409,20 +5048,31 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-loadSettings();
+// Datendateien laden — eine vorhandene, aber unlesbare Datei bricht den Start ab (siehe ladeDatei), bevor irgendetwas geschrieben wird
+try {
+  loadSettings();
+  loadDesigns();
+  loadLists();
+  loadUsers();
+  loadCaptures();
+} catch (err) {
+  if (!err?.startAbbruch) throw err;
+  console.error(`\n❌ Start abgebrochen: ${err.message}.\n   Der Shop startet nicht mit leeren oder Standard-Daten – sonst wären Konten, Codes oder Einstellungen beim nächsten Speichern überschrieben.\n   ${SICHERUNG_HINWEIS}\n`);
+  process.exit(1);
+}
 loadPreisHistorie();
 notePreisHistorie().catch((err) => console.error('Preis-Historie konnte nicht gespeichert werden:', err?.message || err));
-loadDesigns();
-loadLists();
-loadUsers();
-loadCaptures();
 // Sicherheitsnetz: ein einzelner Fehler außerhalb der try/catch-Pfade darf den Shop nicht beenden
 process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ablehnung:', err));
 process.on('uncaughtException', (err) => console.error('Unbehandelte Ausnahme:', err));
 // Erst Guthaben-Einlösungen und vergebene Belegnummern aus den Bestellungen lesen, dann Anfragen annehmen — sonst könnte eine
 // Bestellung direkt nach dem Start ein schon verbrauchtes Guthaben einlösen oder eine vergebene Nummer bekommen
+server.requestTimeout = UPLOAD_ZEIT_MS;   // große Druckdateien über langsame Leitungen (sonst bricht Node nach 5 Minuten ab)
 loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummern konnten nicht gelesen werden:', err?.message || err)).then(() => server.listen(PORT, HOST, () => {
   console.log(`formsam Shop läuft → http://${HOST}:${PORT}  (Admin: /admin)`);
+  // Abgebrochene Kassen aufräumen: gleich nach dem Start und dann stündlich (Druckdateien nach 48 h, Bestellung nach 14 Tagen)
+  setTimeout(() => kassenAufraeumen(), 5000).unref();
+  setInterval(() => kassenAufraeumen(), STUNDE_MS).unref();
   // Rechtsseiten früh laden, damit ein fehlendes/fehlerhaftes lib/legal.js gleich im Log steht (die Routen versuchen es erneut)
   legalModule().then((m) => {
     if (!m) return;

@@ -132,6 +132,9 @@ const DATA = path.join(DIR, 'data'), ORDERS = path.join(DIR, 'orders');   // ord
 // data/ wie auf einer Installation von vor der umask: Ordner 0755 mit einer alten Datei 0644 — der Start schränkt nur den Ordner ein
 mkdirSync(DATA); chmodSync(DATA, 0o755);
 writeFileSync(path.join(DATA, 'alt-bestand.json'), '{}'); chmodSync(path.join(DATA, 'alt-bestand.json'), 0o644);
+// Admin-Passwort vorab als Klartext-adminKey (wie eine ältere Installation) — der Server stellt es beim Start auf den Hash um
+const ADMIN_PW = 'test-eingaben-admin';
+writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify({ adminKey: ADMIN_PW }));
 const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS }, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
 srv.stdout.on('data', (c) => { log += c; }); srv.stderr.on('data', (c) => { log += c; });
@@ -150,11 +153,11 @@ async function req(method, pfad, body, headers = {}) {
   let json = null; try { json = JSON.parse(text); } catch { /* kein JSON */ }
   return { status: r.status, h: Object.fromEntries(r.headers), json, text, ms: performance.now() - t };
 }
-const ADMIN = { 'x-admin-key': 'formsam-admin' };
+const ADMIN = { 'x-admin-key': ADMIN_PW };
 for (let i = 0; i < 50; i++) { try { if ((await fetch(`${BASE}/api/pricing`)).ok) break; } catch { /* startet noch */ } await new Promise((r) => setTimeout(r, 200)); }
 
 console.log(`B1 Schutz-Kopfzeilen (Instanz auf Port ${PORT})`);
-for (const p of ['/', '/api/pricing', '/admin', '/js/app.js', '/gibtsnicht', '/api/gibtsnicht']) {
+for (const p of ['/', '/index.html', '/robots.txt', '/sitemap.xml', '/agb', '/datenschutz', '/api/pricing', '/admin', '/js/app.js', '/gibtsnicht', '/api/gibtsnicht']) {
   const r = await req('GET', p, null, { accept: 'text/html' });
   check(r.h['x-content-type-options'] === 'nosniff' && r.h['x-frame-options'] === 'SAMEORIGIN' && r.h['referrer-policy'] === 'strict-origin-when-cross-origin'
     && r.h['content-security-policy'] === "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" && !/script-src/.test(r.h['content-security-policy'] || ''), `${p}: nosniff, SAMEORIGIN, Referrer-Policy, CSP (ohne script-src)`, r.h);
@@ -325,7 +328,13 @@ for (const [lbl, it] of [['Höhe 5000', { config: { height: 5000 } }], ['Muster 
   check(c.status === 200 && c.json?.orderId, `Kasse → ${c.json?.orderId}`, c.json);
   const { orderId, accessKey, itemCount } = c.json || {};
   const stl = Buffer.alloc(134); stl.writeUInt32LE(1, 80);
-  for (let i = 0; i < (itemCount || 0); i++) check((await req('PUT', `/api/order/${orderId}/stl/${i}`, stl, { 'x-order-key': accessKey, 'content-type': 'application/octet-stream' })).status === 200, `Modell ${i + 1} hochgeladen`);
+  // Farbschrift-Positionen erwarten eine 3MF (ZIP: lokaler Kopf am Anfang, Verzeichnisende am Schluss — so prüft der Server den Inhalt)
+  const mf = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(100), Buffer.from([0x50, 0x4b, 0x05, 0x06]), Buffer.alloc(18)]);
+  const zeilen = orderId ? JSON.parse(readFileSync(path.join(ORDERS, orderId, 'order.json'), 'utf8')).lines : [];
+  for (let i = 0; i < (itemCount || 0); i++) {
+    const datei = /\.3mf$/i.test(zeilen[i]?.stlFile || '') ? mf : stl;
+    check((await req('PUT', `/api/order/${orderId}/stl/${i}`, datei, { 'x-order-key': accessKey, 'content-type': 'application/octet-stream' })).status === 200, `Modell ${i + 1} hochgeladen`);
+  }
   const done = await req('POST', `/api/order/${orderId}/complete`, {}, { 'x-order-key': accessKey });
   check(done.status === 200 && /^RE-/.test(done.json?.invoiceNo || ''), `Abschluss → ${done.json?.invoiceNo}`);
   const beleg = await req('GET', done.json?.invoiceUrl || '/x');

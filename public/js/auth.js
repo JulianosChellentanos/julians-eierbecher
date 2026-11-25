@@ -209,7 +209,7 @@ async function requestReset() {
 async function submitReset() {
   showErr('');
   const pw = $('#ap-pw').value, pw2 = $('#ap-pw2').value;
-  if (pw.length < 6) { showErr('Passwort: mindestens 6 Zeichen'); return; }
+  if (pw.length < 8) { showErr('Passwort: mindestens 8 Zeichen'); return; }
   if (pw !== pw2) { showErr('Die beiden Passwörter stimmen nicht überein'); return; }
   const btn = $('#ap-submit');
   btn.disabled = true;
@@ -248,6 +248,7 @@ export function openAccount() {
   $('#acc-street').value = a.street || '';
   $('#acc-zip').value = a.zip || '';
   $('#acc-city').value = a.city || '';
+  sicherZuruecksetzen();
   $('#acc-orders').innerHTML = myOrders.length ? myOrders.map((o) => `
     <div class="acc-order" style="flex-wrap:wrap">
       <div><b>${esc(o.orderId)}</b><br><small>${new Date(o.createdAt).toLocaleDateString('de-DE')} · ${o.pieces} Stück</small></div>
@@ -289,6 +290,55 @@ async function logout() {
   $('#account-modal').close();
 }
 
+// --- Passwort & Konto (Konto-Dialog): Passwort ändern (beendet die anderen Anmeldungen), überall abmelden, Konto löschen.
+//     Elemente fehlen in einer älteren index.html → alles mit ?. (dann gibt es die Funktionen eben nicht)
+function sicherMsg(t) { const el = $('#acc-sicher-msg'); if (el) el.textContent = t || ''; }
+function sicherZuruecksetzen() {
+  $('#acc-pw-form')?.reset();
+  $('#acc-del-form')?.reset();
+  if ($('#acc-del-form')) $('#acc-del-form').hidden = true;
+  if ($('#acc-sicher')) $('#acc-sicher').open = false;
+  sicherMsg('');
+}
+async function kontoPost(path, body) {
+  try {
+    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }, body: JSON.stringify(body || {}) });
+    const r = await res.json().catch(() => null);
+    if (r && typeof r.ok === 'boolean') return r.ok ? r : { ok: false, error: r.error || 'Das hat gerade nicht geklappt.' };
+    return { ok: false, error: res.status === 404 ? 'Diese Funktion gibt es gerade nicht – bitte lade die Seite neu.' : 'Das hat gerade nicht geklappt – bitte später noch einmal versuchen.' };
+  } catch {
+    return { ok: false, error: 'Keine Verbindung zum Shop – bitte Internetverbindung prüfen.' };
+  }
+}
+function abgemeldet() {
+  localStorage.removeItem('ovju-auth');
+  currentUser = null; myOrders = [];
+  renderButton();
+  $('#account-modal').close();
+}
+async function changePassword() {
+  const neu = $('#acc-pw-neu').value;
+  if (neu.length < 8) return sicherMsg('⚠️ Neues Passwort: mindestens 8 Zeichen');
+  if (neu !== $('#acc-pw-neu2').value) return sicherMsg('⚠️ Die beiden neuen Passwörter stimmen nicht überein');
+  const r = await kontoPost('/api/auth/password', { altesPasswort: $('#acc-pw-alt').value, neuesPasswort: neu });
+  if (!r.ok) return sicherMsg(`⚠️ ${r.error}`);
+  $('#acc-pw-form').reset();
+  sicherMsg(`✅ Passwort geändert${r.beendet ? ` – ${r.beendet === 1 ? 'eine andere Anmeldung' : `${r.beendet} andere Anmeldungen`} beendet` : ''}.`);
+}
+async function logoutAll() {
+  if (!confirm('Auf allen Geräten abmelden – auch auf diesem?')) return;
+  const r = await kontoPost('/api/auth/logout-all');
+  if (!r.ok) return sicherMsg(`⚠️ ${r.error}`);
+  abgemeldet();
+}
+async function deleteAccount() {
+  if (!confirm('Dein Konto wirklich endgültig löschen?')) return;
+  const r = await kontoPost('/api/auth/delete', { passwort: $('#acc-del-pw').value });
+  if (!r.ok) return sicherMsg(`⚠️ ${r.error}`);
+  abgemeldet();
+  alert('Dein Konto ist gelöscht. Danke, dass du da warst!');
+}
+
 /** Nach einer Bestellung die Historie aktualisieren */
 export function refreshOrders() { if (currentUser) refreshMe(); }
 
@@ -301,6 +351,10 @@ export async function initAuth() {
   $('#account-close').addEventListener('click', () => $('#account-modal').close());
   $('#acc-logout').addEventListener('click', logout);
   $('#acc-addr-save').addEventListener('click', saveAddress);
+  $('#acc-pw-form')?.addEventListener('submit', (e) => { e.preventDefault(); changePassword(); });
+  $('#acc-logout-all')?.addEventListener('click', logoutAll);
+  $('#acc-del-start')?.addEventListener('click', () => { $('#acc-del-form').hidden = false; sicherMsg(''); $('#acc-del-pw').focus(); });
+  $('#acc-del-form')?.addEventListener('submit', (e) => { e.preventDefault(); deleteAccount(); });
   $('#auth-login').addEventListener('submit', (e) => {
     e.preventDefault();
     doAuth('/api/auth/login', { email: $('#al-email').value, password: $('#al-pw').value });

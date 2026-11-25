@@ -1,9 +1,15 @@
 // formsam Studio — Admin-Oberfläche (klassisches Skript, wird von /admin geladen)
 // Bereiche: Übersicht (+ Pflichtangaben, Widerrufe) · Bestellungen (+ Drawer) · Druck · Kunden · Farben · Bilder · Preise · Aktionen · Firma · PayPal · E-Mail · System
-// Interne Kennungen bleiben aus Kompatibilitätsgründen beim alten Präfix: localStorage „ovju-admin-key“.
+// Admin-Passwort nur für diesen Tab im sessionStorage „ovju-admin-key“ (interne Kennung mit altem Präfix) — nicht mehr dauerhaft im
+// localStorage; ein dort noch liegendes Passwort (ältere Fassung) wird beim Laden übernommen und gelöscht.
 'use strict';
 
-const KEY = () => localStorage.getItem('ovju-admin-key') || '';
+try {
+  const alt = localStorage.getItem('ovju-admin-key');
+  if (alt !== null) { if (!sessionStorage.getItem('ovju-admin-key')) sessionStorage.setItem('ovju-admin-key', alt); localStorage.removeItem('ovju-admin-key'); }
+} catch { /* Speicher gesperrt */ }
+const KEY = () => { try { return sessionStorage.getItem('ovju-admin-key') || ''; } catch { return ''; } };
+const setKey = (k) => { try { if (k) sessionStorage.setItem('ovju-admin-key', k); else sessionStorage.removeItem('ovju-admin-key'); } catch { /* Speicher gesperrt */ } };
 let DATA = null;          // { settings, orders, statuses, statusLabels, carriers, normalHeight, info, aktionen, aktion, serverNow }
 let USERS = [];           // Kundenkonten (ohne Hash/Salt)
 let tiers = { egg: [], vase: [] };
@@ -126,7 +132,9 @@ async function openDruckzettel(orderId) {
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-key': KEY(), ...(opts.headers || {}) } });
-  if (r.status === 401) { showLogin(); throw new Error('auth'); }
+  // Abgewiesenes Passwort nicht behalten — sonst ginge es bei jedem Neuladen wieder raus und zählte jedes Mal als Fehlversuch
+  if (r.status === 401) { setKey(''); showLogin(); throw new Error('auth'); }
+  if (r.status === 429 && /^\/api\/admin\//.test(path)) { setKey(''); showLogin(); throw new Error('gebremst'); }   // zu viele falsche Passwörter
   // JSON-Antworten unverändert durchreichen (auch 404 „Bestellung unbekannt“); nur ein 404 ohne JSON heißt „Endpoint fehlt noch“
   const j = await r.json().catch(() => null);
   if (j && typeof j === 'object') return j;
@@ -135,11 +143,14 @@ async function api(path, opts = {}) {
 }
 function showLogin() { $('#login').hidden = false; $('#app').hidden = true; }
 async function login() {
-  localStorage.setItem('ovju-admin-key', $('#pw').value);
+  setKey($('#pw').value);
   $('#login-err').textContent = '';
-  try { await load(); } catch { $('#login-err').textContent = 'Falsches Passwort'; }
+  try { await load(); } catch (e) {
+    if (e?.message === 'auth' || e?.message === 'gebremst') setKey('');   // gespeichert bleibt nur ein angenommenes Passwort
+    $('#login-err').textContent = e?.message === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.' : 'Falsches Passwort';
+  }
 }
-function logout() { localStorage.removeItem('ovju-admin-key'); showLogin(); }
+function logout() { setKey(''); showLogin(); }
 function toast(msg, type = '', ms = 3200) {
   const box = $('#toasts');
   // Gleicher Text ersetzt den alten Toast; höchstens drei gleichzeitig (der älteste weicht)
@@ -993,6 +1004,7 @@ function wrItemHTML(w) {
         ${done ? '' : `<span class="wr-frist" title="Greift das Widerrufsrecht, erstattest du spätestens 14 Tage nach Eingang der Erklärung (§ 357 BGB).">Erstattung ggf. bis ${fmtDate(wrFrist(w.at))}</span>`}</div>
       <div class="wr-who"><b>${esc(w.name)}</b> · <a href="mailto:${esc(w.email)}">${esc(w.email)}</a><br><span class="muted">Bestellung:</span> ${wrBestellung(w)}</div>
       ${msg ? `<div class="wr-msg">${esc(msg)}</div>` : '<p class="muted" style="margin-top:6px;font-size:.8rem">Keine Nachricht.</p>'}
+      ${w.bestaetigungGebremst ? '<p class="muted" style="margin-top:6px;font-size:.8rem" title="Schutz vor Mail-Flut: höchstens 3 Bestätigungen je Adresse am Tag und 30 je Stunde">⚠️ Eingangsbestätigung nicht per Mail verschickt (Bremse) – bei Bedarf selbst antworten.</p>' : ''}
       <div class="wr-foot">
         <input type="text" id="wr-notiz-${ref}" data-wr-notiz="${ref}" maxlength="1000" value="${esc(w.notiz || '')}" placeholder="Notiz (nur für dich), z. B. „Antwort geschickt am …“" aria-label="Notiz zu ${ref}">
         <button class="mini ghost" data-wr-ref="${ref}" data-wr-note>💾 Notiz</button>
@@ -1127,7 +1139,7 @@ function renderPrint() {
 function renderCustomers() {
   const m = {};
   for (const u of USERS) {
-    m[u.email] = { name: u.name, email: u.email, city: u.address?.city || '', orders: 0, rev: 0, last: null, account: true, since: u.createdAt };
+    m[u.email] = { id: u.id, name: u.name, email: u.email, city: u.address?.city || '', orders: 0, rev: 0, last: null, account: true, since: u.createdAt };
   }
   for (const o of DATA.orders) {
     const e = custEmail(o);
@@ -1145,8 +1157,31 @@ function renderCustomers() {
       <td data-l="Bestellungen" class="num">${c.orders}</td>
       <td data-l="Umsatz" class="num">${money(c.rev)}</td>
       <td data-l="Zuletzt">${c.last ? fmtDate(c.last) : '—'}</td>
-      <td data-l="Konto">${c.account ? '<span class="badge">👤 Konto</span>' : '<span class="muted">Gast</span>'}</td>
+      <td data-l="Konto">${c.account ? `<span class="badge">👤 Konto</span> <button class="ghost mini" data-user-export="${esc(c.id)}" title="Alle Daten zu diesem Konto als JSON herunterladen (Datenauskunft)">JSON</button> <button class="ghost mini del" data-user-del="${esc(c.id)}" title="Konto löschen – Bestellungen bleiben (Aufbewahrungspflicht), aber ohne Kontobezug">🗑</button>` : '<span class="muted">Gast</span>'}</td>
     </tr>`).join('') + '</tbody>';
+}
+/** Datenauskunft zu einem Kundenkonto als JSON-Datei (Konto, Anmeldungen, Bestellungen, Widerrufe, Mails) */
+async function userExport(id) {
+  const r = await fetch(`/api/admin/user-export?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': KEY() } });
+  if (r.status === 401) { setKey(''); return showLogin(); }
+  if (!r.ok) return toast((await r.json().catch(() => null))?.error || `Export fehlgeschlagen (${r.status})`, 'err');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(await r.blob());
+  a.download = `formsam-konto-${String(id).slice(0, 8)}.json`;
+  a.click();
+  toast('Datenexport heruntergeladen', 'ok');
+}
+/** Kundenkonto löschen (Konto + Anmeldungen) — Bestellungen bleiben wegen der Aufbewahrungspflicht, verlieren aber den Kontobezug */
+async function userDelete(id) {
+  const u = USERS.find((x) => x.id === id);
+  if (!u || !confirm(`Kundenkonto „${u.name}“ (${u.email}) endgültig löschen?\n\nBestellungen und Rechnungen bleiben wegen der Aufbewahrungspflicht erhalten, aber ohne Verbindung zum Konto.`)) return;
+  const r = await api('/api/admin/user-delete', { method: 'POST', body: JSON.stringify({ id }) }).catch(() => null);
+  if (!r?.ok) return toast(r?.error || 'Löschen fehlgeschlagen', 'err');
+  USERS = USERS.filter((x) => x.id !== id);
+  for (const o of DATA.orders) if (o.userId === id) o.userId = null;
+  renderCustomers();
+  updateCounters();
+  toast(`Konto gelöscht${r.bestellungen ? ` – ${r.bestellungen} Bestellung(en) bleiben ohne Kontobezug` : ''}`, 'ok');
 }
 
 // ---------------------------------------------------------------------------
@@ -2070,7 +2105,7 @@ async function saveSettings() {
   try {
     const r = await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
     if (!r.ok) throw new Error(r.error || 'Speichern fehlgeschlagen');
-    if (patch.adminKey) { localStorage.setItem('ovju-admin-key', patch.adminKey); $('#s-adminkey').value = ''; }
+    if (patch.adminKey) { setKey(patch.adminKey.trim()); $('#s-adminkey').value = ''; delete patch.adminKey; }
     if (patch.wartung) {
       const neuesKw = !!patch.wartung.kennwort;
       $('#s-wartung-kw').value = '';
@@ -2156,6 +2191,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   // Klick-Delegation: Kundendaten (E-Mail, Farbschlüssel, Farbname) stehen nur in data-Attributen, nie in Inline-Handlern
   document.addEventListener('click', (e) => {
+    const ux = e.target.closest?.('[data-user-export]');
+    if (ux) return userExport(ux.dataset.userExport);
+    const ud = e.target.closest?.('[data-user-del]');
+    if (ud) return userDelete(ud.dataset.userDel);
     const em = e.target.closest?.('[data-email]');
     if (em) { if (em.dataset.act === 'filter-email') closeOrder(); return filterByEmail(em.dataset.email); }
     const pq = e.target.closest?.('[data-pq]');

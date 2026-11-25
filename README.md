@@ -52,15 +52,15 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
   - **Kopfzeilen:** automatische Mails mit `Auto-Submitted: auto-generated` (keine Abwesenheitsnotizen zurück), Meldungen an den Shop (neue Bestellung, Widerruf, PayPal) mit Reply-To = Kundin, Absendername als einfacher Text. Domains mit Umlauten gehen als Punycode raus; Umlaute vor dem @ nur über einen Server mit SMTPUTF8, sonst endgültiger Fehler mit klarer Meldung. Admin-Adresse: auch mehrere (Komma), ungültige Einträge fallen weg, bleibt keiner, geht die Meldung an die Firmen-Adresse.
   - **SMTP-Zugang:** Ein leeres Passwortfeld behält das gespeicherte Passwort nur für denselben Zugang (Host, Port, Benutzer, nicht auf „unverschlüsselt“ heruntergestellt) — Testmail und Speichern verlangen sonst das Passwort neu, damit es nie an einen anderen Server geht. STARTTLS bricht ab, wenn der Server vor dem Handshake noch Klartext nachschiebt. Verwechslungen SSL/TLS ↔ STARTTLS (465/587) melden sich mit einem passenden Hinweis.
   - Ohne SMTP landen Mails nur im Protokoll. Test: `node tools/mail-test.mjs --smoke` und `node tools/test-mail.mjs`
-- **Admin-Zentrale** (`/admin`, Standard-Passwort bei Neuinstallation `formsam-admin` — bitte sofort ändern!):
+- **Admin-Zentrale** (`/admin`; bei einer Neuinstallation steht ein zufälliges Admin-Passwort einmal im Server-Protokoll — siehe [Admin-Passwort](#admin-passwort)):
   - Übersicht: Umsatz (gesamt/30 Tage — nur Bestellungen mit Rechnung, Rechnungsbetrag inkl. Guthaben-Anteil, abzüglich Gutschriften/Erstattungen, stornierte zählen nicht), offene Drucke, Ø Bestellwert, meistbestellte Farben & Produkte, offene Widerrufe, fehlende Pflichtangaben (auch: Steuernummer als Kleinunternehmer, Platzhalter-IBAN oder falsche IBAN-Prüfziffer, Lücken im Nummernkreis), nicht zugestellte bzw. wartende E-Mails
   - Bestellungen: Suche & Status-Filter, aufklappbare Details, Sendungsnummer, interne Notizen, E-Mails (Bestätigung, Status-Mails wie Druckstart/Versand, Freitext, Vorschau) und für offene Vorkasse-Bestellungen „💶 Zahlungserinnerung senden“ (Bankverbindung, Nachfrist 7 Tage, aber nie vor dem Ende der Zahlungsfrist — 14 Tage nach der Bestätigung —, Hinweis auf AGB § 8; höchstens eine am Tag, auch bei Doppelklick oder „Erneut“; nicht für abgebrochene Kassen; keine Automatik), Reklamation mit Gutschrift (nur zu einer Rechnung, nicht nach Storno, höchstens der bezahlte Betrag inkl. Guthaben-Anteil minus frühere Gutschriften; per PayPal höchstens der PayPal-Betrag), CSV-Export (am Ende: Rechnungsbetrag, davon Guthaben, Gutschriftbetrag; „Summe“ bleibt der zu zahlende Betrag). „Storno aufheben“ geht nur ohne Stornorechnung und solange ein eingelöstes Guthaben noch frei ist (sonst 409 — neuer Auftrag = neue Bestellung); eine Rechnung über 0,00 € (100-%-Gutschein) braucht keine Stornorechnung, dort bleibt das Aufheben möglich; „Bezahlt“ mit offener Zahlung lehnt der Server ab
-  - Druckwarteschlange, Kunden
+  - Druckwarteschlange, Kunden (je Konto: Daten als JSON exportieren — Gastbestellungen, Widerrufe und Mails, die nur über die Adresse zugeordnet sind, nur bei bestätigter Adresse; Konto löschen — Bestellungen bleiben ohne Kontobezug)
   - Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
   - Preise & Mengenrabatt-Stufen, Gutscheine (%- oder €-Codes, Mindestbestellwert, optional gültig bis / höchstens n Einlösungen), Aktionen. Gutschrift-Codes aus Reklamationen (`GH-XXXX-XXXX`, ältere `GS-XXXX-XXXX` bleiben gültig) sind **Guthaben**: einlösbar bis der Betrag aufgebraucht ist (Rest bleibt, stornierte Bestellungen geben ihn frei), immer ohne Mindestbestellwert und auch während einer Aktion — die Gutschein-Tabelle zeigt den Restwert, Mindestwert und „mit Aktion“ sind bei Guthaben nicht änderbar
   - Beim Speichern prüft der Server jedes Feld (400 mit deutscher Meldung, nichts wird übernommen): Beträge ≥ 0 mit höchstens zwei Nachkommastellen, Grundpreise > 0, Staffel unter 100 %, Währung EUR, Gutschein-Codes eindeutig (A–Z, 0–9, - _), Prozent bis 100, Farben mit Hex-Wert; E-Mail: Host ohne `smtp://`, Port 1–65535, Absender/Antwort/Admin-Adressen gültig (mehrere Admin-Adressen mit Komma), öffentliche Shop-Adresse als `https://…` ohne Pfad und Pflicht bei aktivem Versand. Ältere gespeicherte Preise mit drei Nachkommastellen rundet der Shop beim Start auf Cent
   - Mein Unternehmen (Anbieter, Steuer & Belege inkl. Wirtschafts-Identifikationsnummer `DE123456789-00001` als eigenes Feld, Bankverbindung, **Shop-Angaben** Lieferzeit/Liefergebiet, **Rechtstexte** Hoster/Serverstandort/AV-Vertrag/Mail-Versand je Server), PayPal, E-Mail, System (Passwort, Produktschalter, JSON-Backup) — alles in `data/settings.json` (nicht im Git)
-- **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, Sessions in `data/`), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung. Name 2–80 Zeichen ohne `<` `>`, E-Mail wie beim Mailversand (höchstens 254 Zeichen), Adresse nur Text (Straße 120, PLZ 10, Ort 80) — bestehende Konten bleiben unverändert
+- **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, 8–200 Zeichen — ältere kürzere gelten weiter; Sessions in `data/`, höchstens 20 je Konto), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung. Name 2–80 Zeichen ohne `<` `>`, E-Mail wie beim Mailversand (höchstens 254 Zeichen, vor dem @ nur ASCII), Adresse nur Text (Straße 120, PLZ 10, Ort 80) — bestehende Konten bleiben unverändert. Unter „🔐 Passwort & Konto“: Passwort ändern (altes Passwort, höchstens 5 Wechsel je Stunde, beendet alle anderen Anmeldungen, Mail „Passwort geändert“ — je Adresse höchstens 3 am Tag, an eine unbestätigte nur 1), auf allen Geräten abmelden, Konto löschen (Bestellungen und Rechnungen bleiben wegen der Aufbewahrungspflicht, ohne Kontobezug). Mails an die Kontoadresse (Willkommen, Passwort vergessen/geändert, Bestätigungslink) übernehmen den Kontonamen nur, wenn er wie ein Name aussieht (Buchstaben, Bindestrich, Apostroph, bis 6 Wörter), sonst „Hallo!“ — kein fremder Text, keine Links
 - **Mobil** (≤ 700 px): Startseite mit der 3D-Formenwelt als Bühne (Wischen wechselt die Form), Kataloge „Formen“ und „Oberflächen“ mit Detailblättern im Bottom-Sheet, ein klebender Bestellknopf; im Konfigurator klebende 3D-Bühne + Tab-Leiste statt Endlos-Scroll, Swipe zwischen Tabs, angedockte Bottom-Bar mit Live-Preis & Warenkorb, Vollbild-3D, Toasts, Haptik. Desktop (≥ 981 px) bleibt davon unberührt
 - **PWA**: Manifest („formsam – Vasen selbst gestalten“), Service Worker (Cache-First für Assets, Offline-Fallback), Home-Screen-Icons mit dem formsam-Zeichen, Theme-Color folgt dem Darkmode. Kein Install-Banner — wer mag, legt die Seite selbst über das Browser-Menü auf den Home-Bildschirm
 - **Darkmode**: Umschalter im Header (🌙/☀️), merkt sich die Wahl, folgt sonst der Systemeinstellung
@@ -105,8 +105,89 @@ zu einem kurzen Formular (Name, E-Mail, Bestellnummer optional, Nachricht option
 - Die Kundin/der Kunde erhält sofort eine **Eingangsbestätigung** per E-Mail (Inhalt, Datum und Uhrzeit des Eingangs, Referenz);
   der Admin bekommt eine Benachrichtigung wie bei neuen Bestellungen.
 - Passen Bestellnummer **und** E-Mail zu einer Bestellung, wird der Widerruf dort vermerkt (Historie). Die Antwort ist in jedem Fall
-  gleich — sie verrät nichts über fremde Bestellungen. Rate-Limit pro IP.
+  gleich — sie verrät nichts über fremde Bestellungen. Bremse je IP (10 in 15 Minuten → 429). Eingangsbestätigungen nicht zugeordneter
+  Widerrufe gehen höchstens 3-mal am Tag an dieselbe Adresse und 30-mal je Stunde insgesamt raus; darüber wird der Widerruf trotzdem
+  gespeichert und dem Admin gemeldet (in der Übersicht mit „Eingangsbestätigung nicht per Mail verschickt“) — nur die Kundenmail entfällt.
+  Zugeordnete Widerrufe zählen dort nicht mit und werden immer bestätigt (höchstens 5 Bestätigungen je Bestellung und Tag) — Spam ohne
+  echte Bestellung kann echten Kundinnen die Eingangsbestätigung nicht nehmen.
 - Admin → Übersicht zeigt offene Widerrufe (`GET /api/admin/widerrufe`, `POST /api/admin/widerruf-status`).
+
+## Admin-Passwort
+
+Gespeichert wird nur ein scrypt-Hash (`settings.adminKeyHash`), nie das Passwort selbst; an den Browser geht weder Passwort noch Hash
+(auch nicht im JSON-Backup). Die Admin-Oberfläche hält das Passwort nur im `sessionStorage` des Tabs (ein alter
+`localStorage`-Eintrag wird beim Laden entfernt) und schickt es als Kopf `x-admin-key`; der Druckzettel nimmt es nicht mehr als `?k=`.
+Ein abgewiesenes Passwort (401/429) behält die Oberfläche nicht — es geht beim Neuladen nicht noch einmal raus.
+Der Server prüft es mit scrypt und merkt sich ein richtiges Passwort bis 5 Minuten nach der letzten Anfrage als SHA-256 im Speicher. scrypt rechnet
+höchstens zweimal gleichzeitig (der Rest des Threadpools bleibt für Dateien frei); warten schon 100 Prüfungen, gibt es sofort 429/503.
+
+`adminKey` in `settings.json` ist danach ein **zufälliger Platzhalter** (`adminKeyPlatzhalter` = SHA-256 davon), kein Passwort: Kehrt man
+nach dem Update per git zu einer älteren Fassung zurück, kennt die nur `adminKey` — mit dem Platzhalter bleibt der Admin dort zu, statt
+das früher bekannte `formsam-admin` zu nehmen. Wer in der alten Fassung an den Admin muss: Server stoppen, `adminKey` in `settings.json`
+von Hand auf ein Passwort setzen, starten. Die neue Fassung übernimmt ein so (oder in der alten Fassung unter System) gesetztes
+Passwort beim nächsten Start wieder in den Hash.
+
+- **Neuinstallation** (keine `settings.json`): zufälliges Passwort, steht genau einmal im Protokoll (`journalctl -u formsam | grep Admin-Passwort`).
+  Ein bekanntes Standard-Passwort gibt es nicht mehr.
+- **Umstellung:** Steht in `settings.json` noch ein Klartext-`adminKey` (ältere Fassung, Sandbox-Skripte), wird er beim Start in den Hash
+  umgestellt und entfernt — das Passwort bleibt dasselbe.
+- **Vergessen / neu setzen:** Shop-Server stoppen, `node tools/admin-passwort.mjs <neues-passwort>` (oder `--zufall`), wieder starten.
+  Datenordner wie beim Server über `DATA_DIR=…`.
+- **Bremse:** 10 falsche Passwörter je IP (IPv6: je /64) in 15 Minuten → 429 für diese IP, auch mit richtigem Passwort. Jeder Versuch zählt
+  schon beim Start der Prüfung (ein richtiges Passwort gibt den Platz wieder frei) — auch gleichzeitig abgeschickte Versuche kommen also
+  nicht darüber hinaus. Liegen insgesamt 100 Fehlversuche im Fenster (verteilter Angriff aus mindestens 10 Netzen), hat jede IP nur noch
+  einen Fehlversuch frei — wer sich nicht vertippt, kommt durch.
+
+## Missbrauchsbremsen
+
+Alle Bremsen zählen je IP — IPv6-Adressen auf das /64-Netz gekürzt, IPv4-mapped (`::ffff:1.2.3.4`) wie IPv4 — und liegen im Speicher
+(ein Neustart setzt sie zurück). Hinter nginx muss `TRUST_PROXY=1` gesetzt sein (steht in `deploy/formsam.service`), sonst zählt der
+Proxy als eine IP für alle.
+
+| Was | Grenze | darüber |
+|---|---|---|
+| Anmeldung | 10 Fehlversuche je IP + Konto, 30 je IP (15 min); zählt schon beim Start der Prüfung (auch parallel) | 429; das Konto selbst wird nie gesperrt, von anderer IP geht es weiter |
+| Passwort ändern / Konto löschen | wie Anmeldung; Passwortwechsel zusätzlich 5 je Konto/Stunde | 429 (Mail „Passwort geändert“: 3 je Adresse/Tag, unbestätigt 1) |
+| Registrierung | 5 je IP/Stunde · 3 Konten je Adresse/Tag · 30 insgesamt/Stunde | 429, kein Konto, keine Mail |
+| Passwort vergessen | 3 je Adresse, 10 je IP (15 min) | 200, aber keine neue Mail; die letzten 3 Links bleiben gültig, ein Reset entwertet alle |
+| Widerruf | 10 je IP (15 min) → 429; Bestätigung 3 je Adresse/Tag, 30/Stunde (zugeordnete: immer, 5 je Bestellung/Tag) | gespeichert + Admin-Meldung, keine Kundenmail |
+| Kasse | 20 neue Kassen je IP/Stunde (PayPal-Zahlung zählt mit) | 429 (eine bezahlte PayPal-Kasse wird nie abgewiesen) |
+| Druckdateien | 4 GB je IP/Stunde — die angekündigte Größe zählt ab Beginn des Uploads (auch gleichzeitige), Abbruch gibt sie frei | 429 |
+| Design-Codes | 300 neue je IP, 5000 insgesamt je Stunde (bekannte Codes zählen nicht) | 429 |
+| Vorschaubilder / Listen | 600 je IP/Stunde · 30 neue Listen, 600 Änderungen je IP/Stunde | 429 |
+
+Normaler Gebrauch bleibt weit darunter (der Konfigurator speichert bei jeder Code-Anzeige ein Design und ein Vorschaubild). Der
+Abrufzähler der Design-Codes wird gebündelt höchstens einmal pro Minute gespeichert. Mails an die Kontoadresse übernehmen nur einen
+Kontonamen, der wie ein Name aussieht (siehe Kundenkonten), sonst „Hallo!“ bzw. „schön, dass du da bist“.
+
+## Druckdateien (Uploads)
+
+- **Grenze 190 MB je Datei** (`MAX_STL`): die größte bestellbare Konfiguration — gehämmert, 220 mm, Breite 115 %, Tiefe 1,6, Wulstrand,
+  12-mm-Gravur „Anna & Tom“ in Marcellus — ergibt 126,5 MB (gemessen mit `buildModel` wie im Browser, Koordinatensuche über alle
+  Regler; Farbschrift-3MF höchstens 34 MB), plus 50 % Reserve. nginx: `client_max_body_size 200m`. Eine Anfrage darf 15 Minuten dauern.
+- **Inhalt geprüft:** Binär-STL (Dreieckszahl passt zur Dateigröße), Text-STL (`solid` … `endsolid`), 3MF (ZIP mit Endsatz) — sonst 400.
+- Der Upload landet erst in einer Temp-Datei und ersetzt die Druckdatei nur vollständig und gültig; ein Abbruch hinterlässt nichts.
+- `/complete` stellt die Rechnung nur aus, wenn jede Position eine vollständige, gültige Datei hat (sonst 409 `code: 'dateien'`);
+  danach — und bei stornierten Bestellungen — sind die Dateien unveränderlich (PUT → 409).
+- Sind weniger als **1 GB frei**, lehnt der Server Uploads mit 507 ab (Protokollzeile „💾 … weniger als 1 GB frei“).
+- **Abgebrochene Kassen** (ohne Abschluss, Rechnungsnummer, Zahlung/PayPal, Status „neu“, ohne Admin-Eingriff): ihre **Druckdateien**
+  werden nach **48 Stunden** gelöscht („🧹 Druckdateien der nie abgeschlossenen Kasse …“), die Bestellung selbst nach **14 Tagen** samt
+  Ordner („🧹 Abgebrochene Kasse …“) — beim Start und dann stündlich. Sind weniger als **5 GB frei**, gehen die Druckdateien schon nach
+  1 Stunde; dann stößt auch ein Upload den Lauf an (höchstens alle 10 Minuten). So lässt sich die Platte nicht mit nie abgeschlossenen
+  Kassen füllen. Ohne Abschluss gibt es keinen Vertrag; eine echte Kasse lädt hoch und schließt gleich ab. Alles mit Beleg, Zahlung
+  oder Bearbeitung bleibt.
+
+## Daten, Sicherung und defekte Dateien
+
+`settings.json`, `users.json`, `sessions.json`, `designs.json`, `lists.json` und `paypal-captures.json` werden atomar geschrieben
+(Temp-Datei + Umbenennen) und je Datei nacheinander — ein Absturz oder zwei gleichzeitige Anfragen hinterlassen nie eine halbe Datei.
+
+Ist beim Start eine dieser Dateien vorhanden, aber beschädigt oder nicht lesbar, **startet der Shop nicht** (Meldung „❌ Start
+abgebrochen: … ist beschädigt“ im Protokoll; mit systemd `Restart=always` wiederholt sich das laut im Journal). So läuft er nie still
+mit leeren Konten oder Standard-Einstellungen weiter und überschreibt nichts. Abhilfe: Datei aus der täglichen Sicherung
+`/var/backups/formsam` (14 Tage) zurückholen oder von Hand reparieren (`node -e "JSON.parse(require('fs').readFileSync('data/users.json','utf8'))"`
+zeigt die Stelle), dann neu starten. Ausnahme `sessions.json` (nur Anmeldungen): wird als `sessions.json.defekt-<Zeit>` beiseitegelegt,
+alle melden sich neu an. Eine beschädigte `orders/<ID>/order.json` erscheint als Hinweis in der Admin-Übersicht.
 
 ## Starten
 
@@ -118,10 +199,10 @@ node server.js          # → http://localhost:4488
 |---|---|
 | `/` | Landingpage + Konfigurator; Canonical und Vorschau-Adressen (og:url, og:image, twitter:image) setzt der Server aus der öffentlichen Shop-Adresse ein (leer/lokal → `https://www.formsam.com`), ETag aus dem Ergebnis |
 | `/robots.txt`, `/sitemap.xml` | vom Server aus der öffentlichen Adresse: gesperrt sind `/admin`, `/orders/`, `/api/admin/`, `/api/auth/` (Preise, Farben, Texte, JS, CSS bleiben frei); Sitemap = Startseite + fünf Rechtsseiten. Im Wartungsmodus `Disallow: /` |
-| `/admin` | Admin: Bestellungen, Status, Einstellungen (Standard-Passwort bei Neuinstallation: `formsam-admin`) |
+| `/admin` | Admin: Bestellungen, Status, Einstellungen (Passwort: siehe [Admin-Passwort](#admin-passwort)) |
 | `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand` | Rechtsseiten, aus den Einstellungen gerendert (`lib/legal.js`) |
 | `/api/pricing`, `/api/quote` | Preise, Rabatte, Lieferzeit/Liefergebiet (Server = einzige Preisquelle); `/api/pricing` liefert während einer Aktion unter `preisHistorie` die Momentaufnahmen für den 30-Tage-Tiefstpreis |
-| `/api/checkout` + STL-Upload | Warenkorb-Bestellung anlegen (Antwort mit `accessKey`), Modelle binär hochladen, Rechnung erzeugen — `/api/order/<ID>/stl/<i>` und `/complete` nur mit Header `x-order-key`. Pflicht: `beschaffenheit: true` (Vereinbarung Wasser/Standfestigkeit) und `expectedTotal` (angezeigter Gesamtbetrag — weicht er ab, 409 `code: 'preis'`; Kassen-Tabs ohne `kasseStand: 2`, also von vor der Versandregel „Freigrenze vor Gutschein“, bekommen dann „bitte lade die Seite neu“), 1–20 Positionen, keine aus dem Shop genommene oder unbekannte Farbe, Konfiguration wie im Konfigurator (sonst 400 mit Hinweis auf die Position), PLZ 4–5 Ziffern, Zahlart `vorkasse` oder `paypal`. Design-Codes der Zeilen werden gespeichert (`lines[].code`). Eine nie abgeschlossene Kasse hält ein Guthaben nur 2 Stunden fest |
+| `/api/checkout` + STL-Upload | Warenkorb-Bestellung anlegen (Antwort mit `accessKey`), Modelle binär hochladen, Rechnung erzeugen — `/api/order/<ID>/stl/<i>` und `/complete` nur mit Header `x-order-key`. Pflicht: `beschaffenheit: true` (Vereinbarung Wasser/Standfestigkeit) und `expectedTotal` (angezeigter Gesamtbetrag — weicht er ab, 409 `code: 'preis'`; Kassen-Tabs ohne `kasseStand: 2`, also von vor der Versandregel „Freigrenze vor Gutschein“, bekommen dann „bitte lade die Seite neu“), 1–20 Positionen, keine aus dem Shop genommene oder unbekannte Farbe, Konfiguration wie im Konfigurator (sonst 400 mit Hinweis auf die Position), PLZ 4–5 Ziffern, Zahlart `vorkasse` oder `paypal`. Design-Codes der Zeilen werden gespeichert (`lines[].code`). Eine nie abgeschlossene Kasse hält ein Guthaben nur 2 Stunden fest. Druckdateien siehe [Uploads](#druckdateien-uploads) |
 | `/orders/<ID>/rechnung.html?k=…` | Rechnung, Gutschrift, Modelldateien — nur mit Zugriffsschlüssel oder Admin-Header (Altbestand ohne Schlüssel wie bisher) |
 | `/api/paypal/*` | PayPal-Order anlegen/einziehen (aktiv, sobald Zugangsdaten hinterlegt). `create` prüft vorher alles wie der Checkout und garantiert den Preis ab dem Klick; lehnt der Checkout nach dem Einzug trotzdem ab, wird automatisch erstattet (sonst Admin-Mail + Hinweis in der Übersicht) |
 | `/api/auth/verify`, `/api/auth/verify-resend` | E-Mail-Adresse des Kontos bestätigen (Token aus der Mail + Anmeldung) bzw. Link erneut senden |
@@ -138,8 +219,9 @@ PORT=4490 DATA_DIR=tmp-tests/sandbox/data ORDERS_DIR=tmp-tests/sandbox/orders no
 ```
 
 `DATA_DIR` enthält `settings.json`, Preis-Historie, Konten, Sessions, Designs, Listen, Widerrufe und das Mail-Protokoll, `ORDERS_DIR` die
-Bestellordner (`tmp-tests/` ist nicht im Git). Ein leerer Ordner startet mit den Standard-Einstellungen (Admin-Passwort
-`formsam-admin`, Mail aus). Wer echte Einstellungen kopiert (`cp data/settings.json …`), schaltet dort vorher den
+Bestellordner (`tmp-tests/` ist nicht im Git). Ein leerer Ordner startet mit den Standard-Einstellungen (Mail aus) und einem
+zufälligen Admin-Passwort, das einmal im Protokoll steht; wer ein bestimmtes will, legt vorher `settings.json` mit
+`{"adminKey": "…"}` an (wird beim Start in einen Hash umgestellt). Wer echte Einstellungen kopiert (`cp data/settings.json …`), schaltet dort vorher den
 Mail-Versand aus und leert die PayPal-Zugangsdaten — sonst verschickt die Testinstanz echte Mails.
 
 ## Eingaben & Schutz
@@ -217,6 +299,8 @@ tools/
   check-stl.mjs            STL-Validator (watertight, Volumen, BBox …)
   test-kasse.mjs           Kasse, Belege, Steuerstatus, Storno/Reklamation, Einstellungs-Prüfung gegen eine eigene Instanz
   generate-stl.mjs         STL per CLI erzeugen (Tests/Repro)
+  admin-passwort.mjs       Admin-Passwort bei gestopptem Server setzen (nur Hash)
+  test-daten.mjs           Prüfung Datenhaltung, Admin-Passwort, Bremsen, Uploads, Aufräumen, Konto (eigene Instanz)
   mail-test.mjs            Mail-Versand und Vorlagen testen
   test-mail.mjs            Wiederholung, Outbox, Vermerke, Vorlagen-Texte — mit eigener Shop-Instanz und Fake-SMTP
   test-referenzpreis.mjs   Unit-Test 30-Tage-Tiefstpreis (§ 11 PAngV) in public/js/pricing.js
@@ -398,6 +482,7 @@ node tools/test-referenzpreis.mjs                  # Streichpreis = niedrigster 
 node tools/test-recht.mjs                          # Rechtstexte, Wartungstor, Startseite/robots/sitemap, Produkthinweise (eigene Instanz)
 node tools/test-betrieb.mjs                        # deploy/: Sicherung und prod-update.sh in einer Attrappe
 node tools/test-eingaben.mjs                       # Eingaben, 400/404/405/413, Kopfzeilen, Dateirechte (eigene Instanz, Port 4545–4549)
+node tools/test-daten.mjs                          # Dateien, Admin-Passwort, Bremsen, Uploads, Aufräumen, Konto (eigene Instanz)
 ```
 
 Der Validator prüft: Dateikonsistenz, degenerierte Dreiecke, NaN, Bounding Box,
