@@ -100,6 +100,7 @@
   .login input { width: 100%; text-align: center; font-size: 1rem; margin: 22px 0 12px; padding: 12px; }
   .login button { width: 100%; justify-content: center; padding: 12px; }
   .login .err { color: var(--red); font-weight: 600; font-size: .86rem; margin-top: 12px; min-height: 1.2em; }
+  .login #login-hint.warn { color: var(--accent-dark); font-weight: 600; }
 
   /* ---------- Shell ---------- */
   .shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh; }
@@ -252,6 +253,13 @@
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: .86rem; }
   .kv dt { color: var(--ink-soft); font-size: .78rem; font-weight: 600; padding-top: 2px; }
   .kv dd { margin: 0; }
+  /* Summen unter den Positionen (wie auf der Rechnung), Beträge rechtsbündig — auch auf dem Handy zweispaltig */
+  .kv.summen { grid-template-columns: 1fr auto; max-width: 360px; margin: 12px 0 0 auto; }
+  .kv.summen dd { text-align: right; white-space: nowrap; }
+  /* Link-Knöpfe im Drawer dürfen umbrechen (sonst ragt „↩ zurück auf Neu (Zahlung offen)“ aus dem Drawer) */
+  .drawer button.link { white-space: normal; text-align: left; }
+  .hint.konflikt { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .drawer .entwurf { font-size: .76rem; margin-top: 4px; }
   .addr { font-size: .9rem; line-height: 1.5; }
   /* Reklamation: Art als Radio-Kacheln, Gutschein-Code mit Kopieren-Knopf */
   .rk-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
@@ -415,6 +423,8 @@
     /* Tippflächen: Mini-Buttons/Chips ≥ 36 px, Link-Buttons und Bestell-Links ≥ 32 px hoch */
     button.mini, .chip { padding: 8px 14px; min-height: 36px; }
     button.link, .todo-item a { padding: 6px 0; min-height: 32px; display: inline-flex; align-items: center; }
+    /* Links im Drawer und in der Druckliste (Rechnung, Mail, STL) ebenso antippbar */
+    .drawer-body a, .pq-item .a a { display: inline-block; padding: 7px 0; }
   }
 </style>
 </head>
@@ -424,7 +434,7 @@
 <div id="login" class="login-wrap" hidden>
   <div class="login card">
     <div class="logo"><img class="logo-mark" src="/img/brand/formsam-zeichen.svg" alt="" width="44" height="56">formsam Studio<small>Admin-Bereich</small></div>
-    <p class="muted" style="margin-top:14px">Bitte mit dem Admin-Passwort anmelden.</p>
+    <p class="muted" id="login-hint" style="margin-top:14px">Bitte mit dem Admin-Passwort anmelden.</p>
     <input type="password" id="pw" placeholder="Passwort" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
     <button onclick="login()">Anmelden</button>
     <p id="login-err" class="err"></p>
@@ -748,6 +758,7 @@
           <div class="card">
             <h2>🔐 Admin-Passwort</h2>
             <label>Neues Passwort <small>(leer = unverändert)</small><input type="password" id="s-adminkey" placeholder="••••••" autocomplete="new-password" style="max-width:280px"></label>
+            <label style="margin-top:10px">Neues Passwort wiederholen<input type="password" id="s-adminkey2" placeholder="••••••" autocomplete="new-password" style="max-width:280px"></label>
           </div>
           <div class="card">
             <h2>🚧 Wartungsmodus</h2>
@@ -789,6 +800,7 @@
 
     <div class="save-bar" id="save-bar" hidden>
       <button onclick="saveSettings()" id="save-btn">💾 Einstellungen speichern</button>
+      <button class="ghost" onclick="einstellungenNeuLaden()" id="reload-btn" hidden>↻ Neu laden</button>
       <span class="state" id="save-state">Alles gespeichert</span>
     </div>
   </div>

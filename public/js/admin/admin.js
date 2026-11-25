@@ -22,6 +22,8 @@ let CUR = null;           // geöffnete Bestellnummer (Drawer)
 let HIST_ALL = false;     // Verlauf im Drawer komplett ausgeklappt
 let PANE = 'dash';
 const F = { q: '', status: '', pay: '', period: '', email: '', rekla: false };   // Bestell-Filter (rekla = nur offene Reklamationen)
+const LISTE_SCHRITT = 200;   // Bestellliste: so viele Zeilen je „Weitere … zeigen“ (hunderte Zeilen machen die Seite zäh)
+let LISTE_MAX = LISTE_SCHRITT, LISTE_SIG = '';
 let pqColor = '';         // Filter der Druckwarteschlange
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -134,31 +136,80 @@ async function openDruckzettel(orderId) {
     if (win) { win.document.open(); win.document.write(html); win.document.close(); }
   } catch (e) {
     if (win) win.close();
-    toast('❌ ' + e.message, 'err');
+    toast('❌ ' + (e instanceof TypeError ? 'Keine Verbindung zum Server – bitte noch einmal versuchen.' : e.message), 'err');
   }
 }
 
+const KEINE_VERBINDUNG = 'Keine Verbindung zum Server';
+/** Meldung für eine Antwort ohne JSON (z. B. nginx-Fehlerseite) — schreibt = die Anfrage sollte etwas ändern */
+const serverFehler = (status, schreibt) => `${status >= 502 && status <= 504 ? 'Server gerade nicht erreichbar' : 'Serverantwort ungültig'} (${status})${schreibt ? ' – nichts gespeichert' : ''}`;
 async function api(path, opts = {}) {
-  const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-key': KEY(), ...(opts.headers || {}) } });
+  const schreibt = /^(POST|PUT|DELETE|PATCH)$/i.test(opts.method || 'GET');
+  let r;
+  try {
+    r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-key': KEY(), ...(opts.headers || {}) } });
+  } catch {
+    // Netz weg / Server aus: lesbare Meldung statt „Failed to fetch“ — die Aufrufer zeigen r.error als roten Toast
+    return { ok: false, offline: true, error: `${KEINE_VERBINDUNG}${schreibt ? ' – nichts gespeichert' : ''}. Bitte Netz prüfen und noch einmal versuchen.` };
+  }
   // Abgewiesenes Passwort nicht behalten — sonst ginge es bei jedem Neuladen wieder raus und zählte jedes Mal als Fehlversuch
-  if (r.status === 401) { setKey(''); showLogin(); throw new Error('auth'); }
-  if (r.status === 429 && /^\/api\/admin\//.test(path)) { setKey(''); showLogin(); throw new Error('gebremst'); }   // zu viele falsche Passwörter
+  if (r.status === 401) { setKey(''); showLogin('auth'); throw new Error('auth'); }
+  if (r.status === 429 && /^\/api\/admin\//.test(path)) { setKey(''); showLogin('gebremst'); throw new Error('gebremst'); }   // zu viele falsche Passwörter
   // JSON-Antworten unverändert durchreichen (auch 404 „Bestellung unbekannt“); nur ein 404 ohne JSON heißt „Endpoint fehlt noch“
   const j = await r.json().catch(() => null);
   if (j && typeof j === 'object') return j;
   if (r.status === 404) return { ok: false, notReady: true, error: 'Noch nicht eingerichtet' };
-  return { ok: false, error: `Serverantwort ungültig (${r.status})` };
+  return { ok: false, error: serverFehler(r.status, schreibt) };
 }
-function showLogin() { $('#login').hidden = false; $('#app').hidden = true; }
+// Abgewiesenes Passwort bzw. Bremse: api() zeigt schon die Anmeldung — der Abbruch der laufenden Aktion ist kein Fehler
+window.addEventListener('unhandledrejection', (e) => { if (e.reason?.message === 'auth' || e.reason?.message === 'gebremst') e.preventDefault(); });
+const LOGIN_TEXT = 'Bitte mit dem Admin-Passwort anmelden.';
+let NACH_LOGIN = null;    // { orderId, eingaben } — bei einer Abmeldung mitten in der Arbeit offener Drawer samt getippter Eingaben
+let ABGEMELDET = false;   // selbst abgemeldet (kein Hinweis „Passwort geändert“)
+/**
+ * Anmeldung zeigen. Mitten in der Arbeit (401 nach Passwortwechsel auf einem anderen Gerät, 429): Drawer und Dialoge schließen
+ * (die Anmeldung läge sonst darunter, auf dem Handy ganz verdeckt), getippte Eingaben im Drawer merken und nach der Anmeldung
+ * wiederherstellen; ungespeicherte Einstellungen bleiben ohnehin im Formular. grund: 'auth' | 'gebremst' | 'abgemeldet' | Text
+ */
+function showLogin(grund = '') {
+  const mitten = !!DATA && !$('#app').hidden;
+  if (mitten && grund !== 'abgemeldet') {
+    if (CUR) NACH_LOGIN = { orderId: CUR, eingaben: drawerEingaben() };
+    for (const d of $$('dialog[open]')) d.close();
+  }
+  if (CUR) closeOrder();
+  const hint = $('#login-hint');
+  if (hint) {
+    hint.textContent = grund === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.'
+      : grund === 'abgemeldet' ? 'Abgemeldet.'
+        : grund === 'auth' && DATA && !ABGEMELDET ? 'Abgemeldet – das Admin-Passwort wurde geändert oder gilt nicht mehr. Bitte neu anmelden; deine Eingaben bleiben erhalten.'
+          : grund && grund !== 'auth' ? grund : LOGIN_TEXT;
+    hint.classList.toggle('warn', !!grund && grund !== 'abgemeldet');
+  }
+  $('#pw').value = '';   // nach dem Abmelden steht das Passwort nicht mehr im Feld
+  $('#login').hidden = false; $('#app').hidden = true;
+}
 async function login() {
   setKey($('#pw').value);
   $('#login-err').textContent = '';
-  try { await load(); } catch (e) {
-    if (e?.message === 'auth' || e?.message === 'gebremst') setKey('');   // gespeichert bleibt nur ein angenommenes Passwort
-    $('#login-err').textContent = e?.message === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.' : 'Falsches Passwort';
+  try {
+    // Nach einer Abmeldung mitten in der Arbeit nur nachladen (Formulareingaben bleiben), sonst die Oberfläche aufbauen
+    if (DATA) await nachLoginWeiter(); else await load();
+  } catch (e) {
+    setKey('');   // gespeichert bleibt nur ein angenommenes Passwort
+    $('#login-err').textContent = e?.message === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.'
+      : e?.message === 'auth' ? 'Falsches Passwort' : (e?.message || 'Anmeldung fehlgeschlagen');
   }
 }
-function logout() { setKey(''); showLogin(); }
+async function nachLoginWeiter() {
+  await aktualisieren();   // prüft das Passwort (401 → 'auth') und holt den neuesten Stand
+  $('#login').hidden = true; $('#app').hidden = false;
+  ABGEMELDET = false;
+  const n = NACH_LOGIN;
+  NACH_LOGIN = null;
+  if (n && DATA.orders.some((o) => o.orderId === n.orderId)) { openOrder(n.orderId); drawerEingabenSetzen(n.eingaben); }
+}
+function logout() { setKey(''); NACH_LOGIN = null; ABGEMELDET = true; showLogin('abgemeldet'); }
 function toast(msg, type = '', ms = 3200) {
   const box = $('#toasts');
   // Gleicher Text ersetzt den alten Toast; höchstens drei gleichzeitig (der älteste weicht)
@@ -335,6 +386,94 @@ function applyOrder(order) {
   if (PANE === 'colors') renderColors();
   if (CUR === order.orderId) renderDrawer();
 }
+/** Neueste zuerst (Bestellzeit), wie der Server die Liste liefert — unabhängig von Nummer bzw. Ordnernamen */
+const sortiereBestellungen = () => DATA.orders.sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0) || String(b.orderId).localeCompare(String(a.orderId)));
+
+// ---------------------------------------------------------------------------
+// Veraltete Tabs (Handy und Rechner gleichzeitig): Bestelländerungen schicken den Stand mit, auf dem sie beruhen; der Server
+// antwortet bei Abweichung 409 „Inzwischen geändert – bitte neu laden“. Der Drawer zeigt dann einen Hinweis mit „↻ Neu laden“;
+// getippte Eingaben (Notiz, Sendungsnummer, Reklamation) bleiben dabei stehen. Kehrt der Tab nach einer Weile in den
+// Vordergrund zurück, lädt er selbst nach (aktualisieren) — ungespeicherte Einstellungen bleiben unangetastet.
+// ---------------------------------------------------------------------------
+/** Stand einer Bestellung, wie dieser Tab sie zeigt (Gegenstück: standPasst() im Server) */
+const standVon = (o) => ({ status: st(o), paymentStatus: o.paymentStatus === 'bezahlt' ? 'bezahlt' : 'offen', trackingNo: o.trackingNo || '', carrier: o.carrier || '', adminNote: o.adminNote || '' });
+let KONFLIKT = null;      // { orderId, order } nach einem 409 — Drawer-Hinweis „Inzwischen geändert – bitte neu laden“
+/** Bestellung ändern (order-update) mit dem Stand dieses Tabs → Antwort bei Erfolg, sonst null (Fehler/Konflikt schon angezeigt) */
+async function bestellAendern(id, body) {
+  const o = DATA.orders.find((x) => x.orderId === id);
+  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, ...body, ...(o ? { stand: standVon(o) } : {}) }) });
+  if (r.ok) return r;
+  bestellFehler(r, id);
+  return null;
+}
+/** Fehler einer Bestelländerung: 409 (veralteter Stand / Status inzwischen weiter) → Hinweis im Drawer, sonst Toast */
+function bestellFehler(r, id) {
+  if ((r.code === 'stand' || r.code === 'status') && r.order) {
+    KONFLIKT = { orderId: id, order: r.order };
+    toast(r.error || 'Inzwischen geändert – bitte neu laden', 'err', 7000);
+    if (CUR === id) renderDrawer(); else openOrder(id);
+    return;
+  }
+  toast(r.error || 'Fehler', 'err', r.offline ? 6000 : 3200);
+}
+/** „↻ Neu laden“ im Drawer: aktuellen Stand der Bestellung übernehmen (getippte Eingaben bleiben stehen) */
+async function konfliktLaden() {
+  const k = KONFLIKT;
+  if (!k) return;
+  const rr = await api(`/api/admin/order/${encodeURIComponent(k.orderId)}`);
+  KONFLIKT = null;
+  applyOrder(rr.ok && rr.order ? rr.order : k.order);
+  toast('Aktueller Stand geladen – bitte prüfen und bei Bedarf noch einmal ausführen.', 'ok', 5000);
+}
+// Eingabefelder im Drawer, deren getippter Wert ein Neuzeichnen (Nachladen, Konflikt, neue Anmeldung) übersteht
+const DRAWER_FELDER = ['d-note', 'd-tracking', 'd-carrier', 'rk-grund', 'rk-betrag', 'rk-iban'];
+const feldStandard = (el) => (el.tagName === 'SELECT' ? ([...el.options].find((x) => x.defaultSelected) || el.options[0])?.value ?? '' : el.defaultValue);
+/** Getippte, noch nicht gespeicherte Eingaben im Drawer: { id: { wert, basis } } (nur Felder, die vom geladenen Stand abweichen) */
+function drawerEingaben() {
+  const out = {};
+  for (const id of DRAWER_FELDER) {
+    const el = document.getElementById(id);
+    if (el && el.value !== feldStandard(el)) out[id] = { wert: el.value, basis: feldStandard(el) };
+  }
+  return out;
+}
+/** Eingaben wieder einsetzen; hat sich der gespeicherte Wert inzwischen geändert, steht er als Hinweis unter dem Feld */
+function drawerEingabenSetzen(e) {
+  for (const [id, { wert, basis }] of Object.entries(e || {})) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const jetzt = feldStandard(el);
+    el.value = wert;
+    if (jetzt !== basis && el.tagName !== 'SELECT') {
+      const p = document.createElement('p');
+      p.className = 'muted entwurf';
+      p.textContent = `Inzwischen gespeichert: „${jetzt || '(leer)'}“ – im Feld steht noch deine Eingabe.`;
+      el.after(p);
+    }
+  }
+}
+let GELADEN_AM = 0;       // Zeitpunkt des letzten vollständigen Ladens (Nachladen beim Zurückkehren in den Tab)
+/**
+ * Neuesten Stand holen, ohne Eingaben zu verwerfen: Bestellungen, Zähler, Hinweise immer; die Einstellungen nur, wenn nichts
+ * ungespeichert ist — sonst bleibt der Stand, auf dem die Eingaben beruhen (das Speichern meldet dann ggf. „Inzwischen geändert“)
+ */
+async function aktualisieren() {
+  const d = await api('/api/admin/data');
+  if (!d.ok) throw new Error(d.error || 'Laden fehlgeschlagen');
+  GELADEN_AM = Date.now();
+  const settingsAlt = DATA.settings;
+  Object.assign(DATA, d);
+  sortiereBestellungen();
+  KONFLIKT = null;
+  if (dirty) DATA.settings = settingsAlt; else fillSettings();
+  try { const u = await api('/api/admin/users'); if (Array.isArray(u.users)) USERS = u.users; } catch { /* Login ist offen */ }
+  updateCounters();
+  renderDash();
+  renderOrders();
+  if (PANE === 'print') renderPrint();
+  if (PANE === 'customers') renderCustomers();
+  if (CUR) renderDrawer();
+}
 
 // ---------------------------------------------------------------------------
 // Übersicht
@@ -437,6 +576,7 @@ function orderMatches(o) {
   }
   if (F.q) {
     const hay = [o.orderId, o.invoiceNo, custName(o), custEmail(o), o.customer?.city, o.customer?.zip, o.trackingNo, o.paypalOrderId,
+      o.coupon?.code,   // eingelöster Gutschein- bzw. Guthaben-Code (findet die einlösende Bestellung)
       o.reklamation?.gutscheinCode, o.reklamation?.gutschriftNo, o.reklamation?.refundId,   // Gutscheincode / Gutschriftnummer / PayPal-Erstattung
       ...orderAktionen(o).map((a) => a.name),   // Bestellungen aus einer Aktion („Sommer“) — auch mehrere je Bestellung
       ...orderWiderrufe(o).map((w) => w.ref), orderWiderrufe(o).length ? 'widerruf' : '',   // Widerruf-Referenz „WR-…“ bzw. Stichwort „Widerruf“
@@ -451,8 +591,9 @@ function renderOrders() {
   const base = DATA.orders.filter((o) => { const s = F.status; F.status = ''; const ok = orderMatches(o); F.status = s; return ok; });
   const counts = {};
   for (const o of base) counts[st(o)] = (counts[st(o)] || 0) + 1;
-  // Reklamations-Chip zählt offene Reklamationen (offen/ruecksendung/eingegangen) über alle anderen Filter; „Alle“ hebt ihn mit auf
-  const rkBase = DATA.orders.filter((o) => { const s = F.status, r = F.rekla; F.status = ''; F.rekla = false; const ok = orderMatches(o) && reklaOpen(o); F.status = s; F.rekla = r; return ok; }).length;
+  // Reklamations-Chip zählt offene Reklamationen (offen/ruecksendung/eingegangen) mit allen anderen Filtern — auch dem Status-Chip,
+  // mit dem er zusammen filtert (sonst „2“ am Chip und nach dem Klick „0 von …“); „Alle“ hebt ihn mit auf
+  const rkBase = DATA.orders.filter((o) => { const r = F.rekla; F.rekla = false; const ok = orderMatches(o) && reklaOpen(o); F.rekla = r; return ok; }).length;
   $('#f-status').innerHTML = [['', 'Alle', base.length], ...DATA.statuses.map((s) => [s, stLabel(s), counts[s] || 0])]
     .filter(([s, , n]) => !s || n || s === F.status)
     .map(([s, l, n]) => `<button class="chip ${F.status === s ? 'on' : ''}" onclick="F.status='${s}';${s ? '' : 'F.rekla=false;'}renderOrders()">${esc(l)}<span class="n">${n}</span></button>`).join('') +
@@ -463,9 +604,13 @@ function renderOrders() {
   $('#f-active').innerHTML = act.length ? `<span class="active-q">${act.join(' · ')}<button class="link" onclick="clearFilters()">✕</button></span>` : '';
 
   const list = DATA.orders.filter(orderMatches);
-  $('#orders-sub').textContent = `${list.length} von ${DATA.orders.length} Bestellungen`;
+  // Blättern: die neuesten LISTE_SCHRITT Treffer, darunter „Weitere … zeigen“ (neue Filter beginnen wieder vorn)
+  const sig = JSON.stringify([F, $('#f-pay').value, $('#f-period').value]);
+  if (sig !== LISTE_SIG) { LISTE_SIG = sig; LISTE_MAX = LISTE_SCHRITT; }
+  const mehr = list.length - LISTE_MAX;
+  $('#orders-sub').textContent = `${list.length} von ${DATA.orders.length} Bestellungen${mehr > 0 ? ` · die neuesten ${LISTE_MAX} angezeigt` : ''}`;
   $('#orders-table').innerHTML = `<thead><tr><th>Bestellung</th><th>Datum</th><th>Kunde</th><th>Positionen</th><th class="num">Summe</th><th>Status</th><th>Druck</th></tr></thead><tbody>` +
-    (list.map((o) => {
+    (list.slice(0, LISTE_MAX).map((o) => {
       const p = progress(o);
       const lines = (o.lines || []).map((l) => `<span class="sw sm" style="background:${esc(lineColor(l).hex)}"></span> ${l.qty}× ${esc(lineTitle(l))}`).join('<br>') || '<span class="muted">—</span>';
       return `<tr class="click" onclick="openOrder('${esc(o.orderId)}')">
@@ -477,7 +622,8 @@ function renderOrders() {
         <td data-l="Status"><span class="badge st-${st(o)}">${esc(stLabel(st(o)))}</span>${kasseOffenBadge(o)}${o.storno?.nr ? `<br><small class="muted" title="Stornorechnung zu ${esc(o.invoiceNo)}">↩ ${esc(o.storno.nr)}</small>` : ''}${o.reklamation ? `<br><span class="badge rk-${esc(o.reklamation.status)}" title="${esc(rkStLabel(o.reklamation.status))} · ${esc(rkArtLabel(o.reklamation.art))}">↩️ Reklamation</span>` : ''}${orderWiderrufe(o).length ? `<br><span class="badge wr-${orderWrOffen(o) ? 'offen' : 'erledigt'}" title="Widerruf über „Vertrag widerrufen“ eingegangen${orderWrOffen(o) ? '' : ' — erledigt'}">↩️ Widerruf</span>` : ''}${o.trackingNo ? `<br><small class="muted trk">📮 ${esc(o.trackingNo)}</small>` : ''}</td>
         <td data-l="Druck">${p.total ? `<span class="prog"><i style="--w:${Math.round(p.done / p.total * 100)}%"></i>${p.done}/${p.total}</span>` : '—'}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7" class="empty">Keine Treffer.</td></tr>') + '</tbody>';
+    }).join('') || '<tr><td colspan="7" class="empty">Keine Treffer.</td></tr>') +
+    (mehr > 0 ? `<tr><td colspan="7" class="empty"><button class="ghost mini" onclick="LISTE_MAX+=LISTE_SCHRITT;renderOrders()">Weitere ${Math.min(LISTE_SCHRITT, mehr)} von ${mehr} zeigen</button></td></tr>` : '') + '</tbody>';
 }
 function clearFilters() { F.q = ''; F.email = ''; F.rekla = false; $('#g-search').value = ''; renderOrders(); }
 function filterByEmail(email) { F.email = email; F.q = ''; F.status = ''; $('#g-search').value = ''; show('orders'); renderOrders(); }
@@ -485,8 +631,10 @@ function filterByEmail(email) { F.email = email; F.q = ''; F.status = ''; $('#g-
 // ---------------------------------------------------------------------------
 // Bestellung — Drawer
 // ---------------------------------------------------------------------------
+let DRAWER_FUER = null;   // Bestellung, die der Drawer gerade zeigt (getippte Eingaben überstehen nur deren Neuzeichnen)
 function openOrder(id) {
   if (!DATA.orders.some((o) => o.orderId === id)) return toast('Bestellung nicht gefunden', 'err');
+  if (CUR !== id) $('#drawer').scrollTop = 0;   // eine andere Bestellung beginnt oben, nicht an der Scrollposition der vorigen
   CUR = id;
   HIST_ALL = false;
   RK_NEW = false;
@@ -497,6 +645,7 @@ function openOrder(id) {
 }
 function closeOrder() {
   CUR = null;
+  DRAWER_FUER = null;   // Schließen verwirft nicht gespeicherte Eingaben
   $('#drawer').classList.remove('open'); $('#drawer-bg').classList.remove('open');
   document.body.style.overflow = '';
   history.replaceState(null, '', `#${PANE}`);
@@ -505,6 +654,7 @@ function renderDrawer() {
   const o = DATA.orders.find((x) => x.orderId === CUR);
   if (!o) return closeOrder();
   const s = st(o), cu = o.customer || {};
+  const entwurf = DRAWER_FUER === o.orderId ? drawerEingaben() : null;   // getippt, noch nicht gespeichert — bleibt beim Neuzeichnen
   $('#drawer-title').innerHTML = `${esc(o.orderId)} <span class="badge st-${s}" style="vertical-align:middle;margin-left:6px">${esc(stLabel(s))}</span>`;
 
   // Status-Stepper
@@ -557,7 +707,9 @@ function renderDrawer() {
 
   const account = o.userId ? '<span class="badge">👤 Kundenkonto</span>' : (USERS.some((u) => u.email === custEmail(o)) ? '<span class="badge">👤 hat Konto</span>' : '<span class="badge">Gast</span>');
   const tel = cu.phone ? `<br><a href="tel:${esc(cu.phone)}">${esc(cu.phone)}</a>` : '';
-  $('#drawer-body').innerHTML = `${widerrufCard(o)}
+  const konflikt = KONFLIKT?.orderId === o.orderId
+    ? `<div class="hint konflikt">⚠️ <b>Inzwischen geändert</b> (anderer Tab oder anderes Gerät) – bitte neu laden. <button class="mini acc" onclick="konfliktLaden()">↻ Neu laden</button></div>` : '';
+  $('#drawer-body').innerHTML = `${konflikt}${widerrufCard(o)}
     <div class="sect">
       <h3>Status <span class="right">${fmtDT(o.createdAt)}${o.invoiceNo ? ` · <a href="${esc(docUrl(o, 'rechnung.html'))}" target="_blank">🧾 ${esc(o.invoiceNo)}</a>` : ''}${o.storno?.nr ? ` · <a href="${esc(docUrl(o, 'storno.html'))}" target="_blank" title="Stornorechnung">↩ ${esc(o.storno.nr)}</a>` : ''}</span></h3>
       ${kasseAbgebrochen(o) ? `<p class="hint">${Date.now() - Date.parse(o.createdAt) > 30 * 60e3 ? '⚠️ Kasse abgebrochen: Die Bestellung wurde angelegt, aber nie abgeschlossen — keine Rechnung, keine Bestätigungsmail an die Kundschaft. Am besten stornieren (ein eingelöstes Guthaben wird dabei wieder frei).' : '⏳ Die Kundschaft ist gerade in der Kasse — die Druckdateien werden hochgeladen.'}</p>` : ''}
@@ -580,7 +732,7 @@ function renderDrawer() {
       <div><h3>Zahlung</h3>${payBlock}</div>
     </div></div>
     <div class="sect"><h3>Positionen <span class="right">${pieces(o)} Stück · ${o.total != null ? money(o.total) : '—'}${o.shipping != null ? ` (Versand ${o.shipping ? money(o.shipping) : 'frei'})` : ''}</span></h3>
-      ${orderAktionen(o).map((a) => `<div class="row" style="margin-bottom:10px"><span class="badge ak">🔥 ${esc(a.name)} −${esc(a.prozent)} %${esc(orderAktionScope(a))}</span><small class="muted">Ersparnis ${money(a.ersparnis)} — Summen bereits aus den reduzierten Preisen</small></div>`).join('')}${lines}</div>
+      ${orderAktionen(o).map((a) => `<div class="row" style="margin-bottom:10px"><span class="badge ak">🔥 ${esc(a.name)} −${esc(a.prozent)} %${esc(orderAktionScope(a))}</span><small class="muted">Ersparnis ${money(a.ersparnis)} — Summen bereits aus den reduzierten Preisen</small></div>`).join('')}${lines}${summenHTML(o)}</div>
     <div class="sect"><h3>Versand</h3>
       <div class="row">
         <select id="d-carrier">${['', ...Object.keys(CARRIERS)].map((k) => `<option value="${k}" ${(o.carrier || '') === k ? 'selected' : ''}>${k ? CARRIERS[k] : 'Versender wählen'}</option>`).join('')}</select>
@@ -612,6 +764,26 @@ function renderDrawer() {
         <small class="muted">${o.mailsSent?.zahlungserinnerung ? `zuletzt erinnert ${fmtDT(o.mailsSent.zahlungserinnerung)}` : erinnerungFrueh(o) ? `Zahlungsfrist läuft noch bis ${fmtDate(zahlungsfristBis(o))} – die Erinnerung nennt dieses Datum` : `mit Nachfrist von 7 Tagen · höchstens einmal am Tag`}</small>
       </div>` : ''}
     </div>`;
+  DRAWER_FUER = o.orderId;
+  if (entwurf) drawerEingabenSetzen(entwurf);
+}
+/**
+ * Summen wie auf der Rechnung: Zwischensumme, Gutschein (Code, −Betrag), Versand, Gesamtbetrag; ein Guthaben (Gutschrift-Code) ist
+ * eine Zahlung und steht danach („abzüglich Guthaben“, „Zu zahlen“). Ältere Bestellungen ohne subtotal: Summe der Positionen.
+ */
+function summenHTML(o) {
+  if (o.total == null) return '';
+  const sub = o.subtotal != null ? euro(o.subtotal) : r2c((o.lines || []).reduce((t, l) => t + (Number(l.line) || 0), 0));
+  const c = o.coupon && Number(o.coupon.off) > 0 ? o.coupon : null, g = guthabenOff(o);
+  const rows = [
+    ['Zwischensumme', money(sub)],
+    c && !g ? [`Gutschein „${esc(c.code)}“${c.type === 'percent' && Number(c.value) > 0 ? ` (−${esc(c.value)} %)` : ''}`, `−${money(c.off)}`] : null,
+    o.shipping != null ? ['Versand', o.shipping ? money(o.shipping) : 'kostenlos'] : null,
+    ['Gesamtbetrag', `<b>${money(rechnungsbetrag(o))}</b>`],
+    g ? [`abzüglich Guthaben „${esc(c.code)}“`, `−${money(g)}`] : null,
+    g ? ['Zu zahlen', `<b>${money(o.total)}</b>`] : null,
+  ].filter(Boolean);
+  return `<dl class="kv summen">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
 }
 
 function toggleHist() { HIST_ALL = !HIST_ALL; renderDrawer(); }
@@ -620,15 +792,15 @@ async function setStatus(id, status) {
   const o = DATA.orders.find((x) => x.orderId === id);
   if (!o) return;
   if (!confirm(`Bestellung ${id} auf „${stLabel(status)}“ setzen?`)) return;
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, status }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, { status });
+  if (!r) return;
   applyOrder(r.order);
   toast(`${id} → ${stLabel(status)}`, 'ok');
 }
 async function cancelOrder(id) {
   if (!confirm(`Bestellung ${id} wirklich stornieren?`)) return;
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, status: 'storniert' }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, { status: 'storniert' });
+  if (!r) return;
   applyOrder(r.order);
   toast(`${id} storniert`, 'ok');
 }
@@ -638,30 +810,32 @@ async function markPaid(id) {
   // Rückfrage wie bei setStatus/cancelOrder — bucht Zahlung + Status und stößt die Bezahlt-Mail an
   const mailHint = st(o) === 'neu' && DATA.settings.mail?.enabled && DATA.settings.mail?.autoStatusMails !== false ? ' Der Kunde erhält eine Status-Mail.' : '';
   if (!confirm(`Zahlung für ${id} (${o.total != null ? money(o.total) : '—'}) als eingegangen verbuchen?${mailHint}`)) return;
-  const body = { orderId: id, paymentStatus: 'bezahlt' };
+  const body = { paymentStatus: 'bezahlt' };
   if (st(o) === 'neu') body.status = 'bezahlt';
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify(body) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, body);
+  if (!r) return;
   applyOrder(r.order);
   toast(`Zahlung für ${id} verbucht`, 'ok');
 }
 async function setPayment(id, paymentStatus) {
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, paymentStatus }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, { paymentStatus });
+  if (!r) return;
   applyOrder(r.order);
   toast('Zahlungsstatus aktualisiert', 'ok');
 }
 /** Fehlklick auf „bezahlt“ rückgängig: Zahlung offen + Status „Neu“ in einem Aufruf, ohne Status-Mail */
 async function undoPaid(id) {
   if (!confirm(`Bestellung ${id} zurück auf „Neu“ setzen und die Zahlung wieder als offen führen?`)) return;
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, paymentStatus: 'offen', status: 'neu', notify: false }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, { paymentStatus: 'offen', status: 'neu', notify: false });
+  if (!r) return;
   applyOrder(r.order);
   toast(`${id} → Neu · Zahlung offen`, 'ok');
 }
 async function linePrint(id, idx, status) {
-  const r = await api('/api/admin/line-print', { method: 'POST', body: JSON.stringify({ orderId: id, idx, status }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  // vorher: Druckstatus der Position, wie dieser Tab ihn zeigt — ein veralteter Tab bekommt 409 statt eine Position zurückzusetzen
+  const vorher = DATA.orders.find((x) => x.orderId === id)?.lines?.[idx]?.print?.status || 'offen';
+  const r = await api('/api/admin/line-print', { method: 'POST', body: JSON.stringify({ orderId: id, idx, status, vorher }) });
+  if (!r.ok) return bestellFehler(r, id);
   const before = DATA.orders.find((x) => x.orderId === id)?.status;
   applyOrder(r.order);
   const auto = r.order.status !== before ? ` · Bestellung jetzt „${stLabel(r.order.status)}“` : '';
@@ -670,22 +844,22 @@ async function linePrint(id, idx, status) {
 async function ship(id) {
   const carrier = $('#d-carrier').value, trackingNo = $('#d-tracking').value.trim();
   if (!trackingNo && !confirm('Ohne Sendungsnummer als versendet markieren?')) return;
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, status: 'versendet', carrier, trackingNo, notify: true }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, { status: 'versendet', carrier, trackingNo, notify: true });
+  if (!r) return;
   applyOrder(r.order);
   toast(`${id} als versendet markiert`, 'ok');
   // Die Kunden-Mail verschickt der Server über hooks.statusChanged (E-Mail-Integration)
   if (!DATA.settings.mail?.enabled) toast('Hinweis: Der Kunde wird erst benachrichtigt, wenn der E-Mail-Versand eingerichtet ist (Bereich E-Mail).', 'info', 5000);
 }
 async function saveShipping(id) {
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, carrier: $('#d-carrier').value, trackingNo: $('#d-tracking').value.trim() }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, { carrier: $('#d-carrier').value, trackingNo: $('#d-tracking').value.trim() });
+  if (!r) return;
   applyOrder(r.order);
   toast('Versanddaten gespeichert', 'ok');
 }
 async function saveNote(id) {
-  const r = await api('/api/admin/order-update', { method: 'POST', body: JSON.stringify({ orderId: id, adminNote: $('#d-note').value }) });
-  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  const r = await bestellAendern(id, { adminNote: $('#d-note').value });
+  if (!r) return;
   applyOrder(r.order);
   toast('Notiz gespeichert', 'ok');
 }
@@ -740,14 +914,18 @@ async function mailPreview(id, kind, extra = {}) {
     bestellungNachladen(id);
     if (!s.ok) return toast(s.error || 'Senden fehlgeschlagen', 'err');
     $('#dlg-preview').close(); $('#dlg-mail').close();
+    if (kind === 'freitext') $('#dlg-mail-text').value = '';
     toast('E-Mail gesendet', 'ok');
   };
   $('#dlg-preview').showModal();
 }
 function openFreitext(id) {
   const o = DATA.orders.find((x) => x.orderId === id);
+  // Entwurf zur selben Bestellung bleibt (z. B. nach einer Anmeldung mitten in der Arbeit), sonst frisch
+  const gleich = $('#dlg-mail').dataset.order === id && $('#dlg-mail-text').value.trim();
   $('#dlg-mail').dataset.order = id;
   $('#dlg-mail-to').textContent = `An: ${custName(o)} <${custEmail(o)}>`;
+  if (gleich) { $('#dlg-mail').showModal(); return; }
   $('#dlg-mail-subject').value = `Deine formsam-Bestellung ${id}`;
   // Anrede und Grußformel setzt die Vorlage (customMessage in lib/mail-templates.js) selbst — hier nur die Nachricht
   const vorname = String(DATA.settings.company?.owner || '').trim().split(/\s+/)[0];
@@ -766,6 +944,7 @@ async function mailFreitext(mode) {
   bestellungNachladen(id);
   if (!r.ok) return toast(r.error || 'Senden fehlgeschlagen', 'err', 5000);
   $('#dlg-mail').close();
+  $('#dlg-mail-text').value = '';   // gesendet — kein Entwurf mehr
   toast('E-Mail gesendet', 'ok');
 }
 
@@ -1172,8 +1351,12 @@ function renderCustomers() {
 }
 /** Datenauskunft zu einem Kundenkonto als JSON-Datei (Konto, Anmeldungen, Bestellungen, Widerrufe, Mails) */
 async function userExport(id) {
-  const r = await fetch(`/api/admin/user-export?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': KEY() } });
-  if (r.status === 401) { setKey(''); return showLogin(); }
+  let r;
+  try { r = await fetch(`/api/admin/user-export?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': KEY() } }); } catch {
+    return toast(`${KEINE_VERBINDUNG} – keine Datei gespeichert.`, 'err', 6000);
+  }
+  if (r.status === 401) { setKey(''); return showLogin('auth'); }
+  if (r.ok && !/json/i.test(r.headers.get('content-type') || '')) return toast(`Export fehlgeschlagen (${r.status}) – keine Datei gespeichert.`, 'err');
   if (!r.ok) return toast((await r.json().catch(() => null))?.error || `Export fehlgeschlagen (${r.status})`, 'err');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(await r.blob());
@@ -1245,18 +1428,26 @@ async function uploadImages() {
   if (!files.length) return toast('Bitte Datei(en) wählen', 'err');
   const cat = $('#img-cat').value;
   let done = 0;
+  const fehler = [];
   for (const f of files) {
-    const r = await fetch(`/api/admin/gallery?cat=${cat}&name=${encodeURIComponent(f.name)}`, { method: 'PUT', headers: { 'x-admin-key': KEY(), 'Content-Type': f.type }, body: f });
-    if (r.status === 401) return showLogin();
-    if (r.ok) done++;
+    let r;
+    try { r = await fetch(`/api/admin/gallery?cat=${cat}&name=${encodeURIComponent(f.name)}`, { method: 'PUT', headers: { 'x-admin-key': KEY(), 'Content-Type': f.type }, body: f }); } catch {
+      fehler.push(`${f.name}: keine Verbindung`); continue;
+    }
+    if (r.status === 401) { setKey(''); return showLogin('auth'); }
+    const j = await r.json().catch(() => null);
+    if (r.ok && j?.ok !== false) done++;
+    else fehler.push(`${f.name}: ${j?.error || serverFehler(r.status)}`);
   }
-  toast(`${done} Foto(s) hochgeladen — live auf der Seite`, 'ok');
-  $('#img-file').value = '';
-  loadImages();
+  if (done) toast(`${done} Foto(s) hochgeladen — live auf der Seite`, 'ok');
+  if (fehler.length) toast(`❌ Nicht hochgeladen: ${fehler.join(' · ')}`, 'err', 8000);
+  if (!fehler.length) $('#img-file').value = '';   // bei Fehlern bleibt die Auswahl für einen zweiten Versuch
+  if (done) loadImages();
 }
 async function deleteImage(name) {
   if (!confirm('Foto löschen?')) return;
-  await fetch(`/api/admin/gallery/${name}`, { method: 'DELETE', headers: { 'x-admin-key': KEY() } });
+  const r = await api(`/api/admin/gallery/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  if (!r.ok) return toast(`❌ Foto nicht gelöscht: ${r.error || 'Fehler'}`, 'err', 6000);
   toast('Foto gelöscht', 'ok');
   loadImages();
 }
@@ -1718,11 +1909,15 @@ function mailForm() {
     autoStatusMails: $('#m-autostatus').checked, publicUrl: $('#m-publicurl').value.trim().replace(/\/$/, ''),
   };
 }
+// Passwort-/Secret-Felder: gespeicherter Wert wird nie ausgeliefert — kurzer Platzhalter (passt ins Feld), Erklärung im Tooltip
+const GESPEICHERT_PLATZHALTER = '•••••• gespeichert';
+const GESPEICHERT_TITEL = 'Gespeichert — leer lassen, um es zu behalten';
 function fillMail(m = {}) {
   $('#m-enabled').checked = !!m.enabled; $('#m-host').value = m.host || ''; $('#m-port').value = m.port || 465;
   $('#m-secure').value = m.secure || 'ssl'; $('#m-user').value = m.user || ''; $('#m-pass').value = m.pass || '';
   // Der Server liefert das SMTP-Passwort nie aus (pass leer, passSet) — leer lassen = gespeichertes behalten
-  $('#m-pass').placeholder = m.passSet ? '(gespeichert — leer lassen, um es zu behalten)' : '';
+  $('#m-pass').placeholder = m.passSet ? GESPEICHERT_PLATZHALTER : '';
+  $('#m-pass').title = m.passSet ? GESPEICHERT_TITEL : '';
   $('#m-from').value = m.from || ''; $('#m-fromname').value = m.fromName || 'formsam'; $('#m-replyto').value = m.replyTo || '';
   $('#m-adminto').value = m.adminTo || ''; $('#m-admincopy').checked = m.adminCopy !== false; $('#m-autostatus').checked = m.autoStatusMails !== false;
   $('#m-publicurl').value = m.publicUrl || '';
@@ -2005,12 +2200,15 @@ function fillSettings() {
   renderTiers(); renderColors(); renderCoupons(); renderAktionen(); renderDashAktion();
   fillCompany();
   $('#pp-id').value = s.paypal?.clientId || ''; $('#pp-secret').value = s.paypal?.secret || '';
+  // Der Server liefert das Secret nie aus (secret leer, secretSet) — leer lassen = gespeichertes behalten (wie beim SMTP-Passwort)
+  $('#pp-secret').placeholder = s.paypal?.secretSet ? GESPEICHERT_PLATZHALTER : '';
+  $('#pp-secret').title = s.paypal?.secretSet ? GESPEICHERT_TITEL : '';
   $('#pp-enabled').checked = !!s.paypal?.enabled; $('#pp-sandbox').checked = !!s.paypal?.sandbox;
   fillMail(s.mail);
   const p = s.printing || {};
   $('#p-min-egg').value = p.minutesEgg ?? 75; $('#p-g-egg').value = p.gramsEgg ?? 22;
   $('#p-min-vase').value = p.minutesVase ?? 210; $('#p-g-vase').value = p.gramsVase ?? 110;
-  $('#s-adminkey').value = '';
+  $('#s-adminkey').value = ''; if ($('#s-adminkey2')) $('#s-adminkey2').value = '';
   $('#s-wartung').checked = !!s.wartung?.aktiv; $('#s-wartung-kw').value = '';
   $('#s-wartung-hint').textContent = s.wartung?.kennwortGesetzt
     ? 'Besucher sehen eine Wartungsseite — Rechtsseiten, „Vertrag widerrufen“ und Rechnungslinks bleiben erreichbar; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.'
@@ -2020,6 +2218,7 @@ function fillSettings() {
   $('#side-foot').textContent = `Node ${info.node || ''} · seit ${info.startedAt ? fmtDT(info.startedAt) : '—'}`;
   applyProduktSchalter();
   setDirty(false);
+  if ($('#reload-btn')) $('#reload-btn').hidden = true;
 }
 /**
  * Produktschalter anwenden (Vertrag „Nur Vasen“, Punkt 4): <body class="eierbecher-aus"> blendet alle Elemente mit
@@ -2051,7 +2250,9 @@ function naechsteBelegNr(prefix, next) {
   if (m && Number(m[0]) < year) { out = p.slice(0, m.index) + year + p.slice(m.index + 4); n = 1; }
   return out + String(n).padStart(4, '0');
 }
+let AENDERUNGEN = 0;      // zählt jede Eingabe in den Einstellungen (Speichern füllt die Felder nur ohne neue Eingaben neu)
 function setDirty(v) {
+  if (v) AENDERUNGEN++;
   dirty = v;
   const el = $('#save-state');
   el.textContent = v ? 'Ungespeicherte Änderungen' : 'Alles gespeichert';
@@ -2106,16 +2307,27 @@ async function saveSettings() {
     ...(couponsLoeschen.length ? { couponsLoeschen: [...couponsLoeschen] } : {}),
   };
   const produktWechsel = patch.produkte.eierbecher !== produktAn('eierbecher');
+  // Neues Admin-Passwort zweimal (Tippfehler sperren sonst aus) — die Wiederholung geht nicht an den Server
+  const pw2 = $('#s-adminkey2');
+  if (($('#s-adminkey').value || pw2?.value) && pw2 && $('#s-adminkey').value !== pw2.value) {
+    show('system'); pw2.focus();
+    return toast('Die beiden Passwörter stimmen nicht überein – bitte das neue Admin-Passwort zweimal gleich eingeben.', 'err', 6000);
+  }
   if ($('#s-adminkey').value) patch.adminKey = $('#s-adminkey').value;
+  // Stand, auf dem die Eingaben beruhen — der Server lehnt mit 409 ab, wenn inzwischen anderswo gespeichert wurde
+  if (Number.isInteger(DATA.settings.rev)) patch.baseRev = DATA.settings.rev;
   // Wartungsmodus nur mitschicken, wenn sich etwas geändert hat (Kennwort nie zurück an die Oberfläche)
   if ($('#s-wartung').checked !== !!DATA.settings.wartung?.aktiv || $('#s-wartung-kw').value) {
     patch.wartung = { aktiv: $('#s-wartung').checked, ...($('#s-wartung-kw').value ? { kennwort: $('#s-wartung-kw').value } : {}) };
   }
   $('#save-btn').disabled = true;
+  const aenderungenVorher = AENDERUNGEN;
   try {
     const r = await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(patch) });
+    if (!r.ok && r.code === 'stand') return einstellungenKonflikt(r);
     if (!r.ok) throw new Error(r.error || 'Speichern fehlgeschlagen');
-    if (patch.adminKey) { setKey(patch.adminKey.trim()); $('#s-adminkey').value = ''; delete patch.adminKey; }
+    delete patch.baseRev;
+    if (patch.adminKey) { setKey(patch.adminKey.trim()); $('#s-adminkey').value = ''; if (pw2) pw2.value = ''; delete patch.adminKey; }
     if (patch.wartung) {
       const neuesKw = !!patch.wartung.kennwort;
       $('#s-wartung-kw').value = '';
@@ -2126,10 +2338,18 @@ async function saveSettings() {
     if (Array.isArray(r.coupons)) { coupons = structuredClone(r.coupons); for (const c of coupons) c.mitAktion = !!c.mitAktion; }
     if (r.couponRest && typeof r.couponRest === 'object') DATA.couponRest = r.couponRest;
     couponsLoeschen = [];
-    DATA.settings = { ...DATA.settings, ...patch, colors: structuredClone(colors), coupons: structuredClone(coupons), aktionen: structuredClone(aktionen) };
-    delete DATA.settings.couponsLoeschen;
+    if (r.settings && typeof r.settings === 'object') {
+      // Gespeicherter, geprüfter Stand vom Server (z. B. ein negativer Aufpreis als 0, getrimmte Texte) samt neuem rev —
+      // die Felder zeigen ihn, sofern seit dem Absenden nichts mehr getippt wurde (sonst bleiben die neuen Eingaben stehen)
+      DATA.settings = r.settings;
+      if (AENDERUNGEN === aenderungenVorher) fillSettings();
+    } else {
+      DATA.settings = { ...DATA.settings, ...patch, colors: structuredClone(colors), coupons: structuredClone(coupons), aktionen: structuredClone(aktionen) };
+      delete DATA.settings.couponsLoeschen;
+    }
     renderCoupons();
-    setDirty(false);
+    if (AENDERUNGEN === aenderungenVorher) setDirty(false);
+    if ($('#reload-btn')) $('#reload-btn').hidden = true;
     const run = akLaufende(aktionen);
     toast(run.length > 1 ? `Einstellungen gespeichert — ${run.length} Aktionen laufen jetzt im Shop (${run.map((a) => `„${a.name}“ −${a.prozent} % ${aktionScopeLabel(a)}`).join(', ')})`
       : run.length ? `Einstellungen gespeichert — Aktion „${run[0].name}“ (−${run[0].prozent} % ${aktionScopeLabel(run[0])}) läuft jetzt im Shop` : 'Einstellungen gespeichert — wirken sofort im Shop', 'ok');
@@ -2148,12 +2368,31 @@ async function saveSettings() {
   } finally { $('#save-btn').disabled = false; }
 }
 
+/** 409 beim Speichern: Einstellungen wurden inzwischen anderswo gespeichert — Eingaben bleiben, „↻ Neu laden“ holt den neuen Stand */
+function einstellungenKonflikt(r) {
+  toast(r.error || 'Inzwischen geändert – bitte neu laden', 'err', 8000);
+  $('#save-state').textContent = 'Inzwischen geändert – bitte neu laden';
+  $('#save-state').classList.add('dirty');
+  if ($('#reload-btn')) $('#reload-btn').hidden = false;
+}
+async function einstellungenNeuLaden() {
+  if (dirty && !confirm('Neu laden zeigt die inzwischen gespeicherten Einstellungen – deine ungespeicherten Änderungen hier gehen dabei verloren. Neu laden?')) return;
+  setDirty(false);
+  try { await aktualisieren(); } catch (e) { if (e?.message !== 'auth') toast(e?.message || 'Laden fehlgeschlagen', 'err', 6000); return; }
+  toast('Einstellungen neu geladen', 'ok');
+}
+
 // ---------------------------------------------------------------------------
 // Export & Backup
 // ---------------------------------------------------------------------------
+// Dateien nur speichern, wenn der Server wirklich geliefert hat — sonst lag eine Fehlerseite als „Backup“ im Download-Ordner
 async function downloadCSV() {
-  const r = await fetch('/api/admin/orders.csv', { headers: { 'x-admin-key': KEY() } });
-  if (r.status === 401) return showLogin();
+  let r;
+  try { r = await fetch('/api/admin/orders.csv', { headers: { 'x-admin-key': KEY() } }); } catch {
+    return toast(`${KEINE_VERBINDUNG} – CSV nicht erstellt, keine Datei gespeichert.`, 'err', 6000);
+  }
+  if (r.status === 401) { setKey(''); return showLogin('auth'); }
+  if (!r.ok || !/text\/csv/i.test(r.headers.get('content-type') || '')) return toast(`CSV-Export fehlgeschlagen (${r.status}) – keine Datei gespeichert.`, 'err', 6000);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(await r.blob());
   a.download = 'formsam-bestellungen.csv';
@@ -2162,6 +2401,7 @@ async function downloadCSV() {
 }
 async function downloadBackup() {
   const data = await api('/api/admin/export');
+  if (!data || data.ok === false || !Array.isArray(data.orders)) return toast(`Backup fehlgeschlagen, keine Datei gespeichert: ${data?.error || 'unerwartete Antwort vom Server'}`, 'err', 6000);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
   a.download = `formsam-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -2173,9 +2413,11 @@ async function downloadBackup() {
 // Start, Tastatur, Routing
 // ---------------------------------------------------------------------------
 async function load() {
-  const d = await api('/api/admin/data');
-  if (!d.ok) throw new Error('auth');
+  const d = await api('/api/admin/data');   // 401 → api() wirft 'auth'
+  if (!d.ok) throw new Error(d.error || 'Laden fehlgeschlagen');   // z. B. keine Verbindung — nicht „Falsches Passwort“
   DATA = d;
+  GELADEN_AM = Date.now();
+  sortiereBestellungen();
   DATA.statuses ||= ['neu', 'bezahlt', 'im-druck', 'gedruckt', 'versendet', 'abgeschlossen', 'storniert'];
   try { USERS = (await api('/api/admin/users')).users || []; } catch { USERS = []; }
   $('#login').hidden = true;
@@ -2246,5 +2488,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pane && pane !== PANE) show(pane);
     if (id && id !== CUR) openOrder(id); else if (!id && CUR) closeOrder();
   });
-  load().catch(() => showLogin());
+  // Zurück im Tab (Handy entsperrt, anderer Tab war vorn): nach einer Minute selbst nachladen — ungespeicherte Eingaben bleiben
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !DATA || $('#app').hidden || Date.now() - GELADEN_AM < 60e3) return;
+    aktualisieren().catch(() => { /* 401 → Anmeldung (api); keine Verbindung → beim nächsten Mal */ });
+  });
+  load().catch((e) => showLogin(e?.message));
 });
