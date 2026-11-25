@@ -614,6 +614,8 @@ check('Satz: Tabellen (Spaltenbreiten aus Inhalt, nowrap, colspan, vertical-alig
   eq([ye.ay + ye.h, yd.ay - f('#d').ay], [f('#e').ay + f('#e').h, 0], 'bottom: unten in der Zeile; die höchste Zelle bestimmt die Zeile');
   ok(f('#t').kids[0].segs.some((s) => s.h === 2), 'colspan-Zelle: 2px-Kante oben');
   ok(f('#s').w < 200, 'Tabelle ohne Breite schrumpft auf ihren Inhalt');
+  const q = layoutDocument(small('<table style="width:500px;border-collapse:collapse"><tr><th id="p" style="width:32%;padding:0">Begriff</th><td id="q" style="padding:0">Erklärung</td></tr></table>'));
+  eq([fragOf(q, '#p').w, fragOf(q, '#q').w], [160, 340], 'Prozentbreite einer Spalte (32 % von 500 px)');
 });
 check('Satz: Flex (space-between, gap, Schrumpfen bis min-width, flex:1, Spalte)', () => {
   const lay = layoutDocument(small('<div id="r" style="display:flex;justify-content:space-between;gap:20px"><div id="r1">links</div><div id="r2">rechts</div></div>'
