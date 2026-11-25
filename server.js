@@ -2497,7 +2497,7 @@ function druckzettelHTML(order) {
       <td class="c big">${l.qty}×</td>
       <td><b>${l.product === 'vase' ? 'Vase' : 'Eierbecher'} „${esc(PRESET_LABELS[c.preset] || c.preset || '')}“</b>${l.saucer ? '<br>+ Untersetzer' : ''}
         <br><small>Pos. ${i + 1}${l.code ? ` · Code ${esc(l.code)}` : ''}</small></td>
-      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}</td>
+      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}${c.pattern === 'skelett' ? '<br><small>Voronoi: Brücken und Stützen im Slicer prüfen</small>' : ''}</td>
       <td><span class="sw" style="background:${esc(bodyHex)}"></span> ${esc(bodyName)}${finish ? `<br><small>${finish}</small>` : ''}</td>
       <td>${gravur}</td>
       <td class="file">${file}</td>
