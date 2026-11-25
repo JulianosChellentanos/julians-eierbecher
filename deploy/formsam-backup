@@ -1,10 +1,37 @@
 #!/usr/bin/env bash
 # formsam — tägliche Sicherung von Einstellungen, Bestellungen, Konten und Galerie (14 Tage aufbewahrt).
-# Liegt unter /usr/local/sbin/formsam-backup, läuft per /etc/cron.d/formsam-backup um 3:15 Uhr.
-set -euo pipefail
-ZIEL=/var/backups/formsam
-mkdir -p "$ZIEL"
-chmod 700 "$ZIEL"
-STAMP=$(date +%F-%H%M)
-tar -C /srv/formsam -czf "$ZIEL/formsam-$STAMP.tar.gz" data orders public/img/gallery 2>/dev/null
-find "$ZIEL" -name 'formsam-*.tar.gz' -mtime +14 -delete
+# Liegt unter /usr/local/sbin/formsam-backup, läuft per /etc/cron.d/formsam-backup um 3:15 Uhr; deploy/prod-update.sh ruft es
+# vor jedem Update auf (und spielt eine geänderte Fassung aus dem Repository selbst ein).
+# Fehler sind sichtbar: Meldung auf stderr (cron verschickt sie, wenn ein Mailer eingerichtet ist) und im Journal
+# (journalctl -t formsam-backup), Exit-Code:
+#   0 = Sicherung fertig und geprüft (hat sich beim Packen eine Datei geändert, steht eine Warnung im Journal)
+#   1 = keine brauchbare Sicherung (tar-Fehler, Platte voll, Archiv defekt) — das Update bricht dann ab
+# Das Archiv entsteht erst unter *.unfertig und wird nach der Prüfung umbenannt: eine abgebrochene Sicherung sieht nie fertig aus.
+# Wiederherstellen: README → „Wiederherstellung aus der Sicherung“. Für Tests: APP=<ordner> ZIEL=<ordner> formsam-backup
+set -uo pipefail
+APP=${APP:-/srv/formsam}
+ZIEL=${ZIEL:-/var/backups/formsam}
+TAGE=14
+TMP=''
+info() { logger -t formsam-backup -- "$*" 2>/dev/null || true; [ -t 1 ] && echo "formsam-backup: $*"; return 0; }
+warnung() { echo "formsam-backup: $*" >&2; logger -t formsam-backup -p user.warning -- "$*" 2>/dev/null || true; }
+fehler() { echo "formsam-backup: FEHLER: $*" >&2; logger -t formsam-backup -p user.err -- "FEHLER: $*" 2>/dev/null || true; [ -n "$TMP" ] && rm -f "$TMP"; exit 1; }
+
+mkdir -p "$ZIEL" && chmod 700 "$ZIEL" || fehler "Zielordner $ZIEL lässt sich nicht anlegen"
+DATEI="$ZIEL/formsam-$(date +%F-%H%M).tar.gz"
+TMP="$DATEI.unfertig"
+# GNU tar: Exit 1 = eine Datei hat sich während des Lesens geändert (Archiv trotzdem vollständig, z. B. Mail-Protokoll) → Warnung;
+# Exit 2 = echter Fehler (Datei fehlt, nicht lesbar, Platte voll) → keine Sicherung
+tar -C "$APP" -czf "$TMP" data orders public/img/gallery
+RC=$?
+[ "$RC" -ge 2 ] && fehler "tar brach mit Exit $RC ab – keine Sicherung erstellt"
+[ "$RC" -eq 1 ] && warnung "Warnung: Dateien haben sich während der Sicherung geändert (Archiv trotzdem erstellt)"
+gzip -t "$TMP" 2>/dev/null || fehler "Archiv $TMP ist defekt"
+mv -f "$TMP" "$DATEI" || fehler "Archiv konnte nicht umbenannt werden"
+TMP=''
+# Aufräumen: nach 14 Tagen weg. Grenze 13,5 Tage, damit beim täglichen Lauf genau die Sicherung von vor 14 Tagen fällt
+# (mit -mtime +14 blieben Sicherungen bis zu 16 Tage liegen); übrig gebliebene *.unfertig-Dateien nach 2 Stunden
+find "$ZIEL" -name 'formsam-*.tar.gz' -mmin +$(( (TAGE * 24 - 12) * 60 )) -delete || warnung "Warnung: alte Sicherungen ließen sich nicht löschen"
+find "$ZIEL" -name 'formsam-*.tar.gz.unfertig' -mmin +120 -delete 2>/dev/null || true
+info "Sicherung fertig: $DATEI ($(du -h "$DATEI" | cut -f1))"
+exit 0

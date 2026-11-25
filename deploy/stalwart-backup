@@ -4,14 +4,23 @@
 # RocksDB lässt sich laut Stalwart-Doku nur angehalten konsistent kopieren → Dienst kurz stoppen (wenige Sekunden;
 # einliefernde Mailserver versuchen es dann einfach erneut). apps/ wird beim Start neu entpackt und fehlt deshalb.
 # Wiederherstellen: systemctl stop stalwart; tar -C / -xzf <Sicherung>; systemctl start stalwart
+# Fehler: Meldung auf stderr und im Journal (journalctl -t stalwart-backup), Exit-Code ≠ 0; Stalwart startet in jedem Fall wieder.
 set -euo pipefail
 ZIEL=/var/backups/stalwart
 mkdir -p "$ZIEL"
 chmod 700 "$ZIEL"
 STAMP=$(date +%F-%H%M)
-trap 'systemctl start stalwart' EXIT
+fehlgeschlagen() {
+  echo "stalwart-backup: FEHLER: Sicherung fehlgeschlagen" >&2
+  logger -t stalwart-backup -p user.err -- "FEHLER: Sicherung fehlgeschlagen" 2>/dev/null || true
+  rm -f "$ZIEL/stalwart-$STAMP.tar.gz"
+  systemctl start stalwart
+}
+trap fehlgeschlagen EXIT
 systemctl stop stalwart
 tar -C / --exclude=var/lib/stalwart/apps -czf "$ZIEL/stalwart-$STAMP.tar.gz" var/lib/stalwart etc/stalwart
-systemctl start stalwart
 trap - EXIT
-find "$ZIEL" -name 'stalwart-*.tar.gz' -mtime +14 -delete
+systemctl start stalwart
+# nach 14 Tagen weg (Grenze 13,5 Tage, damit beim täglichen Lauf genau die Sicherung von vor 14 Tagen fällt — wie formsam-backup)
+find "$ZIEL" -name 'stalwart-*.tar.gz' -mmin +$(( (14 * 24 - 12) * 60 )) -delete
+logger -t stalwart-backup -- "Sicherung fertig: $ZIEL/stalwart-$STAMP.tar.gz" 2>/dev/null || true
