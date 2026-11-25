@@ -157,7 +157,7 @@
  @keyframes m-rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
  @keyframes m-fade{from{opacity:0}}
  body.m-home .m-dots,body.m-home .cover-kicker,body.m-home #hero-headline,body.m-home .hero-side>*{animation:m-rise .6s cubic-bezier(.22,1,.36,1) both;animation-delay:calc(var(--i,0)*60ms)}
- body.m-home .form-world:not(.ready) .hero-fallback{animation:m-fade .4s ease both}
+ body.m-home .form-world:not(.ready) .hero-fallback.m-fade-in{animation:m-fade .4s ease both} /* nur, wenn das Poster beim Aufbau noch lud (mobile-home.js) — ein geladenes Poster bleibt sichtbar */
  /* --- Scroll-Reveal (nur Zweitrang-Kacheln, nie von 0, früh und kurz; IO rootMargin 160 px) --- */
  .m-reveal{opacity:.55;transform:translateY(16px);transition:opacity .35s,transform .35s cubic-bezier(.22,1,.36,1);transition-delay:var(--d,0ms)}
  .m-reveal.visible{opacity:1;transform:none}
@@ -369,4 +369,15 @@
  /* Versandhinweis am Preis (§ 6 PAngV): Pille und Inline-Knopf als leiser Zusatz, Hero-Preiszeile mit Link zur Versandseite */
  .m-cta-price .m-cta-ship,.m-inline-cta .m-cta-ship{font:400 10px var(--sans);opacity:.75;margin-left:5px;letter-spacing:0}
  .m-hero-price small a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+ /* ===== Prüfung 11/2026 ===== */
+ /* Muster-/Verlaufsknöpfe: 11 px mit Umbruch statt 9 px (360–480 px: „Fjordwelle · Neu“ ragte über den Rand) */
+ @media(max-width:480px){.panel .pattern-btn,.panel .flow-btn{font-size:11px!important;line-height:1.2;white-space:normal}}
+ /* Gravur-Stile: auf sehr schmalen Handys drei je Reihe statt fünf 50-px-Chips („Gehämmert“, „Farbschrift +2 €“ ragten hinaus) */
+ @media(max-width:400px){.style-row{flex-wrap:wrap}.style-row .style-chip{flex:0 0 calc((100% - 12px) / 3)}}
+ /* Tippflächen: „zzgl. Versand“ in der Preisleiste (Text 12 px hoch) mit größerer Trefferfläche, Bestellknopf der Kasse lesbar groß */
+ .mobile-bar #mb-ship{overflow:visible}.mb-ship a{position:relative}.mb-ship a::after{content:'';position:absolute;left:-8px;right:-8px;top:-4px;bottom:-18px} /* nach unten (Leistenrand) statt nach oben: darüber kann während einer Aktion ein Knopf stehen */
+ #co-submit{font-size:15px}
+ /* Kapsel gehört zur laufenden 3D-Bühne: solange sie unsichtbar ist (Poster-Modus bei schwachem Gerät/reduzierter Bewegung, vor dem
+    3D-Start), ist sie auch nicht antippbar oder fokussierbar — vorher öffnete ein Tipp ins Poster das Sheet „Twist“ */
+ .form-world:not(.ready) .world-caption{visibility:hidden;pointer-events:none}
 }
