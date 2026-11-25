@@ -3,10 +3,10 @@
 //      public/js/geometry.js und den Reglern in public/index.html
 //   B) eigene Server-Instanz (Port 4545–4549 bzw. TEST_PORT — außerhalb der Prüf-Sandboxen 4491–4539, Daten unter tmp-tests/test-eingaben-<pid>, Mail aus, wird danach gelöscht):
 //      400/404/405/413 statt 500 oder Verbindungsabbruch, Schutz-Kopfzeilen, 404-Seite, Pfadprüfung, Konto-, Design- und
-//      Kassenprüfung, Vorschaubilder, Dateirechte, eine vollständige Vorkasse-Bestellung
+//      Kassenprüfung, Vorschaubilder (inkl. Zurücksetzen durch den Admin), Dateirechte (neu und Bestandsordner), eine vollständige Vorkasse-Bestellung
 // Aufruf: node tools/test-eingaben.mjs   → Exit 0 = alles bestanden, 1 = Fehler
 import { spawn } from 'node:child_process';
-import { mkdirSync, rmSync, statSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdirSync, rmSync, statSync, readFileSync, existsSync, readdirSync, writeFileSync, chmodSync } from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
 import path from 'node:path';
@@ -128,7 +128,10 @@ if (!PORT) { console.log('✗ kein freier Port (4545–4549 bzw. TEST_PORT)'); p
 const DIR = path.join(ROOT, 'tmp-tests', `test-eingaben-${process.pid}`);
 rmSync(DIR, { recursive: true, force: true });
 mkdirSync(DIR, { recursive: true });
-const DATA = path.join(DIR, 'data'), ORDERS = path.join(DIR, 'orders');   // legt der Server selbst an (Rechte aus seiner umask)
+const DATA = path.join(DIR, 'data'), ORDERS = path.join(DIR, 'orders');   // orders/ legt der Server selbst an (Rechte aus seiner umask)
+// data/ wie auf einer Installation von vor der umask: Ordner 0755 mit einer alten Datei 0644 — der Start schränkt nur den Ordner ein
+mkdirSync(DATA); chmodSync(DATA, 0o755);
+writeFileSync(path.join(DATA, 'alt-bestand.json'), '{}'); chmodSync(path.join(DATA, 'alt-bestand.json'), 0o644);
 const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS }, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
 srv.stdout.on('data', (c) => { log += c; }); srv.stderr.on('data', (c) => { log += c; });
@@ -321,7 +324,7 @@ for (const [lbl, it] of [['Höhe 5000', { config: { height: 5000 } }], ['Muster 
   check(beleg.status === 200 && beleg.h['referrer-policy'] === 'no-referrer' && beleg.h['x-content-type-options'] === 'nosniff', 'Rechnung: Referrer-Policy no-referrer bleibt, nosniff dazu');
   check((await req('GET', `/orders/${orderId}/rechnung.html`, null, { accept: 'text/html' })).status === 404, 'Rechnung ohne Schlüssel weiter 404');
 
-  console.log('B8 Dateirechte (umask 077)');
+  console.log('B8 Dateirechte (umask 077, Bestandsordner beim Start 0700)');
   const modus = (p) => (statSync(p).mode & 0o777).toString(8);
   const dateien = [DATA, path.join(DATA, 'settings.json'), path.join(DATA, 'users.json'), path.join(DATA, 'sessions.json'), path.join(DATA, 'designs.json'),
     path.join(DATA, 'thumbs'), path.join(DATA, 'thumbs', readdirSync(path.join(DATA, 'thumbs'))[0]), ORDERS, path.join(ORDERS, orderId),
@@ -330,6 +333,8 @@ for (const [lbl, it] of [['Höhe 5000', { config: { height: 5000 } }], ['Muster 
     const m = existsSync(f) ? modus(f) : '-';
     check(m === (statSync(f).isDirectory() ? '700' : '600'), `${path.relative(DIR, f)}: ${m}`);
   }
+  check(modus(path.join(DATA, 'alt-bestand.json')) === '644', 'alte Datei unverändert (kein rekursives chmod), erreichbar nur über den 0700-Ordner');
+  check(/Dateirechte: .*data nur noch für den Dienst-Benutzer \(vorher 755, jetzt 700\)/.test(log), 'Protokoll nennt den eingeschränkten Bestandsordner');
 }
 check(!/Serverfehler|TypeError|SyntaxError/.test(log), 'kein Serverfehler im Protokoll', log.split('\n').filter((l) => /Error/.test(l)).slice(0, 3));
 

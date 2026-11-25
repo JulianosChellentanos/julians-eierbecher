@@ -12,6 +12,7 @@ import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
   widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse } from './lib/mail-templates.js';
 import { isEmail, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
+import { chmodSync } from 'node:fs';   // Dateirechte der Bestandsordner (unten bei process.umask)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -23,8 +24,21 @@ const PORT = process.env.PORT || 4488;
 const HOST = process.env.HOST || '0.0.0.0';
 const SERVER_STARTED = new Date().toISOString();
 // Dateirechte: alles, was der Shop anlegt (data/: Einstellungen mit Passwörtern, Konten, Sitzungen; orders/: Kundendaten), nur für
-// den Dienst-Benutzer — Dateien 0600, Ordner 0700. Bestehende Dateien bleiben, wie sie sind (README: einmal chmod)
+// den Dienst-Benutzer — Dateien 0600, Ordner 0700.
 process.umask(0o077);
+// Bestand (Installationen von vor der umask): nur die Ordner data/, data/thumbs und orders/ selbst auf 0700 — die Dateien darin
+// bleiben unverändert (kein rekursives chmod), sind für andere Benutzer aber nicht mehr erreichbar. Fehlt ein Ordner, legt der
+// Shop ihn später ohnehin mit 0700 an; lässt er sich nicht ändern (anderer Eigentümer), steht ein Hinweis im Protokoll.
+for (const dir of [DATA, path.join(DATA, 'thumbs'), ORDERS]) {
+  try {
+    const st = statSync(dir);
+    if (!st.isDirectory() || !(st.mode & 0o077)) continue;
+    chmodSync(dir, st.mode & 0o700);
+    console.log(`Dateirechte: ${dir} nur noch für den Dienst-Benutzer (vorher ${(st.mode & 0o777).toString(8)}, jetzt ${(st.mode & 0o700).toString(8)})`);
+  } catch (err) {
+    if (err?.code !== 'ENOENT') console.error(`Dateirechte: ${dir} ließ sich nicht einschränken (${err?.code || err?.message}) — bitte von Hand: chmod 700 ${dir}`);
+  }
+}
 const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
 const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
 

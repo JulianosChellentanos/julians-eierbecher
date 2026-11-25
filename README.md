@@ -141,7 +141,9 @@ Mail-Versand aus und leert die PayPal-Zugangsdaten — sonst verschickt die Test
 - **Ausgabe im Browser**: Namen, Adressen, Notizen, Gravurtexte, Listen- und Farbnamen kommen nur maskiert (`esc`/`textContent`) ins
   HTML; Farbwerte nur geprüft (`#rgb`/`#rrggbb`) in `style`-Attribute.
 - **Dateirechte**: der Shop startet mit `umask 077` (systemd: `UMask=0077`) — neue Dateien in `data/` und `orders/` sind 0600, Ordner
-  0700. Ältere Dateien behalten ihre Rechte; auf einer bestehenden Installation einmal (als root, Pfade anpassen):
+  0700. Beim Start schränkt er außerdem die Ordner `data/`, `data/thumbs` und `orders/` selbst auf 0700 ein (nur diese Ordner, kein
+  rekursives chmod; steht einmal im Protokoll): ältere Dateien darin behalten ihre Rechte, sind für andere Benutzer aber nicht mehr
+  erreichbar. Wer auch die Dateien selbst angleichen will (optional, als root, Pfade anpassen):
   `chmod -R go-rwx /srv/formsam/data /srv/formsam/orders`.
 
 ## Marke & Brand-Assets
