@@ -58,11 +58,11 @@
     },
     {
       "q": "Was ist, wenn mir meine Vase nicht gefällt oder sie beschädigt ankommt?",
-      "a": "Kommt deine Vase beschädigt an, drucke ich sie kostenlos neu – schick mir dafür einfach ein paar Fotos. Weil jede Vase nach deinem Design entsteht, ist ein Widerruf ausgeschlossen; die Details stehen in der <a href=\"/widerruf\">Widerrufsbelehrung</a>. Deine gesetzlichen Gewährleistungsrechte bleiben davon unberührt. Und wenn dir etwas nicht gefällt: Schreib mir, ich schaue mir das an."
+      "a": "Kommt deine Vase beschädigt an, drucke ich sie kostenlos neu – schick mir dafür einfach ein paar Fotos. Weil jede Vase nach deinem Design entsteht, ist ein Widerruf in der Regel ausgeschlossen (§ 312g Abs. 2 Nr. 1 BGB) – ich prüfe aber jeden Widerruf und melde mich bei dir; die Details stehen in der <a href=\"/widerruf\">Widerrufsbelehrung</a>. Deine gesetzlichen Gewährleistungsrechte bleiben davon unberührt. Und wenn dir etwas nicht gefällt: Schreib mir, ich schaue mir das an."
     },
     {
       "q": "Sind die Vasen wasserdicht?",
-      "a": "Meine Vasen sind für Trockenblumen und Gräser gedacht. Ich imprägniere das PLA zusätzlich, sodass es in der Regel wasserfest ist. Eine Wasserdichtigkeit sage ich beim 3D-Druck aber nicht zu. Für frische Blumen empfehle ich ein Glas- oder Kunststoffröhrchen als Einsatz."
+      "a": "Meine Vasen sind für Trockenblumen und Gräser gedacht. Ich imprägniere das PLA zusätzlich, sodass es in der Regel wasserfest ist. Eine Wasserdichtigkeit sage ich beim 3D-Druck aber nicht zu. Für frische Blumen empfehle ich ein Glas- oder Kunststoffröhrchen als Einsatz. Offene Muster (Voronoi) halten kein Wasser – nur mit passendem Einsatz."
     },
     {
       "q": "Gibt es Einschränkungen bei eigenen Formen?",
@@ -143,7 +143,7 @@
   "hinweise": {
     "vase": "🌾 Für Trockenblumen gedacht. Ich imprägniere das PLA, es ist in der Regel wasserfest – eine Wasserdichtigkeit sage ich aber nicht zu. Nicht spülmaschinengeeignet, nicht über 50 °C (heißes Wasser, Heizung, Auto im Sommer).",
     "eigene": "⚖️ Individuelle Form: Du gestaltest frei – für sehr ausgefallene Silhouetten sage ich keine Standfestigkeit zu.",
-    "checkout": "Gedruckt wird erst, wenn du bestellst. Jedes Stück besteht aus PLA, einem Kunststoff auf Pflanzenbasis (z. B. aus Maisstärke oder Zuckerrohr), und wird einzeln für dich gedruckt. Vasen sind für Trockenblumen gedacht (imprägniert, in der Regel wasserfest – eine Wasserdichtigkeit sage ich aber nicht zu). Nicht spülmaschinengeeignet und keinen Temperaturen über 50 °C aussetzen (heißes Wasser, Heizung, Auto im Sommer). Für frei gestaltete Formen sage ich keine Standfestigkeit zu. Deine gesetzlichen Rechte bei Mängeln bleiben unberührt.",
+    "checkout": "Gedruckt wird erst, wenn du bestellst – jedes Stück einzeln für dich. Jede Vase besteht aus PLA, einem Kunststoff auf Pflanzenbasis. Nicht spülmaschinengeeignet und keinen Temperaturen über 50 °C aussetzen (heißes Wasser, Heizung, Auto im Sommer). Vasen sind für Trockenblumen gedacht (imprägniert, in der Regel wasserfest – eine Wasserdichtigkeit sage ich aber nicht zu). Offene Muster (Voronoi) halten kein Wasser – nur mit passendem Einsatz. Für frei gestaltete Formen sage ich keine Standfestigkeit zu. Deine gesetzlichen Rechte bei Mängeln bleiben unberührt.",
     "trust": [
       "🧵 Material: PLA aus Maisstärke oder Zuckerrohr",
       "🖨️ Einzeln gedruckt in Deutschland",

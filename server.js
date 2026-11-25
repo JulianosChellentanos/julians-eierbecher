@@ -6,6 +6,7 @@ import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, r
 import { mkdir, writeFile, readdir, readFile, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { produktHinweise, BESCHAFFENHEIT_FASSUNG } from './lib/produkthinweise.js';
 import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
@@ -1931,9 +1932,7 @@ function invoiceHTML(order) {
   <p class="steuer">${steuerNote}</p>
   <div class="zahlung">${payNote}</div>
   <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${esc(lieferzeitText(settings))}. ${esc(fristBeginnKurz(order.payment))}</p>
-  <p class="klein">Produkthinweise: Alle Artikel bestehen aus PLA, einem Kunststoff auf Pflanzenbasis (nicht spülmaschinengeeignet, keinen Temperaturen über 50 °C aussetzen, z. B. heißes Wasser, Heizung, Auto im Sommer).
-  Vasen sind für Trockenblumen gedacht; das Material wird imprägniert und ist in der Regel wasserfest – eine Wasserdichtigkeit wird aber nicht zugesagt.
-  Bei individuell gestalteten Formen (Formen-Editor) wird keine Standfestigkeit zugesagt.</p>`;
+  <p class="klein">Produkthinweise: ${esc(produktHinweise(order.lines).join(' '))}</p>`;
   return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body });
 }
 
@@ -2541,6 +2540,7 @@ async function handleCheckout(req, res) {
     // Gesonderte Vereinbarung in der Kasse (Wasser/Standfestigkeit, § 476 Abs. 1 Satz 2 BGB): Zeitpunkt als Nachweis — Pflicht
     // (pruefeKasse); bei PayPal der Zeitpunkt vor der Zahlung (/api/paypal/create)
     beschaffenheitBestaetigt: garantie?.beschaffenheitAt || createdAt,
+    beschaffenheitFassung: BESCHAFFENHEIT_FASSUNG,   // Wortlaut des Häkchens: lib/produkthinweise.js BESCHAFFENHEIT_TEXTE[Fassung]
     aktionen: totals.aktionen,   // [{ id, name, prozent, ersparnis, produkte, muster }] je betroffener Aktion (nach Ersparnis absteigend)
     aktion: totals.aktion,       // aktionen[0] | null (Kompatibilität)
     invoiceNo: null, filesComplete: false,
