@@ -551,8 +551,8 @@ function updatePrintBadge(stats, info) {
     cls = 'p-bad'; txt = '🔶 Form kragt stark aus – Silhouette flacher ziehen';
     tip = `Die Grundform hängt bis ${sil.toFixed(0)}° über – im Formen-Editor sanftere Übergänge wählen.`;
   } else if (info.openCells) {
-    cls = 'p-warn'; txt = 'ℹ️ Offene Zellen – Brücken im Slicer prüfen';
-    tip = 'Voronoi hat echte Durchbrüche. Brücken und Stützen vor dem Druck im Slicer prüfen. Für Trockenblumen oder mit passendem Einsatz.';
+    cls = 'p-warn'; txt = 'ℹ️ Offene Zellen – Brücken prüfe ich vorab';
+    tip = 'Voronoi hat echte Durchbrüche. Brücken und Stützen prüfe ich vor dem Druck. Für Trockenblumen oder mit passendem Einsatz.';
   } else if (sil > 50) {
     cls = 'p-warn'; txt = '⚠️ Ausladende Form – ich drucke mit extra Kühlung';
     tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung – druckt mit feinen Schichten sauber.`;
@@ -1011,7 +1011,7 @@ const DEPTH_RANGES = {
 function applyDepthRange(resetToDefault = false) {
   $('#skeleton-note').hidden = state.pattern !== 'skelett';
   $('#skeleton-note').textContent = state.product === 'vase'
-    ? 'Voronoi: offene Zellen mit verbundenen Stegen. Für Trockenblumen oder einen passenden Einsatz. Brücken und Stützen im Slicer prüfen.'
+    ? 'Voronoi: offene Zellen mit verbundenen Stegen. Für Trockenblumen oder einen passenden Einsatz. Brücken und Stützen prüfe ich vor dem Druck.'
     : 'Voronoi als Zellrelief: Die Ei-Mulde bleibt geschlossen. Die Tiefe wird für den Druck begrenzt.';
   const r = ['skelett','koralle'].includes(state.pattern) && state.product === 'eierbecher'
     ? { min: 0.4, max: 1, step: 0.1, def: 1 }

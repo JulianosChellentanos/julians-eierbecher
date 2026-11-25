@@ -981,6 +981,7 @@ section[id] { scroll-margin-top: 72px; }
 .dc-actions .btn { padding: 10px 14px; font-size: 0.85rem; }
 .dc-actions .btn.ok { background: var(--ok, #3a9d5d); color: #fff; border-color: transparent; }
 .dc-link { width: 100%; min-width: 0; font-size: 0.72rem; color: var(--ink-soft); background: transparent; border: none; text-align: center; }
+@media (max-width: 700px) { .dc-link { font-size: 16px; } } /* iOS zoomt beim Antippen in Eingabefelder unter 16 px */
 .dc-enter { display: flex; flex-direction: column; gap: 8px; }
 .dc-enter-label { font-weight: 700; font-size: 0.9rem; }
 .dc-enter-row { display: flex; gap: 8px; }

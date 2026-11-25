@@ -13,6 +13,8 @@ import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
   widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung, passwortGeaendert, ZAHLUNGSFRIST_TAGE } from './lib/mail-templates.js';
 import { isEmail, emailLokalFehler, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
+// Preisregel der Kasse (reine Rechnung ohne DOM) — der Server nimmt sie für den 30-Tage-Bezugspreis der Belege (aktionsBezug)
+import * as preisRegel from './public/js/pricing.js';
 import { chmodSync } from 'node:fs';   // Dateirechte der Bestandsordner (unten bei process.umask)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -685,8 +687,9 @@ async function pwHashStimmt(pw, h, vorrang = false) {
 // Eintrag übernimmt ALLE aktiven Aktionen, auch abgelaufene (und abgelaufene pausierte — ob sie liefen, weiß der Server
 // nicht; im Zweifel zählt der niedrigere Preis), damit frühere Aktionen im 30-Tage-Fenster mitzählen.
 // Aufbewahrt wird alles der letzten 90 Tage + der letzte Eintrag davor (und was die Fenster laufender Aktionen brauchen).
-// Gerechnet wird nur im Client (pricing.js → referenzpreis(), eine Implementierung); /api/pricing liefert unter
-// preisHistorie kompakt die Einträge, die die 30-Tage-Fenster der gerade laufenden Aktionen schneiden.
+// Gerechnet wird nur in pricing.js (referenzpreis(), eine Implementierung): im Browser aus /api/pricing, das unter preisHistorie
+// kompakt die Einträge liefert, die die 30-Tage-Fenster der gerade laufenden Aktionen schneiden — und beim Bestellen im Server
+// mit demselben Modul und demselben Stand (aktionsBezug), damit Rechnung und Mails die Zahlen der Kasse nennen.
 // Individuelle Gutscheine und Mengenrabatte sind keine Preisermäßigung im Sinne von § 11 — der Mengenrabatt zählt nur beim
 // Zeilen-Streichpreis mit (der Vergleich muss dieselbe Menge zum damaligen Preis nehmen).
 // ---------------------------------------------------------------------------
@@ -2008,6 +2011,54 @@ function computeTotals(items, couponCode, { email = null } = {}) {
   const total = Math.max(0, Math.round((subtotal + shipping - (coupon?.off || 0)) * 100) / 100);
   return { lines, subtotal, coupon, couponError, shipping, total, aktion, aktionen };
 }
+/**
+ * § 11 PAngV auf Rechnung und in Mails wie in der Kasse: Die Kasse nennt je Aktionszeile den niedrigsten Preis der letzten 30 Tage
+ * (Streichpreis), die Prozentangabe dazu und je Aktion die Ersparnis gegenüber diesem Bezugspreis — gerechnet von public/js/pricing.js
+ * aus /api/pricing (Preis-Historie). Beim Bestellen rechnet der Server mit genau diesem Modul und demselben Stand nach und hält das
+ * Ergebnis an der Bestellung fest (maßgeblich für Belege und Mails):
+ *   lines[].aktionRef = { preis, prozent, ersparnis } (Zeilen-Bezugspreis, Prozent, Ersparnis) | null (Aktionspreis ohne gültigen
+ *   Bezugspreis — dann nur „Aktionspreis“, ohne Prozent und Ersparnis); nur an Zeilen mit Aktion.
+ *   aktionen[].ersparnisRef (Σ der Zeilen) und aktionen[].prozentOk (Prozentzahl der Aktion stimmt für ihren ganzen Geltungsbereich).
+ * Weicht der Zeilenpreis des Moduls vom Server-Preis ab (darf nicht vorkommen), gilt für die Zeile kein Bezugspreis. Ändert totals.
+ */
+function aktionsBezug(totals) {
+  if (!totals?.lines?.some((l) => l.aktionProzent > 0)) return totals;
+  const laufende = aktiveAktionen();
+  const pr = settings.pricing;
+  // dieselben Felder wie /api/pricing und /api/colors (nur, was die Preisregel liest)
+  preisRegel.setPricing({
+    currency: pr.currency,
+    products: {
+      eierbecher: { single: pr.eierbecher.single, untersetzer: pr.eierbecher.untersetzer, discounts: pr.eierbecher.discounts },
+      vase: { single: pr.vase.single, discounts: pr.vase.discounts },
+    },
+    shipping: pr.shipping, gravur: pr.gravur, muster: pr.muster || {}, farbschrift: pr.farbschrift || 0, volumen: pr.volumen,
+    normalHeight: NORMAL_HEIGHT, produkte: { vase: true, eierbecher: produktAktiv('eierbecher') },
+    aktionen: laufende.map(publicAktion), aktion: publicAktion(laufende[0] || null),
+    serverNow: new Date().toISOString(), preisHistorie: preisHistorieFuer(laufende),
+  });
+  preisRegel.setColors((settings.colors || []).filter((c) => c.active).map(({ id, name, hex, finish, aufpreis }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis) })));
+  const je = new Map();   // Aktions-ID → Σ Ersparnis gegenüber dem Bezugspreis
+  for (const l of totals.lines) {
+    if (!(l.aktionProzent > 0)) continue;
+    let ref = null;
+    try {
+      const lp = preisRegel.linePrice({ product: l.product, qty: l.qty, saucer: l.saucer, config: l.config, color: l.color, colorName: l.colorName });
+      if (Math.abs(lp.line - l.line) < 0.005 && String(lp.aktionId ?? '') === String(l.aktionId ?? '')) {
+        if (lp.lineRef != null && lp.refProzent >= 1) ref = { preis: lp.lineRef, prozent: lp.refProzent, ersparnis: lp.ersparnisRef };
+      } else console.warn(`⚠️  Bezugspreis: Kasse ${lp.line} ≠ Server ${l.line} (${l.product}/${l.config?.pattern}) – Beleg ohne Bezugspreis`);
+    } catch (err) { console.warn('⚠️  Bezugspreis nicht berechenbar:', err?.message || err); }
+    l.aktionRef = ref;
+    if (ref && l.aktionId) je.set(l.aktionId, Math.round(((je.get(l.aktionId) || 0) + ref.ersparnis) * 100) / 100);
+  }
+  const aktiv = preisRegel.aktionenActive();
+  for (const a of totals.aktionen || []) {
+    const ak = aktiv.find((x) => String(x.id) === String(a.id));
+    a.ersparnisRef = je.get(a.id) || 0;
+    a.prozentOk = !!ak && preisRegel.aktionProzentGueltig(ak);
+  }
+  return totals;
+}
 function money(v) {
   return v.toLocaleString('de-DE', { style: 'currency', currency: settings.pricing.currency });
 }
@@ -2525,9 +2576,11 @@ function itemLabel(it, { mitAktion = false, mitAufpreis = true } = {}) {
   const c = it.config || {};
   const sur = surchargeList(it).filter((x) => x.key !== 'gravur').map((x) => x.label);
   const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen', lamellen: 'Lamellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' }[c.pattern] || c.pattern;
+  // Farbschrift: Schriftfarbe mit Namen (an der Bestellung, ältere Bestellungen über die Farbliste) — „3MF, 2 Filamente“ steht nur auf dem Druckzettel
+  const schriftfarbe = c.textStyle === 'farbe' ? (it.textColorName || colorByRef(c.textColor, null)?.name || '') : '';
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${PRESET_LABELS[c.preset] || c.preset || ''}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
-    (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} – 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
+    (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${schriftfarbe ? `, Schriftfarbe ${schriftfarbe}` : ''})` }[c.textStyle] || ''}` : '') +
     (c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${RIM_LABELS[c.rim]}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
     (it.code ? ` · Design-Code ${it.code}` : '') +
@@ -2743,7 +2796,7 @@ function druckzettelHTML(order) {
       <td class="c big">${l.qty}×</td>
       <td><b>${l.product === 'vase' ? 'Vase' : 'Eierbecher'} „${esc(PRESET_LABELS[c.preset] || c.preset || '')}“</b>${l.saucer ? '<br>+ Untersetzer' : ''}
         <br><small>Pos. ${i + 1}${l.code ? ` · Code ${esc(l.code)}` : ''}</small></td>
-      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}</td>
+      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}${c.pattern === 'skelett' ? '<br><small>Voronoi: Brücken und Stützen im Slicer prüfen</small>' : ''}</td>
       <td><span class="sw" style="background:${esc(bodyHex)}"></span> ${esc(bodyName)}${finish ? `<br><small>${finish}</small>` : ''}</td>
       <td>${gravur}</td>
       <td class="file">${file}</td>
@@ -3466,14 +3519,19 @@ function kundeAus(raw) {
  */
 function pruefeKasse(data, { garantie = null } = {}) {
   const customer = kundeAus(data?.customer);
-  if (!customer.name || !isEmail(customer.email) || !customer.street || !customer.zip || !customer.city) {
-    return { status: 400, error: 'Bitte Adresse vollständig ausfüllen', customer };
-  }
+  // Je Feld eine eigene Meldung; feld = Kassenfeld, das die Kasse markiert (ältere Kassen-Tabs zeigen nur die Meldung)
+  const fehlt = (feld, error) => ({ status: 400, error, feld, customer });
+  if (!customer.name) return fehlt('name', 'Bitte gib deinen Namen an.');
+  if (!isEmail(customer.email)) return fehlt('email', 'Bitte gib eine gültige E-Mail-Adresse an (z. B. du@example.de).');
+  if (!customer.street) return fehlt('street', 'Bitte gib Straße und Hausnummer an.');
+  if (!customer.zip) return fehlt('zip', 'Bitte gib deine Postleitzahl an.');
+  if (!customer.city) return fehlt('city', 'Bitte gib deinen Ort an.');
   // Umlaute vor dem @: die Bestätigung käme nie an (lib/eingaben.js emailLokalFehler — derselbe Text wie im Browser)
   const lokal = emailLokalFehler(customer.email);
-  if (lokal) return { status: 400, error: lokal, customer };
-  // PLZ wie das Kassenfeld (pattern [0-9]{4,5}); Zahlart nur Vorkasse oder PayPal (alles andere wäre still als Vorkasse angelegt worden)
-  if (!/^[0-9]{4,5}$/.test(customer.zip)) return { status: 400, error: 'Bitte eine gültige Postleitzahl angeben (4 oder 5 Ziffern).', customer };
+  if (lokal) return fehlt('email', lokal);
+  // PLZ nach dem Liefergebiet wie das Kassenfeld (plzFehler); Zahlart nur Vorkasse oder PayPal (alles andere wäre still als Vorkasse angelegt worden)
+  const plz = plzFehler(customer.zip);
+  if (plz) return fehlt('zip', plz);
   if (data.payment !== undefined && data.payment !== null && !['vorkasse', 'paypal'].includes(data.payment)) {
     return { status: 400, error: 'Unbekannte Zahlungsart – bitte Überweisung (Vorkasse) oder PayPal wählen.', customer };
   }
@@ -3506,7 +3564,20 @@ function pruefeKasse(data, { garantie = null } = {}) {
     const veraltet = !(Number(data.kasseStand) >= 2);
     return { status: 409, code: 'preis', total: totals.total, customer, error: veraltet ? 'Die Kasse ist nicht mehr aktuell – bitte lade die Seite neu und prüf den Betrag.' : `Der Preis hat sich gerade geändert: Gesamt jetzt ${money(totals.total)}. Bitte prüf die Kasse und bestätige noch einmal.` };
   }
-  return { customer, items, totals };
+  // Bezugspreise wie in der Kasse festhalten (Rechnung/Mails) — bei PayPal schon hier in /api/paypal/create, die Garantie behält sie
+  return { customer, items, totals: aktionsBezug(totals) };
+}
+/**
+ * Postleitzahl für Kasse und Konto-Adresse → null oder Meldung. Liefergebiet nur Deutschland (Standard, Admin → Shop-Angaben):
+ * genau 5 Ziffern, nicht mit 00 — eine 4-stellige ist meist eine ostdeutsche PLZ ohne die führende 0 (Hinweis darauf). Steht dort mehr
+ * (z. B. „Deutschland und Österreich“), auch 4 Ziffern. Spiegel im Browser: auth.js plzFehler (derselbe Wortlaut).
+ */
+function plzFehler(zip) {
+  const v = String(zip ?? '').trim();
+  const nurDE = /^deutschland$/i.test(String(settings.shop?.liefergebiet || '').trim() || 'Deutschland');
+  if (nurDE ? /^(?!00)[0-9]{5}$/.test(v) : /^[0-9]{4,5}$/.test(v)) return null;   // deutsche PLZ beginnen nie mit 00
+  if (nurDE && /^[0-9]{4}$/.test(v)) return 'Postleitzahlen in Deutschland haben 5 Ziffern – fehlt vorne eine 0 (z. B. 01067)?';
+  return nurDE ? 'Bitte gib deine Postleitzahl mit 5 Ziffern an – ich liefere nach Deutschland.' : 'Bitte gib eine gültige Postleitzahl an (4 oder 5 Ziffern).';
 }
 /**
  * Automatische Erstattung einer eingezogenen PayPal-Zahlung, zu der die Kasse keine Bestellung anlegen konnte.
@@ -3556,6 +3627,17 @@ async function kasseAbgelehntNachZahlung(res, id, cap, status, body, kunde) {
     ? ' Deine PayPal-Zahlung habe ich deshalb automatisch erstattet – das Geld ist in wenigen Tagen wieder bei dir.'
     : ' Deine PayPal-Zahlung ist bei mir eingegangen – ich melde mich bei dir und erstatte sie.';
   return send(res, status, { ...body, error: `${grund}${zusatz}`, bezahlt: true, erstattet: r.erstattet });
+}
+/**
+ * Checkout mit einer PayPal-Zahlung, die schon einer Bestellung gehört → dieselbe Antwort wie beim ersten Mal, wenn es diese Kasse
+ * ist (Bestellung mit dieser Zahlung, noch nicht abgeschlossen/storniert, gleiche E-Mail-Adresse) — sonst null (→ 400 wie bisher)
+ */
+async function paypalKasseWieder(orderId, ppId, email) {
+  let o;
+  try { o = await readOrder(orderId); } catch { return null; }
+  if (!email || o.paypalOrderId !== ppId || o.completedAt || o.status === 'storniert' || !o.accessKey || String(o.customer?.email || '').toLowerCase() !== email) return null;
+  console.warn(`↩️  PayPal ${ppId}: Checkout wiederholt (Antwort ging verloren) – offene Kasse ${o.orderId} geht weiter`);
+  return { ok: true, orderId: o.orderId, accessKey: o.accessKey, itemCount: o.lines.length, total: o.total, wiederholt: true };
 }
 /** Admin-Hinweise: eingezogene PayPal-Zahlungen der letzten 30 Tage ohne Bestellung und ohne Erstattung (älter als 15 Minuten) */
 function paypalHinweise(now = Date.now()) {
@@ -3916,7 +3998,12 @@ async function handleCheckout(req, res) {
       console.error(`PayPal-Prüfung ${ppId} fehlgeschlagen:`, err?.message || err);
       return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt' });
     }
-    if (paypalCap.usedBy) return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt (bereits einer Bestellung zugeordnet)' });
+    if (paypalCap.usedBy) {
+      // Antwort auf den ersten Checkout verloren (Netz, Proxy beim Neustart): die Kasse fragt mit derselben Zahlung noch einmal →
+      // dieselbe, noch nicht abgeschlossene Bestellung (nur für dieselbe E-Mail-Adresse), weiter mit Upload und Abschluss
+      const wieder = await paypalKasseWieder(paypalCap.usedBy, ppId, kundeAus(data.customer).email);
+      return wieder ? send(res, 200, wieder) : send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt (bereits einer Bestellung zugeordnet)' });
+    }
     if (paypalCap.erstattet) return send(res, 400, { ok: false, error: 'Diese Zahlung wurde bereits erstattet – bitte starte die Kasse neu.' });
     // Preisgarantie: gleicher Warenkorb + Gutschein wie bei „Jetzt kaufen“ und genau der damals berechnete Betrag eingezogen
     const pend = paypalPending.get(ppId);
@@ -3924,7 +4011,7 @@ async function handleCheckout(req, res) {
   }
   const k = pruefeKasse(data, { garantie });
   if (k.error) {
-    const body = { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) };
+    const body = { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.feld ? { feld: k.feld } : {}) };
     return paypalCap ? kasseAbgelehntNachZahlung(res, ppId, paypalCap, k.status, body, k.customer) : send(res, k.status, body);
   }
   const { customer, totals } = k;
@@ -3971,6 +4058,10 @@ async function handleCheckout(req, res) {
       // Aktion: uvp = Normalpreis (Preis vor der Aktion, Feldname historisch), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
       // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
       uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName ?? null, aktionId: l.aktionId ?? null,
+      // Bezugspreis wie in der Kasse (aktionsBezug) — Rechnung und Mails nennen Prozent/Ersparnis nur damit
+      ...(l.aktionProzent > 0 && l.aktionRef !== undefined ? { aktionRef: l.aktionRef } : {}),
+      // Farbschrift: Name der Schriftfarbe zum Bestellzeitpunkt (Rechnung, Mails, Admin — nicht die interne Kennung)
+      ...(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe' ? { textColorName: colorByRef(l.config.textColor, null)?.name || null } : {}),
       // Farbschrift (zweites Filament) kommt als 3MF mit zwei Teilen, sonst STL
       stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
@@ -4132,7 +4223,7 @@ async function handleComplete(req, res, id, url) {
     try { order = await readOrder(id); } catch { order = null; }
     const z = orderZugriff(req, url, order, kasseOffen);
     if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
-    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoicePdfUrl: orderFileUrl(order, 'rechnung.pdf'), invoiceNo: order.invoiceNo });
+    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoicePdfUrl: orderFileUrl(order, 'rechnung.pdf'), invoiceNo: order.invoiceNo, ...dankeAngaben(order) });
     // Guthaben (Reservierung einer offenen Kasse gilt nur GUTHABEN_RESERVIERUNG_MS) bzw. Gutschein mit Höchstzahl (eigene parallele
     // Kassen zählen beim Anlegen nicht mit): inzwischen anderweitig eingelöst → nicht abschließen (keine Rechnung), als abgebrochen
     // stornieren. Geprüft hier (früh, ohne Upload-Prüfung) und noch einmal unmittelbar vor der Rechnungsnummer (siehe unten).
@@ -4172,8 +4263,24 @@ async function handleComplete(req, res, id, url) {
   } finally { release(); }
   console.log(`📦 Bestellung ${id} – ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
   // invoicePdfUrl: PDF-Fassung (entsteht beim ersten Abruf bzw. mit der Bestätigungsmail; scheitert sie → Weiterleitung auf die HTML-Fassung)
-  send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoicePdfUrl: orderFileUrl(order, 'rechnung.pdf'), invoiceNo: order.invoiceNo });
+  send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoicePdfUrl: orderFileUrl(order, 'rechnung.pdf'), invoiceNo: order.invoiceNo, ...dankeAngaben(order) });
   await runHook('orderCompleted', order);
+}
+/**
+ * Angaben für die Danke-Ansicht der Kasse (Antwort von /complete, nur mit dem Schlüssel der Bestellung): zuZahlen (= order.total),
+ * gesamtbetrag (mit Guthaben-Anteil, wie auf der Rechnung) und bei offener Vorkasse die Bankverbindung mit Verwendungszweck
+ * (Bestellnummer) aus denselben Einstellungen wie die Rechnung. Ältere Kassen-Tabs lesen die Felder nicht.
+ */
+function dankeAngaben(order) {
+  const zuZahlen = euro(order.total);
+  const guth = guthabenDerBestellung(order);
+  const out = { zuZahlen, gesamtbetrag: guth ? Math.round((zuZahlen + guth.off) * 100) / 100 : zuZahlen, zahlungsfristTage: ZAHLUNGSFRIST_TAGE };
+  if (order.payment !== 'paypal' && zuZahlen > 0 && order.paymentStatus !== 'bezahlt') {
+    const co = settings.company || {};
+    const bank = { empfaenger: co.owner || co.name || '', iban: co.iban || '', bic: co.bic || '', bank: co.bank || '', verwendungszweck: order.orderId };
+    if (String(bank.iban).trim()) out.bank = bank;
+  }
+  return out;
 }
 
 // Admin-Seite: /admin liefert public/admin.html wie eine statische Datei (Login clientseitig, API mit x-admin-key)
@@ -4400,6 +4507,8 @@ const server = http.createServer(async (req, res) => {
             stornoPdfUrl: o.storno?.nr && links ? orderFileUrl(o, 'storno.pdf') : null,
             paidAt: o.paidAt || null, shippedAt: o.shippedAt || null,
             pieces: (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
+            // eingegangene Widerrufe (Widerrufsfunktion, E-Mail passte) — nur Referenz und Zeitpunkt
+            widerrufe: (Array.isArray(o.widerrufe) ? o.widerrufe : []).filter((w) => w && w.ref).map((w) => ({ ref: String(w.ref), at: w.at || null })),
             reklamation: r ? {   // ohne IBAN/Grund/Notiz
               ...publicRekla(r), gutscheinCode: links ? (r.gutscheinCode || '') : '', gutscheinPerMail: !links && !!r.gutscheinCode,
               gutschriftUrl: r.gutschriftNo && links ? orderFileUrl(o, 'gutschrift.html') : null,
@@ -4418,6 +4527,12 @@ const server = http.createServer(async (req, res) => {
       if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const { address, error } = kontoAdresse(await readJson(req, 16 * 1024));   // nur Text: Straße ≤ 120, PLZ ≤ 10, Ort ≤ 80
       if (error) return send(res, 400, { ok: false, error });
+      // wie die Kasse (sie übernimmt die Adresse): alle drei Felder oder keines (Adresse entfernen), PLZ nach dem Liefergebiet
+      const { street, zip, city } = address;
+      if ((street || zip || city) && !(street && zip && city)) {
+        return send(res, 400, { ok: false, feld: !street ? 'street' : !zip ? 'zip' : 'city', error: 'Bitte Straße, PLZ und Ort vollständig angeben – oder alle drei Felder leeren, um die Adresse zu entfernen.' });
+      }
+      if (zip && plzFehler(zip)) return send(res, 400, { ok: false, feld: 'zip', error: plzFehler(zip) });
       u.address = address;
       await saveUsers();
       return send(res, 200, { ok: true });
@@ -4702,6 +4817,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PUT' && mUp) return await handleStlUpload(req, res, mUp[1], mUp[2], url);
     const mDone = p.match(/^\/api\/order\/([A-Z0-9-]+)\/complete$/);
     if (req.method === 'POST' && mDone) return await handleComplete(req, res, mDone[1], url);
+    // Kasse nach einem Abschluss ohne Antwort (Netz/Proxy): ist die Bestellung schon abgeschlossen? Nur mit Schlüssel, ändert nichts;
+    // ein gerade laufender Abschluss wird abgewartet (Sperre der Bestellung) — sonst entstünde nach einer Änderung eine zweite
+    const mStand = p.match(/^\/api\/order\/([A-Z0-9-]+)\/stand$/);
+    if (req.method === 'GET' && mStand) {
+      let order = null;
+      if (ORDER_ID_RE.test(mStand[1])) { const release = await lockOrder(mStand[1]); try { order = await readOrder(mStand[1]); } catch { order = null; } finally { release(); } }
+      const z = orderZugriff(req, url, order, kasseOffen);
+      if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
+      return send(res, 200, { ok: true, abgeschlossen: !!order.completedAt, storniert: order.status === 'storniert' });
+    }
 
     // --- PayPal
     if (req.method === 'POST' && p === '/api/paypal/create') {
@@ -4711,7 +4836,7 @@ const server = http.createServer(async (req, res) => {
       // Vor der Zahlung genau die Prüfungen des Checkouts (Adresse, 1–20 Positionen, Sperren, Vereinbarung, Gutschein, angezeigter
       // Betrag) — sonst wäre bezahlt, die Bestellung aber abgelehnt
       const k = pruefeKasse(data);
-      if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) });
+      if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.feld ? { feld: k.feld } : {}) });
       if (forgotLimited(`kasse:${clientIp(req)}`, KASSE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());   // wie /api/checkout
       const t = k.totals;
       // 0 € (Gutschein/Guthaben deckt alles): PayPal nimmt keine Zahlung über 0,00 € an — die Kasse bestellt dann ohne Zahlung
