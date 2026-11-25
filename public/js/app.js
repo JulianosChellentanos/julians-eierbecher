@@ -235,13 +235,14 @@ function renderPrices() {
   ].filter(Boolean);
   animateMoney($('#price'), total, fmt);
   animateMoney($('#mb-price'), total, fmt);
+  animateMoney($('#cta-mini-price'), total, fmt); // kompakte Desktop-Leiste: nur der aktuelle Preis (ohne Streichpreis/Badge)
   // Versand (und bei Kleinunternehmern die USt.) direkt am Preis, vor „In den Warenkorb“ (§ 6 PAngV) — lang im Konfigurator,
   // kurz „zzgl. Versand“ in der Handy-Leiste (der Link führt zu den Beträgen)
   const shipEl = $('#price-ship'), mbShip = $('#mb-ship'), ust = ustText();
   const shipHTML = [ust, versandHTML()].filter(Boolean).join(' · ');
   if (shipEl && shipEl.innerHTML !== shipHTML) shipEl.innerHTML = shipHTML;
   const mbShipHTML = versandHTML({ kurz: true });
-  if (mbShip && mbShip.innerHTML !== mbShipHTML) mbShip.innerHTML = mbShipHTML;
+  for (const el of [mbShip, $('#cta-mini-ship')]) if (el && el.innerHTML !== mbShipHTML) el.innerHTML = mbShipHTML;
   // Aktion mit Bezugspreis: Aktionspreis in Akzentfarbe, 30-Tage-Tiefstpreis durchgestrichen daneben, Badge „−16 %“ (bezogen
   // auf den Tiefstpreis), Zeile „Aktionspreis · endet in …“ und darunter die Kennzeichnung „Niedrigster Preis der letzten 30 Tage: …“
   $('#price').classList.toggle('aktion', !!ref);
@@ -954,12 +955,32 @@ function initBedienhilfen() {
   }
 }
 
-/** Desktop: Preis/Warenkorb haften unten im Panel (configurator-studio.css) — per Tastatur angesteuerte Regler sollen nicht dahinter landen */
+/**
+ * Desktop: kompakte Preisleiste unten im Panel (#cta-mini, configurator-studio.css), solange Preis oder „In den Warenkorb“ des
+ * Preisbereichs nicht ganz im Panel zu sehen sind; ihr Knopf löst denselben Kauf aus. Ausgeblendet ist sie inert (kein Fokus, nicht
+ * vorgelesen). scroll-padding-bottom hält per Tastatur angesteuerte Regler über ihr.
+ */
 function initPanelCta() {
-  const panel = $('#konfigurator .panel'), cta = $('.panel-cta');
-  if (!panel || !cta || !('ResizeObserver' in window)) return;
+  const panel = $('#konfigurator .panel'), mini = $('#cta-mini'), preis = $('#price'), kauf = $('#btn-order');
+  if (!panel || !mini || !preis || !kauf) return;
+  $('#cta-mini-order')?.addEventListener('click', () => kauf.click());
   const desk = matchMedia('(min-width: 981px)');
-  new ResizeObserver(() => { panel.style.scrollPaddingBottom = desk.matches && cta.offsetHeight ? `${cta.offsetHeight + 8}px` : ''; }).observe(cta);
+  const sichtbar = new Map([[preis, false], [kauf, false]]);
+  const setze = () => {
+    const an = desk.matches && [...sichtbar.values()].includes(false);
+    mini.classList.toggle('an', an);
+    mini.inert = !an; mini.setAttribute('aria-hidden', String(!an));
+    const h = $('.cta-mini-in', mini)?.offsetHeight || 0;
+    panel.style.scrollPaddingBottom = desk.matches && h ? `${h + 8}px` : '';
+  };
+  if (!('IntersectionObserver' in window)) { setze(); return; } // alter Browser: Leiste bleibt einfach da
+  // ganz sichtbar = vollständig im sichtbaren Teil des Panels (die Leiste liegt darüber und gibt ihn beim Ausblenden frei)
+  const io = new IntersectionObserver((eintraege) => {
+    for (const e of eintraege) sichtbar.set(e.target, e.isIntersecting && e.intersectionRatio > 0.98);
+    setze();
+  }, { root: panel, threshold: [0, 0.98, 1] });
+  io.observe(preis); io.observe(kauf);
+  desk.addEventListener?.('change', setze);
 }
 
 /** Ohne WebGL: statt endlosem „Lade 3D-Studio …“ eine klare Erklärung in der Bühne (Inhalte, Preise und Warenkorb laufen normal) */

@@ -301,6 +301,13 @@
         <div class="tiny">Druckfertige STL in Millimetern – direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.<br>
           <button class="linkbtn" data-open-code="show">🔖 Design-Code anzeigen</button> · <button class="linkbtn" data-open-code="enter">Code eingeben</button></div>
       </div>
+      <!-- Desktop: kompakte Preisleiste unten im Panel, solange Preis oder „In den Warenkorb“ des Preisbereichs außer Sicht sind (app.js initPanelCta) -->
+      <div class="cta-mini" id="cta-mini" aria-hidden="true" inert>
+        <div class="cta-mini-in">
+          <div class="cta-mini-preis"><span class="price" id="cta-mini-price">24,90&nbsp;€</span><small><span class="price-unit">/ Stück</span> · <span id="cta-mini-ship">zzgl. <a href="/versand" target="_blank" rel="noopener">Versand</a></span></small></div>
+          <button type="button" class="btn btn-primary" id="cta-mini-order">In den Warenkorb ↗</button>
+        </div>
+      </div>
     </aside>
   </div>
 </section>
