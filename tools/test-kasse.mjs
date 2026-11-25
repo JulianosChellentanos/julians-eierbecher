@@ -20,7 +20,9 @@ import * as P from '../public/js/pricing.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP = path.join(ROOT, 'tmp-tests', `test-kasse-${process.pid}`);
 const DATA = path.join(TMP, 'data'), ORDERS = path.join(TMP, 'orders');
-const ADMIN = 'formsam-admin';   // Standard-Passwort einer frischen Instanz
+// Admin-Passwort vorab in settings.json (Klartext) — gilt mit dem alten Standard wie mit der Hash-Umstellung (neuere Stände
+// würfeln bei einer Neuinstallation ein zufälliges Passwort und stellen einen Klartext-adminKey beim Start auf einen Hash um)
+const ADMIN = 'test-kasse-admin';
 let pass = 0, fail = 0;
 const check = (cond, label, extra) => {
   if (cond) { pass++; console.log(`  ✓ ${label}`); } else { fail++; console.log(`  ✗ ${label}`, extra !== undefined ? JSON.stringify(extra).slice(0, 400) : ''); }
@@ -82,6 +84,7 @@ async function guthaben(betrag, menge = 3) {
 async function start() {
   rmSync(TMP, { recursive: true, force: true });
   mkdirSync(DATA, { recursive: true }); mkdirSync(ORDERS, { recursive: true });
+  writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify({ adminKey: ADMIN }));
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS }, stdio: ['ignore', 'pipe', 'pipe'] });
