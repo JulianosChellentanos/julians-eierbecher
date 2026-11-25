@@ -640,11 +640,15 @@
         </div>
         <div class="card">
           <h2>⚖️ Rechtstexte</h2>
+          <div class="pflicht" id="lg-warn" role="status" hidden></div>
           <div class="grid">
-            <label><span>Hoster <small>Name und Anschrift</small></span><input id="lg-hoster" maxlength="200" placeholder="IONOS SE, Elgendorfer Str. 57, 56410 Montabaur"></label>
-            <label>Serverstandort<input id="lg-serverort" maxlength="120" placeholder="Berlin (Deutschland)"></label>
+            <label><span>Hoster <small>Firma und Anschrift — dieses Servers</small></span><input id="lg-hoster" maxlength="200" placeholder="z. B. Firma GmbH, Straße 1, 12345 Ort"></label>
+            <label>Serverstandort<input id="lg-serverort" maxlength="120" placeholder="z. B. Berlin (Deutschland)"></label>
+            <label><span>Mail-Versand <small>für die Datenschutzerklärung</small></span><select id="lg-mailversand"><option value="eigen">Eigener Mailserver auf diesem Server</option><option value="anbieter">Über einen E-Mail-Anbieter</option></select></label>
+            <label id="lg-mailanbieter-row"><span>E-Mail-Anbieter <small>optional, z. B. „IONOS SE“</small></span><input id="lg-mailanbieter" maxlength="120"></label>
           </div>
-          <p class="muted" style="margin-top:10px">Hoster und Serverstandort stehen in der Datenschutzerklärung. Impressum, Datenschutz, AGB, Widerruf und Versand entstehen aus den Angaben auf dieser Seite. Sie zeigen immer den gespeicherten Stand:</p>
+          <label class="inline" style="margin-top:12px"><input type="checkbox" id="lg-av"> Vertrag zur Auftragsverarbeitung (Art. 28 DSGVO) mit diesem Hoster ist abgeschlossen</label>
+          <p class="muted" style="margin-top:10px">Hoster, Serverstandort und Mail-Versand stehen in der Datenschutzerklärung — trag sie auf jedem Server passend ein. Den AV-Vertrag nennt sie nur mit Häkchen. Impressum, Datenschutz, AGB, Widerruf und Versand entstehen aus den Angaben auf dieser Seite. Sie zeigen immer den gespeicherten Stand:</p>
           <div class="legal-links">
             <a href="/impressum" target="_blank" rel="noopener">Impressum ↗</a>
             <a href="/datenschutz" target="_blank" rel="noopener">Datenschutz ↗</a>

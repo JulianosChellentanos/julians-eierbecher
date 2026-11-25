@@ -243,8 +243,10 @@ const DEFAULT_SETTINGS = {
   },
   // Shop-Angaben für Kasse, Mails und Rechnung (Lieferzeit steht u. a. in der Bestellbestätigung)
   shop: { lieferzeit: '5–8 Werktage', liefergebiet: 'Deutschland' },
-  // Angaben für die Rechtsseiten (lib/legal.js): Hoster und Serverstandort (Datenschutzerklärung)
-  legal: { hoster: 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur', serverOrt: 'Berlin (Deutschland)' },
+  // Angaben für die Rechtsseiten (lib/legal.js, Datenschutzerklärung): Hoster und Serverstandort je Server — bewusst ohne
+  // Standardwert (Admin-Hinweis, solange leer); avVertrag = AV-Vertrag mit dem Hoster im Admin bestätigt;
+  // mailVersand 'eigen' (eigener Mailserver auf dem gemieteten Server) | 'anbieter' (E-Mail-Anbieter, Name optional in mailAnbieter)
+  legal: { hoster: '', serverOrt: '', avVertrag: false, mailVersand: 'anbieter', mailAnbieter: '' },
   paypal: { enabled: false, sandbox: true, clientId: '', secret: '' },
   // Wartungsmodus: Shop nur mit Zugangskennwort (hash = scrypt, secret = HMAC-Schlüssel für das Freigabe-Cookie)
   wartung: { aktiv: false, hash: '', secret: '' },
@@ -270,7 +272,8 @@ const DEFAULT_SETTINGS = {
 // ---------------------------------------------------------------------------
 const COMPANY_TEXT = { name: 60, owner: 120, street: 120, zip: 10, city: 80, country: 60, email: 254, phone: 40, ustId: 20, steuerNr: 20, iban: 42, bic: 11, bank: 80 };
 const SHOP_TEXT = { lieferzeit: 60, liefergebiet: 80 };
-const LEGAL_TEXT = { hoster: 200, serverOrt: 120 };
+const LEGAL_TEXT = { hoster: 200, serverOrt: 120, mailAnbieter: 120 };
+const MAIL_VERSAND = ['eigen', 'anbieter'];
 const plainObj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 /** Einzeiliger Text: alle Leerraum-Folgen (auch Zeilenumbrüche) → ein Leerzeichen, dann wie clipText */
 const oneLine = (v, n) => clipText(String(v ?? '').replace(/\s+/g, ' '), n);
@@ -306,8 +309,19 @@ function sanitizeCompany(raw) {
 }
 /** Shop-Angaben: Lieferzeit/Liefergebiet als Text, leer → Standard */
 const sanitizeShop = (raw) => pickText(plainObj(raw), SHOP_TEXT, DEFAULT_SETTINGS.shop);
-/** Rechtsangaben (Hoster, Serverstandort): Text, leer → Standard */
-const sanitizeLegal = (raw) => pickText(plainObj(raw), LEGAL_TEXT, DEFAULT_SETTINGS.legal);
+/**
+ * Rechtsangaben: Hoster, Serverstandort und Name des Mail-Anbieters als Text (leer bleibt leer — kein stiller Hoster-Standard
+ * mehr), avVertrag als Boolean (nur mit Hoster; wird der Hoster geleert, ist auch die Bestätigung weg), mailVersand
+ * 'eigen' | 'anbieter'. Migration älterer Einstellungen ohne die neuen Felder: ein eingetragener Hoster gilt als bestätigt
+ * (der Text der Datenschutzerklärung bleibt dort gleich), Mailversand wie bisher 'anbieter'.
+ */
+function sanitizeLegal(raw) {
+  const src = plainObj(raw);
+  const out = pickText(src, LEGAL_TEXT, { hoster: '', serverOrt: '', mailAnbieter: '' });
+  out.avVertrag = !!out.hoster && (src.avVertrag === undefined || src.avVertrag === true);   // ohne Hoster keine Bestätigung
+  out.mailVersand = MAIL_VERSAND.includes(src.mailVersand) ? src.mailVersand : DEFAULT_SETTINGS.legal.mailVersand;
+  return out;
+}
 /**
  * Hinweise für den Admin (Übersicht): fehlende Pflichtangaben für Rechnungen mit Umsatzsteuer und — wenn lib/legal.js
  * geladen ist — dessen legalWarnings() (Impressum-Pflichtangaben, Platzhalter-Adresse, Telefon …)
