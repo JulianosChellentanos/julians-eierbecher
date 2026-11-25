@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
@@ -697,7 +698,7 @@ function breakRules(lay) {
   }
   return errs;
 }
-const LEGAL_SET = { company: { name: 'formsam', owner: 'Erika Mustermann', street: 'Teststraße 1', zip: '12345', city: 'Musterstadt', email: 'erika@example.org', phone: '', ustId: '', kleinunternehmer: true, country: 'Deutschland' },
+const LEGAL_SET = { company: { name: 'formsam', owner: 'Erika Mustermann', street: 'Teststraße 1', zip: '12345', city: 'Teststadt', email: 'erika@example.org', phone: '', ustId: '', kleinunternehmer: true, country: 'Deutschland' },
   shop: { lieferzeit: '5–8 Werktage', liefergebiet: 'Deutschland' }, legal: { hoster: 'Beispiel-Hosting GmbH, Serverweg 2, 12345 Musterstadt', serverOrt: 'Musterstadt (Deutschland)' },
   pricing: { currency: 'EUR', shipping: { flat: 4.9, freeFrom: 39 } }, paypal: { enabled: false, clientId: '' } };
 const legalVariants = () => {
@@ -808,6 +809,118 @@ check('belegPdf und legalPdf: Dateiname, streng, saubere Fehler', () => {
   const h = (b) => crypto.createHash('sha256').update(b).digest('hex');
   eq(h(legalPdf('agb', { settings: LEGAL_SET, createdAt: 0 }).buffer), h(legalPdf('agb', { settings: LEGAL_SET, createdAt: 0 }).buffer), 'gleiche Eingabe → gleiche Bytes');
 });
+// ---------------------------------------------------------------------------
+// Teil 4: Befunde der Gegenprüfung (jede Prüfung scheitert mit dem Stand vor der Behebung)
+// ---------------------------------------------------------------------------
+/** alle Inhaltsströme einer PDF entpackt (für Operatoren wie „3 Tr“) */
+const streams = (buf) => { const t = buf.latin1Slice(), out = []; for (const m of t.matchAll(/\/Length (\d+) \/Filter \/FlateDecode[^>]*>>\nstream\n/g)) out.push(zlib.inflateSync(buf.subarray(m.index + m[0].length, m.index + m[0].length + Number(m[1]))).latin1Slice()); return out.join('\n'); };
+const titled = (title, body, css) => small(body, css).replace('<title>Probe</title>', `<title>${title}</title>`);
+
+check('Gegenprüfung: unsichtbare Format- und Richtungszeichen im Beleg (aus Kontakten kopiert) → PDF statt GLYPH_MISSING', () => {
+  const html = fixture('rechnung-ust').replace('<b>Erika Mustermann</b>', '<b>\u2068Erika\u2069 Muster\u200Emann\u202A\u202C\u061C\u034F\u200F</b>');
+  const r = belegPdf(html), t = htmlToPdf(html, { strict: true });
+  eq([r.pages, t.warnings], [1, []], 'Seiten, Warnungen');
+  ok(/Erika Mustermann/.test(t.text.replace(/\p{Default_Ignorable_Code_Point}/gu, '')), 'Name im sichtbaren Text');
+});
+
+check('Gegenprüfung: der kurze Schlussblock (Fußzeile) steht nie allein auf einer Seite', () => {
+  const p = (n) => Array.from({ length: n }, (_, i) => `<p style="margin:0;line-height:18px">Zeile ${i + 1}</p>`).join('');
+  for (const [foot, n] of [['Absender · Anschrift · Webadresse', 1], ['Absender · Anschrift<br>Webadresse', 2]]) {
+    const lay = layoutDocument(small(p(58) + `<footer id="f" style="margin:0;line-height:18px">${foot}</footer>`));
+    const f = frags(fragOf(lay, '#f')).filter((g) => g.kind === 'line'), prev = lines(lay).filter((l) => /^Zeile 58$/.test(lineText(l)));
+    eq([lay.pages, ...f.map((l) => pageOfFrag(lay, l)), pageOfFrag(lay, prev[0])], [2, ...Array(n).fill(2), 2], `${n}-zeilige Fußzeile nimmt die Zeile davor mit`);
+  }
+  const t = layoutDocument(small(p(52) + `<table id="t" style="border-collapse:collapse">${Array.from({ length: 3 }, (_, i) => `<tr><td style="padding:0">Zeile ${i}.0<br>Zeile ${i}.1<br>Zeile ${i}.2</td></tr>`).join('')}</table>`));
+  eq(fragOf(t, '#t').kids.map((r) => pageOfFrag(t, r)), [1, 1, 2], 'gilt nur für Textzeilen: letzte Tabellenzeile bricht wie bisher');
+});
+
+check('Gegenprüfung: break-before an <tr>/<tbody> wie Chrome; fremde Ausnahmen (TypeError, RangeError) nie nach außen', () => {
+  const tab = (a, b) => small(`<table><tbody><tr><td>a</td></tr></tbody><tbody${b}><tr${a}><td>b</td></tr></tbody></table>`);
+  eq([' style="break-before:page"', ' style="page-break-before:left"'].map((a) => htmlToPdf(tab(a, '')).pages), [2, 2], 'break-before an <tr> (vorher TypeError)');
+  eq(htmlToPdf(tab('', ' style="break-before:page"')).pages, 2, 'break-before an <tbody> (vorher still ignoriert)');
+  eq(htmlToPdf(small('<table><tr><td>a</td><td style="break-before:page">b</td></tr></table>')).pages, 1, 'an einer Zelle wirkungslos (wie Chrome)');
+  const t0 = performance.now();
+  throwsCode(() => htmlToPdf(small(`<table><tr>${'<td colspan="1000">x</td>'.repeat(600)}</tr>${'<tr><td>y</td></tr>'.repeat(600)}</table>`)), 'TOO_LARGE');   // vorher Speicherabbruch des Prozesses
+  throwsCode(() => htmlToPdf(small(`<table style="border-collapse:collapse"><tr>${'<td colspan="1000">x</td>'.repeat(150)}</tr></table>`)), 'TOO_LARGE');   // vorher RangeError
+  const deep = htmlToPdf(small('<p>x</p>', '@media print{'.repeat(20000) + 'p{color:red}' + '}'.repeat(20000)));   // vorher RangeError (Stapel)
+  ok(deep.warnings.some((w) => /tiefer als 16 Ebenen/.test(w)), 'tiefes @media: übersprungen und gemeldet');
+  ok(performance.now() - t0 < 3000, `${(performance.now() - t0).toFixed(0)} ms`);
+});
+
+check('Gegenprüfung: Grenzen ab dem Aufruf — Kaskade, Zeichnen, viele Wörter; Selektoren ohne exponentielles Zurückgehen; engere Grenzen für den Shop', () => {
+  const t0 = performance.now();
+  const kaskade = `<!DOCTYPE html><html><head><title>T</title><style>${Array.from({ length: 2000 }, (_, i) => `i{color:#${(i % 4096).toString(16).padStart(3, '0')}}`).join('')}</style></head><body>${'<i></i>'.repeat(4000)}</body></html>`;
+  ok(/Schrittgrenze/.test(throwsCode(() => htmlToPdf(kaskade), 'TOO_LARGE').message), 'Kaskade 4000 Elemente × 2000 Regeln zählt zu den Schritten');
+  const deep = (sel) => styleTree(`<!DOCTYPE html><html><head><title>T</title><style>${sel}{color:red}</style></head><body>${'<div>'.repeat(120)}<span>x</span>${'</div>'.repeat(120)}</body></html>`);
+  const t1 = performance.now();
+  eq(st(deep('p ' + 'div '.repeat(6) + 'span'), 'span').color, [0, 0, 0], 'passt nicht (vorher 50 s und mehr)');
+  eq(st(deep('body ' + 'div '.repeat(6) + 'span'), 'span').color, [255, 0, 0], 'passt');
+  eq(st(deep('div > div ~ span, body div div span'), 'span').color, [255, 0, 0], 'gemischte Verknüpfungen');
+  ok(performance.now() - t1 < 1000, `Selektoren ${(performance.now() - t1).toFixed(0)} ms`);
+  const words = small(`<p>${'ab '.repeat(300000)}</p>`);
+  ok(/Schrittgrenze/.test(throwsCode(() => belegPdf(words + '</html>'), 'TOO_LARGE').message), '900 KB Wörter im Beleg: Schrittgrenze statt Sekunden bis „mehr als 60 Seiten“');
+  const pad = small('<p>x</p>' + `<!--${'x'.repeat(1.1e6)}-->`);
+  eq(htmlToPdf(pad).pages, 1, 'htmlToPdf: 1,1 MB erlaubt');
+  throwsCode(() => belegPdf(pad), 'TOO_LARGE');
+  ok(performance.now() - t0 < 6000, `${(performance.now() - t0).toFixed(0)} ms`);
+});
+
+check('Gegenprüfung: wie Chrome — durchsichtige Schrift unsichtbar (kopierbar), font-size:0, <ol reversed/type>, capitalize, Kommentar im Selektor, :-webkit-any, weiches Trennzeichen', () => {
+  const tr = htmlToPdf(small('<div style="background:#211d18;color:#fff">WEISS <span style="color:transparent">TRANSPARENT</span> <span style="color:rgba(255,0,0,0)">ROTNULL</span></div>'));
+  const ops = streams(tr.buffer);
+  eq((ops.match(/BT (\d) Tr/g) || []).join(), 'BT 3 Tr,BT 0 Tr,BT 3 Tr', 'durchsichtig: Darstellungsmodus 3 (unsichtbar) statt weißer Schrift');
+  ok(/TRANSPARENT/.test(tr.text), 'Text bleibt im sichtbaren Text (Zeichen-Bilanz)');
+  const z = htmlToPdf(small('<div style="font-size:0"><span style="display:inline-block;font-size:16px">A16</span> <span style="display:inline-block;font-size:16px">B16</span></div><p>X<span style="font-size:0">weg</span>Y</p>'), { strict: true });
+  eq(z.pages, 1, 'font-size:0 (vorher BAD_NUMBER)');
+  eq(htmlToPdf(small('<ol reversed><li>A<li>B<li>C</ol><ol type="I"><li>D<li>E</ol><ol type="a" start="3"><li>F</ol><ol><li type="A">G</ol>')).added,
+    ['3. ', '2. ', '1. ', 'I. ', 'II. ', 'c. ', 'A. '], 'Nummern wie Chrome');
+  eq(layoutDocument(small('<ul type="square"><li>x</ul>')).top && st(styleTree(small('<ul type="square"><li>x</ul>')), 'li').listStyleType, 'square', '<ul type>');
+  eq(applyTransform("erika o'neil-müller 'hallo (x) „zitat“", 'capitalize'), "Erika O'neil-Müller 'Hallo (X) „Zitat“", 'capitalize: Apostroph im Wort ist keine Grenze');
+  const c = styleTree(small('<p class="a">x</p><div id="m">y</div>', 'p/**/.a{display:none}#m{margin:0/**/auto;width:10px}'));
+  eq([st(c, 'p').display, st(c, '#m').marginLeft], ['none', 'auto'], 'Kommentar: p/**/.a = p.a, 0/**/auto = 0 auto');
+  ok(styleTree(small('<p class="a">x</p>', ':-webkit-any(.a){display:none}')).warnings.some((w) => /webkit-any/.test(w)), ':-webkit-any wird gemeldet (strict bricht ab), nicht still übergangen');
+  const shy = (w) => frags(layoutDocument(small(`<div id="d" style="width:${w}px;font-size:16px">Donau\u00ADdampf\u00ADschiff\u00ADfahrt</div>`)).top).filter((g) => g.kind === 'line').map((l) => lineText(l).replace(/\u00AD/g, ''));
+  eq(shy(60), ['Donau\u2010', 'dampf\u2010', 'schiff\u2010', 'fahrt'], 'Trennung am weichen Trennzeichen mit Strich');
+  eq(shy(400), ['Donaudampfschifffahrt'], 'ohne Platzmangel kein Strich');
+  eq(htmlToPdf(small('<div style="width:60px;font-size:16px">Donau\u00ADdampf\u00ADschiff\u00ADfahrt</div>')).added, ['\u2010', '\u2010', '\u2010'], 'Trennstriche in der Zeichen-Bilanz als hinzugefügt');
+});
+
+check('Gegenprüfung: belegPdf/legalPdf — Dateiname bei jedem Nummernkreis, abgeschnittene Datei, Pflichtangaben, Typen der Angaben, keine Kundendaten in Meldungen', () => {
+  const name = (t) => belegPdf(titled(t, '<p>x</p>')).filename;
+  eq(['Rechnung FS-RE-2026-0042 · formsam', 'Rechnung RE/2026/0042', 'Gutschrift R-0042 · formsam', 'Stornorechnung GS 2026 7', 'Rechnung · formsam', 'Angebot A-1'].map(name),
+    ['Rechnung-FS-RE-2026-0042.pdf', 'Rechnung-RE-2026-0042.pdf', 'Gutschrift-R-0042.pdf', 'Stornorechnung-GS-2026-7.pdf', 'Beleg.pdf', 'Beleg.pdf'], 'Dateinamen');
+  const full = fixture('rechnung-ust'), cut = full.slice(0, full.indexOf('<table class="summen"'));
+  eq(htmlToPdf(cut).pages, 1, 'abgeschnittene Datei lässt sich setzen …');
+  throwsCode(() => belegPdf(cut), 'UNSUPPORTED');   // … wird als Beleg aber abgelehnt (ohne Summen)
+  throwsCode(() => legalPdf('impressum'), 'BAD_OPTION');
+  for (const slug of ['__proto__', 'toString', 'constructor']) throwsCode(() => legalPdf(slug, { settings: LEGAL_SET }), 'BAD_OPTION');
+  const set = (patch) => { const x = JSON.parse(JSON.stringify(LEGAL_SET)); Object.assign(x.company, patch); return x; };
+  for (const [what, patch] of [['ohne Inhaber', { owner: '' }], ['ohne Straße', { street: '' }], ['Platzhalter', { street: 'Musterstraße 1' }], ['ohne E-Mail', { email: 'keine' }]]) {
+    ok(/unvollständig/.test(throwsCode(() => legalPdf('agb', { settings: set(patch) }), 'INCOMPLETE').message), what);
+  }
+  throwsCode(() => legalPdf('impressum', { settings: {} }), 'INCOMPLETE');
+  eq(legalPdf('impressum', { settings: set({ phone: '' }) }).pages, 1, 'Telefon ist keine Bedingung');
+  for (const o of [{ pageFooter: 'nein' }, { strict: 1 }, { author: {} }, { keywords: ['a', 1] }, { baseUrl: 7 }]) throwsCode(() => htmlToPdf(small('<p>x</p>'), o), 'BAD_OPTION');
+  throwsCode(() => belegPdf(full, { author: 5 }), 'BAD_OPTION');
+  throwsCode(() => legalPdf('agb', { settings: LEGAL_SET, logoHtml: {} }), 'BAD_OPTION');
+  const g = throwsCode(() => belegPdf(full.replace('<b>Erika Mustermann</b>', '<b>Ἀλέξανδρος Παπαδόπουλος</b>')), 'GLYPH_MISSING');
+  ok(!/λέξανδρος|Παπαδόπουλος/.test(g.message) && /λέξανδρος/.test(g.context), `Name nicht in der Meldung, nur in e.context: ${g.message}`);
+  const sc = throwsCode(() => htmlToPdf(small('<div style="width:20px;margin-left:-60px">Erika-außerhalb</div>')), 'SELF_CHECK');
+  ok(!/Eri/.test(sc.message) && /Eri/.test(sc.context), `Text nicht in der Meldung: ${sc.message}`);
+});
+
+check('Gegenprüfung: Schriften-Cache wächst nicht mit jeder neuen font-family (Schlüssel nach der Auflösung)', () => {
+  const code = `import v8 from 'node:v8'; import { layoutDocument } from ${JSON.stringify(new URL('../lib/html-pdf.js', import.meta.url).href)};
+    const doc = (i) => '<!DOCTYPE html><html><head><title>T</title></head><body><p style="font-family:\\'Hausschrift ' + i + '\\',Inter">x</p></body></html>';
+    const used = () => { global.gc(); return v8.getHeapSpaceStatistics().find((s) => s.space_name === 'old_space').space_used_size; };
+    for (let i = 0; i < 300; i++) layoutDocument(doc(-i));
+    const a = used(); for (let i = 0; i < 4000; i++) layoutDocument(doc(i)); console.log(used() - a);`;
+  const r = spawnSync(process.execPath, ['--expose-gc', '--input-type=module', '-e', code], { encoding: 'utf8' });
+  const kb = Number(r.stdout) / 1024;
+  ok(r.status === 0 && kb < 512, `Speicher wächst um ${kb.toFixed(0)} KB für 4000 Belege mit eigener font-family (${r.stderr.trim()})`);
+  return `${kb.toFixed(0)} KB`;
+});
+
 if (!spawnSync('pdftotext', ['-v'], { stdio: 'ignore' }).error) {
   check('pdftotext: Rechtstexte und Fließtext — Zeichen wie im HTML, plus genau die Listen-Nummern und der wiederholte Tabellenkopf', () => {
     const count = (s, m = new Map(), k = 1) => { for (const ch of s.normalize('NFC')) if (!/[\s­​]/u.test(ch)) m.set(ch, (m.get(ch) || 0) + k); return m; };

@@ -32,11 +32,12 @@ for (const a of process.argv.slice(2)) {
 // ---------------------------------------------------------------------------
 // Prüfgerüst
 // ---------------------------------------------------------------------------
-let failed = 0, total = 0;
+let failed = 0, total = 0, skipped = 0;
 function check(name, fn) {
   total++;
   try {
     const note = fn();
+    if (typeof note === 'string' && note.startsWith('übersprungen')) { skipped++; console.log(`—       ${name} — ${note}`); return; }   // nicht als „ok“ zählen
     console.log(`ok      ${name}${note ? ` — ${note}` : ''}`);
   } catch (e) {
     failed++;
@@ -328,5 +329,5 @@ if (args.out) {
   for (const slug of LEGAL_SLUGS) fs.writeFileSync(path.join(args.out, `${slug}.html`), renderLegalPage(slug, { settings: ERFUNDEN, baseUrl: BASE_URLS[0], forPdf: true }));
   console.log(`        Druckfassungen → ${args.out}`);
 }
-console.log(`\n${total - failed} von ${total} Prüfungen bestanden${failed ? ` — ${failed} FEHLER` : ''}`);
+console.log(`\n${total - failed - skipped} von ${total} Prüfungen bestanden${skipped ? `, ${skipped} übersprungen` : ''}${failed ? ` — ${failed} FEHLER` : ''}`);
 process.exit(failed ? 1 : 0);

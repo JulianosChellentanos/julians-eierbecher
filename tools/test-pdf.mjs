@@ -12,7 +12,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import {
-  PdfDocument, PdfError, measureText, fontMetrics, missingChars, getFont, findFont, registerFont, parseFont, subsetFont, parseSvgPath, A4, mm,
+  PdfDocument, PdfError, measureText, fontMetrics, missingChars, composeText, getFont, findFont, registerFont, parseFont, subsetFont, parseSvgPath, A4, mm,
 } from '../lib/pdf.js';
 
 const args = process.argv.slice(2), outAt = args.indexOf('--out'), outDir = outAt >= 0 ? args[outAt + 1] : '';
@@ -224,7 +224,7 @@ function readFont(pdf, no) {
   return { name, unicode, file: fileObj.data, descriptor: desc, widths: /\/W \[0 \[([\d\s]+)\]\]/.exec(cid)[1].trim().split(/\s+/).map(Number) };
 }
 
-/** Inhaltsstrom einer Seite nach den Regeln der PDF-Norm auswerten → je BT…ET { x, y, skew, text, width, fonts, size, tc } */
+/** Inhaltsstrom einer Seite nach den Regeln der PDF-Norm auswerten → je BT…ET { x, y, skew, text, width, fonts, size, tc, tr } */
 function readTexts(pdf, page) {
   const fonts = {}, out = [], stack = [];
   for (const [id, no] of Object.entries(page.fonts)) fonts[id] = readFont(pdf, no);
@@ -246,7 +246,8 @@ function readTexts(pdf, page) {
     if (tok === 'q') stack.push({ ...st });
     else if (tok === 'Q') st = stack.pop();
     else if (tok === 'BT') cur = { x: 0, y: 0, skew: 0, text: '', width: 0, fonts: [], codes: [] };
-    else if (tok === 'ET') { out.push({ ...cur, size: st.size, tc: st.tc }); cur = null; }
+    else if (tok === 'ET') { out.push({ ...cur, size: st.size, tc: st.tc, tr: st.tr ?? 0 }); cur = null; }
+    else if (tok === 'Tr') st.tr = Number(operands[0]);
     else if (tok === 'Tf') { st.font = operands[0].slice(1); st.size = Number(operands[1]); }
     else if (tok === 'Tc') st.tc = Number(operands[0]);
     else if (tok === 'Td') { cur.x = Number(operands[0]); cur.y = Number(operands[1]); }
@@ -260,7 +261,10 @@ function readTexts(pdf, page) {
 
 /** So muss der Text aus der Datei zurückkommen: Buchstabe + Kombinationszeichen nach NFC zusammengesetzt (Einzelzeichen
  *  unverändert), unsichtbare Formatzeichen weg, Tabulator/Umbruch als Leerzeichen */
-const expected = (s) => s.replace(/\P{M}?\p{M}+/gu, (m) => m.normalize('NFC')).replace(/[\u00AD\u200B-\u200D\u2060\uFEFF\uFE0E\uFE0F]/g, '').replace(/[\t\n\v\f\r\u0085\u2028\u2029]/g, ' ');
+// Erwarteter Text: Kombinationszeichen-Folgen nach NFC (nur wenn kürzer), unsichtbare Formatzeichen (Default_Ignorable ohne
+// Hangul-Füllzeichen) weg, Tab/Zeilenumbrüche als Leerzeichen
+const expected = (s) => s.replace(/\P{M}?\p{M}+/gu, (m) => { const n = m.normalize('NFC'); return n.length < m.length ? n : m; })
+  .replace(/(?![\u115F\u1160\u3164\uFFA0])\p{Default_Ignorable_Code_Point}/gu, '').replace(/[\t\n\v\f\r\u0085\u2028\u2029]/g, ' ');
 
 // ---------------------------------------------------------------------------
 // Probe-Dokumente (mit --out bleiben sie liegen)
@@ -268,9 +272,10 @@ const expected = (s) => s.replace(/\P{M}?\p{M}+/gu, (m) => m.normalize('NFC')).r
 const built = new Map();     // Dateiname → Buffer
 const keep = (name, pdf) => { built.set(name, pdf); return pdf; };
 
-/** Alle Zeichen einer Schrift: 20 je Zeile, durch Leerzeichen getrennt (rund 40 Zeichen je Zeile) */
+/** Alle Zeichen einer Schrift: 20 je Zeile, durch Leerzeichen getrennt (rund 40 Zeichen je Zeile). Ohne Kombinationszeichen
+ *  (Inter: U+0483–U+0489) — die werden allein abgewiesen, siehe „Text: lose Kombinationszeichen …“ */
 function allCharsDoc(name) {
-  const font = getFont(name), cps = [...font.cmap.keys()].sort((a, b) => a - b), lines = [];
+  const font = getFont(name), cps = [...font.cmap.keys()].filter((c) => !/\p{M}/u.test(String.fromCodePoint(c))).sort((a, b) => a - b), lines = [];
   const doc = new PdfDocument({ title: `Alle Zeichen – ${name}`, author: 'formsam', createdAt: STAMP });
   for (let i = 0; i < cps.length; i += 20) lines.push(cps.slice(i, i + 20).map((c) => String.fromCodePoint(c)).join(' '));
   let page = null, y = 0, widest = 0;
@@ -550,6 +555,9 @@ check('Eigene Schrift anmelden; kaputte Dateien werden abgelehnt', () => {
   const locked = Buffer.from(data), os2 = 12 + 16 * [...Array(locked.readUInt16BE(4)).keys()].find((i) => locked.latin1Slice(12 + i * 16, 16 + i * 16) === 'OS/2');
   locked.writeUInt16BE(0x0002, locked.readUInt32BE(os2 + 8) + 8);
   fails('BAD_FONT', () => parseFont(locked, { name: 'Gesperrt' }), 'fsType „Einbetten verboten“');
+  const variable = Buffer.from(data), post = 12 + 16 * [...Array(variable.readUInt16BE(4)).keys()].find((i) => variable.latin1Slice(12 + i * 16, 16 + i * 16) === 'post');
+  variable.write('fvar', post, 'latin1');   // Tabelle „fvar“ = variable Schrift (gesetzt würde still nur die Grundinstanz)
+  ok(/variable Schrift/.test(fails('BAD_FONT', () => registerFont('Variabel', variable, { weight: 700 }), 'variable Schrift').message), 'Meldung nennt den Grund');
 });
 
 // ---------------------------------------------------------------------------
@@ -684,6 +692,56 @@ check('Text: Zeichen mit gemeinsamer Glyphe bekommen eigene Codes', () => {
   for (let i = 1; i < 9; i += 2) ok(sub.glyph(i).equals(sub.glyph(i + 1)) && (i === 1 || !sub.glyph(i).equals(sub.glyph(1))), `Umrisse des Paares ${i}/${i + 1}`);
   same(font.widths.length, 9, 'Breiten für jeden Platz');
   same([...font.unicode.values()].join(''), str, 'ToUnicode: jeder Code genau sein Codepunkt');
+});
+
+check('Text: unsichtbare Format- und Richtungszeichen (Default_Ignorable) werden übersprungen, nicht abgewiesen', () => {
+  const doc = new PdfDocument({ createdAt: STAMP }), page = doc.addPage(), t = { font: ['Fraunces-Medium', 'Inter-Regular'], size: 10 };
+  // aus Kontakten/Messengern kopiert: LRM/RLM, LRE…PDF, Isolate, arabische Buchstabenmarke, CGJ, Variantenwähler, Tag-Zeichen
+  const str = 'Erika\u200E Muster\u202Amann\u202C \u2068Teststra\u00DFe\u2069 1\u061C2\u034F\u200F\uFE00\u{E0041}';
+  same(missingChars(str, t.font).length, 0, 'Vorab-Prüfung: nichts fehlt');
+  const w = page.text(str, 40, 60, t);
+  same(w, measureText('Erika Mustermann Teststraße 12', t), 'Breite wie ohne die Zeichen');
+  const pdf = readPdf(doc.toBuffer()), [r] = readTexts(pdf, pdf.pages[0]);
+  same(r.text, 'Erika Mustermann Teststraße 12', 'Text in der Datei');
+  same(expected(str), r.text, 'Erwartung der Prüfung selbst');
+  same(fails('GLYPH_MISSING', () => measureText('a\u3164b', t), 'Hangul-Füllzeichen ist kein Formatzeichen (hat eine echte Glyphe)').codePoint, 0x3164, 'Codepunkt');
+});
+
+check('Text: lose Kombinationszeichen werfen GLYPH_MISSING, auch wenn die Schrift eine Glyphe hat; NFC nur, wenn kürzer', () => {
+  const t = { font: 'Inter-Regular', size: 40 };
+  ok(getFont('Inter-Regular').glyph(0x483) > 0, 'Inter hat U+0483 nicht mehr — Probe anpassen');
+  for (const s of ['\u0488', '\u0410\u0483\u0411', 'x\u0489']) same(fails('GLYPH_MISSING', () => measureText(s, t), `„${s}“`).codePoint, s.codePointAt(s.length - 1) === 0x411 ? 0x483 : s.codePointAt(s.length - 1), `Codepunkt bei „${s}“`);
+  same(missingChars('\u0410\u0483\u0411', t.font).join(), '\u0483', 'Vorab-Prüfung');
+  same(composeText(' \u0340'), ' \u0340', 'U+0340 allein bleibt U+0340 (NFC würde es zu U+0300 machen)');
+  same(composeText('e\u0340'), '\u00E8', 'mit Buchstaben: è');
+  same(composeText('A\u0344'), 'A\u0344', 'nicht kürzer → unverändert');
+  same(missingChars(' \u0340', t.font).join(), '\u0340', 'Meldung nennt das eingegebene Zeichen');
+});
+
+check('Text: Fehler mitten in text() — Seite und Grafikzustand bleiben unverändert, Messen scheitert gleich', () => {
+  const doc = new PdfDocument({ createdAt: STAMP }), page = doc.addPage(), t = { font: 'Inter-Regular', size: 10, color: CLAY };
+  const before = JSON.stringify([page.ops, page.gs, [...doc.fonts.values()].map((d) => d.cps.length)]);
+  fails('BAD_NUMBER', () => page.text('a b', 50, 100, { ...t, wordSpacing: 2e7 }), 'riesiger Wortabstand');
+  fails('BAD_NUMBER', () => page.text('a b', 50, 100, { ...t, size: 0.001, wordSpacing: 12 }), 'Wortabstand im Verhältnis zur Größe');
+  fails('BAD_NUMBER', () => page.text('a', 50, 100, { ...t, letterSpacing: 2e7 }), 'riesiger Zeichenabstand');
+  same(JSON.stringify([page.ops, page.gs, [...doc.fonts.values()].map((d) => d.cps.length)]), before, 'Seite, Grafikzustand oder Codes verändert');
+  fails('BAD_NUMBER', () => measureText('a b', { ...t, wordSpacing: 2e7 }), 'measureText wie text()');
+  fails('BAD_NUMBER', () => measureText('a', { ...t, letterSpacing: 2e7 }), 'measureText wie text()');
+  fails('BAD_NUMBER', () => fontMetrics('Inter', -10), 'fontMetrics mit negativer Größe');
+  fails('BAD_NUMBER', () => fontMetrics('Inter', 0), 'fontMetrics mit Größe 0');
+  page.text('Rechnung RE-2026-0042', 50, 120, t);
+  ok(/rg\nBT .*\/F1 10 Tf .*Tj ET$/.test(page.ops.join('\n')), `nächster Text ohne Farbe oder Schrift: ${page.ops.join(' | ')}`);
+  const pdf = readPdf(doc.toBuffer());
+  same(readTexts(pdf, pdf.pages[0])[0].text, 'Rechnung RE-2026-0042', 'Text lesbar');
+});
+
+check('Text: unsichtbar (invisible) — Darstellungsmodus 3, kopierbar, danach wieder sichtbar', () => {
+  const doc = new PdfDocument({ createdAt: STAMP }), page = doc.addPage(), t = { font: 'Inter-Regular', size: 10 };
+  same(page.text('verborgen', 40, 60, { ...t, invisible: true }), measureText('verborgen', t), 'Breite wie sichtbar');
+  page.text('sichtbar', 40, 80, t);
+  const pdf = readPdf(doc.toBuffer()), [a, b] = readTexts(pdf, pdf.pages[0]);
+  same(`${a.text}:${a.tr} ${b.text}:${b.tr}`, 'verborgen:3 sichtbar:0', 'Text und Modus');
+  fails('BAD_OPTION', () => page.text('x', 40, 100, { ...t, invisible: 'ja' }), 'invisible nur true/false');
 });
 
 // ---------------------------------------------------------------------------
@@ -863,6 +921,22 @@ check('Grafik: SVG-Bögen liegen auf Kreis und Ellipse', () => {
   same(`${end[5]} ${end[6]}`, '30 5', 'Bogen endet genau im angegebenen Punkt');
 });
 
+check('Grafik: SVG-Bögen mit extremen Radien — Gerade, Halbkreis oder BAD_PATH, nie still verschwunden', () => {
+  // vorher: rx² lief über/unter → NaN → der Bogen fehlte ohne Meldung, der Pfad sprang still zum Endpunkt
+  same(JSON.stringify(parseSvgPath('M0 0 A 1e200 1e200 0 0 1 10 0 L 10 10')), '[["M",0,0],["L",10,0],["L",10,10]]', 'riesiger Radius, kleiner Bogen = Gerade');
+  same(parseSvgPath('M0 0 A 1e155 1e155 0 0 1 10 0').length, 2, 'Radius 1e155');
+  for (const r of ['1e-200', '5e-324', '0.001']) {   // zu kleine Radien werden laut SVG vergrößert: Halbkreis über der Strecke
+    const segs = parseSvgPath(`M0 0 A ${r} ${r} 0 0 1 10 0`), mid = segs[1].slice(5, 7);
+    same(segs.length, 3, `Radius ${r}: zwei Viertelbögen`);
+    near(Math.hypot(mid[0] - 5, mid[1]), 5, `Radius ${r}: Scheitel auf dem Halbkreis`, 1e-9);
+  }
+  fails('BAD_PATH', () => parseSvgPath('M0 0 A 1e200 1e200 0 1 1 10 0'), 'großer Bogen eines riesigen Kreises (nicht berechenbar)');
+  fails('BAD_PATH', () => parseSvgPath('M0 0 A 1e-200 1e200 0 0 1 10 0'), 'Ellipse ohne endliche Ausdehnung');
+  const page = new PdfDocument().addPage();
+  fails('BAD_PATH', () => page.path('M0 0 A 1e200 1e200 0 1 1 10 0', { fill: '#000' }), 'page.path');
+  same(page.ops.length, 0, 'nichts geschrieben');
+});
+
 check('Grafik: Pfad mit Lage, Maßstab und Matrix; Logo in zwei Größen', () => {
   const page = new PdfDocument().addPage({ width: 200, height: 100 });
   page.path('M0 0L10 0L10 10Z', { fill: '#000' }).path('M0 0L10 0L10 10Z', { x: 20, y: 30, scale: 2, stroke: '#000', lineWidth: 0.5 });
@@ -902,6 +976,13 @@ check('Datei: Info und Katalog — Titel als UTF-16, Maskierung, Datum nur aus c
   same(info({}), '<< /Producer (formsam) >>', 'Info ohne Angaben: kein Datum, die Uhr wird nicht gelesen');
   same(info({ createdAt: new Date(STAMP) }), info({ createdAt: Date.parse(STAMP) }), 'Datum als Date und als Millisekunden');
   same(info({ createdAt: '2026-01-15T10:30:00+01:00' }), info({ createdAt: STAMP }), 'Zeitzone wird nach Weltzeit umgerechnet');
+  same(info({ createdAt: '2026-01-15' }), '<< /Producer (formsam) /CreationDate (D:20260115000000Z) /ModDate (D:20260115000000Z) >>', 'reines Datum gilt als UTC');
+  // mehrdeutig oder Unsinn: Zeit ohne Zone (hinge von der Zeitzone des Servers ab), freie Schreibweisen, true, Zahl als Text
+  for (const c of ['2026-01-15T09:30:00', '2026-01-15 09:30', 'March 1, 2026', '5', true, {}, NaN, new Date('x')]) fails('BAD_OPTION', () => new PdfDocument({ createdAt: c }), `createdAt ${String(c)}`);
+  const inTz = (tz) => spawnSync(process.execPath, ['--input-type=module', '-e', `import { PdfDocument } from ${JSON.stringify(new URL('../lib/pdf.js', import.meta.url).href)};
+    for (const c of ['2026-01-15', '2026-01-15T10:30:00+01:00', '2026-01-15T09:30Z']) console.log(new PdfDocument({ createdAt: c }).date);`], { env: { ...process.env, TZ: tz }, encoding: 'utf8' }).stdout;
+  const utc = inTz('UTC');
+  ok(utc.split('\n').length === 4 && utc === inTz('Pacific/Kiritimati') && utc === inTz('America/Los_Angeles'), `Datum hängt von der Zeitzone ab: ${utc}`);
   const catalog = (m) => readPdf(new PdfDocument(m).addPage().doc.toBuffer()).objs[1].dict;
   same(catalog({}), '<< /Type /Catalog /Pages 2 0 R /Lang (de-DE) /ViewerPreferences << /DisplayDocTitle true >> >>', 'Katalog');
   ok(catalog({ lang: 'en' }).includes('/Lang (en) '), 'Sprache einstellbar');

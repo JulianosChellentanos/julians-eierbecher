@@ -16,6 +16,13 @@ Sie werden nur vom Server gelesen und nie an den Browser ausgeliefert.
 (`ofl/inter` und `ofl/fraunces`). Daraus sind die festen Schnitte oben erzeugt –
 mit `tools/pdf-fonts-bauen.py` (braucht Python + fontTools, läuft nie auf dem Server).
 
+Benutzte Fassung der Originale (Versionsangabe aus der name-Tabelle, SHA-256 der Datei):
+
+| Original | Fassung | SHA-256 |
+|---|---|---|
+| `Inter[opsz,wght].ttf` | Version 4.001;git-66647c0bb | `29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031` |
+| `Fraunces[SOFT,WONK,opsz,wght].ttf` | Version 1.000;[b76b70a41] | `177ff6c0f14e5550a3c624247cd1189611d4eb65d000b14944c63d967958abbb` |
+
 **Zeichenvorrat:** Latein inkl. Erweiterungen, Griechisch, Kyrillisch, Satzzeichen,
 Währungen und gängige Symbole (Pfeile, Mathematik, Formen) – jeweils so weit das
 Original sie enthält. Fraunces hat kein Griechisch und kein Kyrillisch; dafür gibt

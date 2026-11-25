@@ -7,6 +7,7 @@
 # Originale (SIL OFL 1.1) aus github.com/google/fonts:
 #   ofl/inter/Inter[opsz,wght].ttf                 → <quelle>/Inter-var.ttf
 #   ofl/fraunces/Fraunces[SOFT,WONK,opsz,wght].ttf → <quelle>/Fraunces-var.ttf
+# Benutzte Fassungen und Prüfsummen: lib/pdf-fonts/LIESMICH.md (Inter 4.001;git-66647c0bb, Fraunces 1.000;[b76b70a41])
 #
 # Aufruf: python3 tools/pdf-fonts-bauen.py <quelle-ordner> lib/pdf-fonts
 # Danach: node tools/test-pdf.mjs
