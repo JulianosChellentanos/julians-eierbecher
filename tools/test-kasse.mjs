@@ -193,6 +193,11 @@ try {
   check(!h1.fehler && !h2.fehler, 'Höchstzahl 1: zweite Kasse derselben Kundin (erste abgebrochen) → angelegt', h2.fehler?.json);
   const h3 = await bestelle([V(1)], 'EINS', { abschliessen: false, kunde: { email: 'andere@example.test' } });
   check(h3.fehler?.status === 400 && /bereits vergeben/.test(h3.fehler.json?.error || ''), 'andere Kundin während der Reservierung → 400 „bereits vergeben“', h3.fehler?.json);
+  check(h3.fehler?.json?.code === 'gutschein', 'Kasse: Gutschein-Ablehnung mit code „gutschein“ (die Kasse prüft das Gutscheinfeld neu)', h3.fehler?.json);
+  const qOhne = (await req('POST', '/api/quote', { items: [V(1)], couponCode: 'EINS' })).json;
+  const qAndere = (await req('POST', '/api/quote', { items: [V(1)], couponCode: 'EINS', email: 'andere@example.test' })).json;
+  const qSelbst = (await req('POST', '/api/quote', { items: [V(1)], couponCode: 'EINS', email: 'kunde@example.test' })).json;
+  check(qOhne.coupon && !qAndere.coupon && /bereits vergeben/.test(qAndere.couponError || '') && qSelbst.coupon, 'Vorschau mit E-Mail: reservierter Einmal-Code gilt für die andere Kundin schon als vergeben, für die eigene nicht', { qOhne: !!qOhne.coupon, qAndere: qAndere.couponError, qSelbst: !!qSelbst.coupon });
   const c2 = await abschluss(h2.orderId, h2.accessKey);
   check(c2.complete.status === 200 && c2.invoiceNo, 'zweite Kasse abschließen → Rechnung', c2.complete.json);
   const c1 = await abschluss(h1.orderId, h1.accessKey);

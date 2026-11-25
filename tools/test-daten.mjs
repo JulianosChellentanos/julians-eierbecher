@@ -258,6 +258,29 @@ try {
   const outbox = readFileSync(path.join(dir, 'data/mail-outbox.json'), 'utf8');
   pruefe('Mails an die Kontoadresse ohne fremden Text aus dem Kontonamen (Willkommen, Passwort geändert)', outbox.includes('pw-flut@example.invalid') && !/phish\.example/.test(outbox));
 
+  // Passwortwechsel-Bremse zählt gelungene Wechsel, nicht Versuche: Tippfehler und zu kurze neue Passwörter sperren nicht
+  r = await s.req('POST', '/api/auth/register', { name: 'Tina Tipp', email: 'tipp@example.invalid', password: 'tipp-0-passwort' }, von('10.4.7.1'));
+  const tpc = [];
+  for (let i = 0; i < 3; i++) tpc.push((await s.req('POST', '/api/auth/password', { altesPasswort: `vertippt-${i}`, neuesPasswort: 'tipp-1-passwort' }, { 'x-auth': r.json?.token, ...von('10.4.7.1') })).status);
+  for (let i = 0; i < 2; i++) tpc.push((await s.req('POST', '/api/auth/password', { altesPasswort: 'tipp-0-passwort', neuesPasswort: 'kurz' }, { 'x-auth': r.json?.token, ...von('10.4.7.1') })).status);
+  tpc.push((await s.req('POST', '/api/auth/password', { altesPasswort: 'tipp-0-passwort', neuesPasswort: 'tipp-1-passwort' }, { 'x-auth': r.json?.token, ...von('10.4.7.1') })).status);
+  pruefe('Passwort ändern: 3 falsche alte + 2 zu kurze neue, danach der erste echte Wechsel → 200', tpc.join() === '400,400,400,400,400,200', tpc);
+
+
+  // Schlüsselflut aus einer IP verdrängt keine fremden Zähler: IP X ist nach 10 falschen Admin-Passwörtern gesperrt, IP Y meldet sich
+  // 11000-mal mit immer neuer Adresse an (früher: LRU mit 5000 Schlüsseln → alle Sperren weg) — X bleibt gesperrt, Y ist nach 30 gebremst
+  for (let i = 0; i < 12; i++) await s.req('GET', '/api/admin/data', null, admin(`flut-${i}`, '192.0.2.88'));
+  pruefe('Flut: IP X nach 12 falschen Admin-Passwörtern gesperrt (richtiges → 429)', (await s.req('GET', '/api/admin/data', null, admin(KEY, '192.0.2.88'))).status === 429);
+  const flut = {};
+  for (let runde = 0; runde < 22; runde++) {
+    const st = await parallel(s, 500, (i) => ({ method: 'POST', pfad: '/api/auth/login', headers: von('198.51.100.99'), body: { email: `flut-${runde}-${i}@example.invalid`, password: 'egal-egal' } }));
+    for (const x of st) flut[x.st] = (flut[x.st] || 0) + 1;
+  }
+  pruefe('Flut: 11000 Anmeldungen mit neuer Adresse aus IP Y → höchstens 30× 401, sonst 429', (flut[401] || 0) <= 30 && (flut[429] || 0) >= 10970, flut);
+  pruefe('Flut: IP X bleibt gesperrt (richtiges Admin-Passwort → 429)', (await s.req('GET', '/api/admin/data', null, admin(KEY, '192.0.2.88'))).status === 429);
+  pruefe('Flut: Konto-Bremse anderer IPs bleibt (11. Fehlversuch 10.3.0.1 / ip0 → 429)', (await s.req('POST', '/api/auth/login', { email: 'ip0@example.invalid', password: 'falsch-11' }, von('10.3.0.1'))).status === 429);
+  pruefe('Flut: Admin von anderer IP weiter erreichbar → 200', (await s.req('GET', '/api/admin/data', null, admin(KEY, '192.0.2.89'))).status === 200);
+
   // Passwort vergessen: 4. Anforderung → 200 ohne Mail; die bisherigen Links bleiben gültig
   await s.req('POST', '/api/auth/register', { name: 'Vera V', email: 'vera@example.invalid', password: 'vera-passwort' }, von('10.5.0.1'));
   const fc = [];
@@ -353,6 +376,20 @@ try {
   pruefe('adminKey von einer älteren Fassung geändert → wird übernommen und wieder zum Platzhalter', (await s3.req('GET', '/api/admin/data', null, admin('aus-alter-fassung-1', '192.0.2.221'))).status === 200
     && (await s3.req('GET', '/api/admin/data', null, A('192.0.2.222'))).status === 401 && platzhalter(JSON.parse(readFileSync(path.join(dir, 'data/settings.json'), 'utf8'))));
   await s3.stop();
+
+  // Gleichzeitige Anfragen mit dem richtigen Admin-Passwort teilen sich die laufende Prüfung (frische Instanz, ohne Gesamtbremse):
+  // nach 9 eigenen Tippfehlern und bei aktiver Gesamtbremse ohne Tippfehler → 200 + 200 (früher 200 + 429)
+  {
+    const dir = ordner('admin-parallel', { 'data/settings.json': SETTINGS() });
+    const s = await starte(dir);
+    for (let i = 0; i < 9; i++) await s.req('GET', '/api/admin/data', null, admin(`tipp-${i}`, '192.0.2.77'));
+    let par = (await parallel(s, 2, () => ({ pfad: '/api/admin/data', headers: admin('test-admin-123', '192.0.2.77') }))).map((x) => x.st);
+    pruefe('Admin: nach 9 Tippfehlern zwei gleichzeitige Anfragen mit richtigem Passwort → 200 + 200', par.join() === '200,200', par);
+    for (let i = 0; i < 100; i++) await s.req('GET', '/api/admin/data', null, admin('falsch', `203.0.${113 + (i % 10)}.${i + 1}`));
+    par = (await parallel(s, 2, () => ({ pfad: '/api/admin/data', headers: admin('test-admin-123', '198.18.5.5') }))).map((x) => x.st);
+    pruefe('Admin: Gesamtbremse aktiv, Inhaber ohne Tippfehler, zwei gleichzeitige Anfragen → 200 + 200', par.join() === '200,200', par);
+    await s.stop();
+  }
 } catch (err) {
   fehler++;
   console.error('❌ Abbruch:', err);

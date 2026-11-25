@@ -133,10 +133,14 @@ function vorlagen() {
   'Anrede: Titel/Anreden übersprungen („Dr. Anna Schmidt“ → „Hallo Anna,“), nur Nachname → wie eingegeben, Link → „Hallo!“',
   ['Dr. Anna Schmidt', 'Frau Erika Müller', 'Familie Meier', 'Herr Müller', 'Gewinn-Info:http://x'].map(hallo));
   const grade = { 'Phil Collins': 'Phil', 'Nat King': 'Nat', 'Med Ali': 'Med', 'Herr Phil Collins': 'Phil', 'Dr. Phil Meier': 'Phil', 'Dr. med. Eva Ott': 'Eva', 'Dr. med Eva Ott': 'Eva',
-    'Dr. rer. nat. Hans Meier': 'Hans', 'Prof. Dr. phil. Anna Berg': 'Anna', 'Fr. Dr.med. Eva Ott': 'Eva' };
+    'Dr. rer. nat. Hans Meier': 'Hans', 'Prof. Dr. phil. Anna Berg': 'Anna', 'Fr. Dr.med. Eva Ott': 'Eva',
+    'Dr. jur. Max Recht': 'Max', 'Dr. rer. pol. Max Geld': 'Max', 'Dr. med. dent. Anna Berg': 'Anna', 'Dr. med. vet. Lisa Hund': 'Lisa',
+    'Dr. rer.nat. Hans Meier': 'Hans', 'Dr.rer.nat. Hans Meier': 'Hans', 'Dr.-Ing. Karl Kaiser': 'Karl', "Jean-Luc O'Brien": 'Jean-Luc' };
   check(Object.entries(grade).every(([n, v]) => hallo(n) === `Hallo ${v},`), 'Anrede: „Phil“, „Nat“, „Med“ als Vornamen bleiben; „Dr. phil./med./rer. nat.“ zählen als Titel',
     Object.keys(grade).map((n) => `${n} → ${hallo(n)}`).filter((x, i) => !x.endsWith(`Hallo ${Object.values(grade)[i]},`)));
   check(!/Dr\.|Anna/.test(T.welcome({ user: { name: 'Dr. Anna Schmidt' }, settings: SET, baseUrl: BASE }).subject), 'Willkommen: kein Name im Betreff');
+  check(hallo('Gewinn\u2800abholen:\u2800phish.example/preis') === 'Hallo!' && hallo('Preis abholen: phish.example') === 'Hallo Preis,' && hallo('Anna2') === 'Hallo!',
+    'Anrede: nur namensartige Wörter (Domain mit U+2800 statt Leerzeichen → „Hallo!“)', ['Gewinn\u2800abholen:\u2800phish.example/preis', 'Anna2'].map(hallo));
   // Bestätigung: Annahme (AGB § 3), Frist (AGB § 8), Steuerhinweis, Konto-Link, nbsp
   const b = T.orderConfirmation({ order: ORDER(), settings: SET, baseUrl: BASE });
   check(/Mit dieser Bestätigung nehme ich dein Angebot an/.test(b.text) && /nehme ich dein Angebot an/.test(b.html), 'Bestätigung: Annahmesatz wie AGB § 3');
@@ -192,7 +196,11 @@ function vorlagen() {
   const zc = T.zahlungserinnerung({ order: ORDER({ userId: null, completedAt: '2026-11-26T08:00:00Z' }), settings: SET, baseUrl: BASE, heute: new Date('2026-12-05T10:00:00Z') });
   check(/bis spätestens Mittwoch, 9\. Dezember 2026/.test(zf.text) && !/2\. Dezember/.test(zf.text + zf.html) && /bis spätestens Samstag, 12\. Dezember 2026/.test(zc.text),
     'Zahlungserinnerung vor Ablauf der 14 Tage: nennt das Ende der Zahlungsfrist (9.12.), sonst 7 Tage ab heute (12.12.)', [zf.text.match(/bis spätestens[^:]*/)?.[0], zc.text.match(/bis spätestens[^:]*/)?.[0]]);
-  check(T.zahlungsfristBis({ createdAt: '2026-11-25T09:00:00Z', completedAt: '2026-11-26T08:00:00Z' }).toISOString() === '2026-12-10T08:00:00.000Z', 'Zahlungsfrist ab Vertragsschluss (Bestätigung = completedAt), sonst ab Bestelldatum');
+  check(T.zahlungsfristBis({ createdAt: '2026-11-25T09:00:00Z', completedAt: '2026-11-26T08:00:00Z' }).toISOString().slice(0, 10) === '2026-12-10' && T.zahlungsfristBis({ createdAt: '2026-11-25T09:00:00Z' }).toISOString().slice(0, 10) === '2026-12-09', 'Zahlungsfrist ab Vertragsschluss (Bestätigung = completedAt), sonst ab Bestelldatum');
+  // Kalendertage nach deutschem Datum: 21.10. 00:30 MESZ (= 20.10. 22:30 UTC) + 14 Tage → 4.11. (nicht 3.11. wegen der Zeitumstellung)
+  const dst = (iso) => T.zahlungserinnerung({ order: ORDER({ userId: null, completedAt: iso }), settings: SET, baseUrl: BASE, heute: new Date(iso) }).text.match(/bis spätestens ([^:]*)/)?.[1];
+  check(dst('2026-10-20T22:30:00Z') === 'Mittwoch, 4. November 2026' && dst('2026-10-20T23:30:00Z') === 'Mittwoch, 4. November 2026', 'Zahlungsfrist in Kalendertagen: Bestellung kurz nach Mitternacht vor dem Ende der Sommerzeit → 4.11.', [dst('2026-10-20T22:30:00Z'), dst('2026-10-20T23:30:00Z')]);
+  check(!/storniere/.test(zf.text) && /Zahlungsfrist läuft noch/.test(zf.text) && !/storniere/.test(zc.text), 'Frühe Zahlungserinnerung (Zahlungsfrist läuft noch): keine Stornoankündigung (AGB § 8: erst nach Erinnerung mit Nachfrist)');
   check(!/OVJU/i.test(Object.values({ b, sk, sg, rk, s1, ze }).map((m) => m.text + m.html + m.subject).join('')), 'Marke: kein „OVJU“');
 }
 
@@ -596,11 +604,35 @@ async function shopTests() {
     await admin('POST', '/api/admin/order-update', { orderId: z.orderId, paymentStatus: 'bezahlt', status: 'bezahlt' });
     r = await admin('POST', '/api/admin/mail-preview', { orderId: z.orderId, kind: 'zahlungserinnerung' });
     check(r.status === 400, 'Zahlungserinnerung nach Zahlung → 400');
+    // „Erneut“ auf eine NICHT zugestellte Erinnerung: immer frisch erzeugt (nie der gespeicherte Inhalt) — nach Zahlung abgelehnt,
+    // nach einer inzwischen zugestellten Erinnerung am selben Tag ebenfalls
+    const erinnerungMails = (id) => delivered().filter((m) => m.subject.includes(id) && /Erinnerung/.test(m.subject)).length;
+    const zx = await bestellung({ name: 'Xaver Später', email: 'xaver@formsam.example' });
+    const zy = await bestellung({ name: 'Yvonne Zweimal', email: 'yvonne@formsam.example' });
+    await warte(() => delivered().filter((m) => m.subject.includes(zx.orderId) || m.subject.includes(zy.orderId)).length >= 4);
+    smtp.greet421 = true;
+    const rx = await admin('POST', '/api/admin/mail-send', { orderId: zx.orderId, kind: 'zahlungserinnerung' });
+    const ry = await admin('POST', '/api/admin/mail-send', { orderId: zy.orderId, kind: 'zahlungserinnerung' });
+    smtp.greet421 = false;
+    const fx = (await log()).find((e) => e.orderId === zx.orderId && e.kind === 'zahlungserinnerung' && e.status !== 'gesendet');
+    const fy = (await log()).find((e) => e.orderId === zy.orderId && e.kind === 'zahlungserinnerung' && e.status !== 'gesendet');
+    check(!rx.json?.ok && !ry.json?.ok && fx?.resendable && fy?.resendable, 'Zahlungserinnerung bei Ausfall: nicht zugestellt, „Erneut“ möglich', [rx.json, ry.json]);
+    await admin('POST', '/api/admin/order-update', { orderId: zx.orderId, paymentStatus: 'bezahlt', status: 'bezahlt' });
+    r = await admin('POST', '/api/admin/mail-resend', { id: fx.id });
+    check(!r.json?.ok && /nur für offene Vorkasse/.test(r.json?.error || '') && erinnerungMails(zx.orderId) === 0, '„Erneut“ auf nicht zugestellte Erinnerung nach Zahlung → abgelehnt, keine Mail', r.json);
+    r = await admin('POST', '/api/admin/mail-send', { orderId: zy.orderId, kind: 'zahlungserinnerung' });
+    const ry2 = await admin('POST', '/api/admin/mail-resend', { id: fy.id });
+    check(r.json?.ok && !ry2.json?.ok && /eine je Tag/.test(ry2.json?.error || '') && erinnerungMails(zy.orderId) === 1, '„Erneut“ auf nicht zugestellte Erinnerung, nachdem heute eine zugestellt wurde → abgelehnt (eine je Tag)', [r.json, ry2.json]);
     // IDN: Punycode-Domain; Umlaut vor dem @ ohne SMTPUTF8 → klare, endgültige Meldung
     const i1 = await bestellung({ email: 'kunde@müller.example' });
     await warte(() => delivered().some((m) => m.subject.includes(i1.orderId) && m.rcpts[0] === 'kunde@xn--mller-kva.example'));
     check(delivered().some((m) => m.subject.includes(i1.orderId) && m.rcpts[0] === 'kunde@xn--mller-kva.example'), 'IDN-Domain: RCPT in Punycode');
-    const i2 = await bestellung({ email: 'jürgen@formsam.example' });
+    // Umlaut vor dem @: die Kasse lehnt solche Adressen inzwischen ab (test-eingaben) — ältere Bestellungen können sie noch haben
+    const i2 = await bestellung({ email: 'juergen@formsam.example', abschliessen: false });
+    const i2Datei = path.join(dir, 'orders', i2.orderId, 'order.json');
+    writeFileSync(i2Datei, JSON.stringify({ ...order(i2.orderId), customer: { ...order(i2.orderId).customer, email: 'jürgen@formsam.example' } }, null, 2));
+    await req('PUT', `/api/order/${i2.orderId}/stl/0`, miniStl(), { 'x-order-key': i2.accessKey });
+    await req('POST', `/api/order/${i2.orderId}/complete`, {}, { 'x-order-key': i2.accessKey });
     await warte(() => mailHist(i2.orderId).some((n) => /SMTPUTF8/.test(n)));
     check(mailHist(i2.orderId).some((n) => /nicht zugestellt: .*Umlaute.*SMTPUTF8/.test(n)), 'Umlaut vor dem @, Server ohne SMTPUTF8: „nicht zugestellt“ mit klarer Meldung', mailHist(i2.orderId));
     // Ausfall + Neustart: Stand bleibt, Inhalt (mit Anhängen) übersteht den Neustart, „Jetzt senden“ stellt zu

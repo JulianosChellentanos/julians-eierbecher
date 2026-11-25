@@ -1346,6 +1346,16 @@ async function applyDesign(cfg, code) {
   reframeAt = reqSeq; // das geladene Design einrahmen, sobald es berechnet ist (auch wenn die Kamera schon bewegt wurde)
   showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Konfigurator bereit");
   renderPrices();
+  // Vorschaubild des geladenen Codes nachliefern, falls es fehlt (vom Admin entfernt, älterer Code): der Server nimmt es nur für einen
+  // leeren Platz an (das erste Bild gilt), ein vorhandenes bleibt unverändert
+  if (code) {
+    const seq = reqSeq;
+    modelReady().then(() => {
+      if (seq !== reqSeq) return;   // inzwischen weiter gestaltet → das Bild passte nicht mehr zum Code
+      renderer.render(scene, camera);
+      return uploadThumb(code, captureThumb());
+    }).catch(() => {});
+  }
   return true;
 }
 

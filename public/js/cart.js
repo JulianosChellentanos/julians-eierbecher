@@ -360,7 +360,8 @@ async function applyCoupon() {
   const sig = cartSig();   // Stand, für den der Server rechnet — ändert sich der Warenkorb danach, gilt der Gutschein nicht mehr
   const r = await (await fetch('/api/quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items: cartPayload(), couponCode: code }),
+    // E-Mail (falls schon eingetragen): ein Einmal-Code, den gerade eine andere Kundin in der Kasse hat, gilt dann schon hier als vergeben
+    body: JSON.stringify({ items: cartPayload(), couponCode: code, email: $('#co-email')?.value.trim() || undefined }),
   })).json();
   if (r.coupon) {
     coupon = { code: r.coupon.code, off: r.coupon.off, guthaben: !!r.coupon.guthaben, sig };
@@ -509,6 +510,7 @@ async function submitOrder(payment, paypalOrderId = null) {
       if (!r.ok) {
         // Preis hat sich geändert (Admin hat Preise/Aktion geändert, während die Kasse offen war): neu rechnen, neu bestätigen lassen
         if (r.code === 'preis') await preisNeu();
+        if (r.code === 'gutschein' && $('#co-coupon').value.trim()) await applyCoupon().catch(() => {});   // Gutscheinfeld zeigt den Grund
         throw new Error(r.error);
       }
       offeneKasse = { sig, orderId: r.orderId, accessKey: r.accessKey || '', paypalOrderId: payment === 'paypal' ? paypalOrderId : null };
@@ -524,7 +526,11 @@ async function submitOrder(payment, paypalOrderId = null) {
       const up = await fetch(`/api/order/${r.orderId}/stl/${i}`, {
         method: 'PUT', headers: { 'Content-Type': 'model/stl', ...orderKey }, body: buf,
       });
-      if (!up.ok) throw new Error('Upload fehlgeschlagen – bitte versuch es gleich noch einmal, deine Bestellung ist schon angelegt.');
+      if (!up.ok) {
+        // Meldung des Servers zeigen (z. B. 413 Datei zu groß, 429 zu viele Uploads, 507 Speicher knapp), sonst die allgemeine
+        const j = await up.json().catch(() => null);
+        throw new Error(j?.error ? `${j.error} Bitte versuch es gleich noch einmal, deine Bestellung ist schon angelegt.` : 'Upload fehlgeschlagen – bitte versuch es gleich noch einmal, deine Bestellung ist schon angelegt.');
+      }
     }
     prog.textContent = 'Erstelle Rechnung …';
     const done = await (await fetch(`/api/order/${r.orderId}/complete`, { method: 'POST', headers: orderKey })).json();

@@ -699,8 +699,10 @@ async function bestellungNachladen(id) {
 const kannErinnern = (o) => o.payment !== 'paypal' && o.paymentStatus !== 'bezahlt' && st(o) !== 'storniert' && (o.total || 0) > 0 && !kasseAbgebrochen(o);
 // Zahlungsfrist (AGB § 8): 14 Tage nach Vertragsschluss (Bestätigung = completedAt). Die Erinnerung nennt 7 Tage ab heute, aber nie
 // ein Datum davor — wie zahlungserinnerungBis in lib/mail-templates.js
-const zahlungsfristBis = (o) => { const t = Date.parse(o.completedAt || o.createdAt); return Number.isFinite(t) ? t + 14 * 864e5 : 0; };
-const erinnerungFrueh = (o) => zahlungsfristBis(o) > Date.now() + 7 * 864e5;
+// In Kalendertagen nach deutschem Datum (12:00 UTC des Tages) — wie tagePlusBerlin in lib/mail-templates.js, auch über die Zeitumstellung
+const tagePlusBerlin = (t, n) => { const d = new Date(t); if (isNaN(d)) return 0; const [y, m, x] = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(d).split('-').map(Number); return Date.UTC(y, m - 1, x + n, 12); };
+const zahlungsfristBis = (o) => { const t = Date.parse(o.completedAt || o.createdAt); return Number.isFinite(t) ? tagePlusBerlin(t, 14) : 0; };
+const erinnerungFrueh = (o) => zahlungsfristBis(o) > tagePlusBerlin(Date.now(), 7);
 async function zahlungErinnern(id) {
   const o = DATA.orders.find((x) => x.orderId === id);
   if (!o) return;

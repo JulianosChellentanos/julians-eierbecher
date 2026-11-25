@@ -1008,35 +1008,59 @@ function newVerifyToken(u) {
 const verifyLinkFor = (token) => `${baseUrlFor(settings)}/?verify=${token}`;
 // Bremsen (im Speicher): forgotLimited(key, max, fenster) zählt einen Versuch und meldet true, wenn schon max im Zeitfenster liegen;
 // rateLimitReached(key, max, fenster) sieht nur nach (für Sperren, die nur Fehlgriffe zählen). Schlüssel je IP nutzen clientIp(),
-// das IPv6 auf das /64-Netz kürzt. Jeder Schlüssel merkt sich sein Zeitfenster (Tagesgrenzen überleben das Durchkehren nach
-// 15-Minuten-Schlüsseln); der Speicher ist hart gedeckelt (FORGOT_MAX_KEYS), bei Überlauf fallen die am längsten unbenutzten
-// Schlüssel weg. Ein Neustart setzt alle Zähler zurück (bewusst: kein Angreifer kann den Shop neu starten).
+// das IPv6 auf das /64-Netz kürzt. Jeder Schlüssel merkt sich sein Zeitfenster (Tagesgrenzen überleben das Aufräumen von
+// 15-Minuten-Schlüsseln). Ein Neustart setzt alle Zähler zurück (bewusst: kein Angreifer kann den Shop neu starten).
+// Speicher gegen Verdrängen geschützt: Jede Bremse (Art = Teil vor dem ersten „:“, z. B. login, login-ip, admin-fehl, wartung)
+// hat einen eigenen Speicher mit eigener Obergrenze (BREMSE_MAX_JE_ART). Ein Schlüssel mit Treffern im Zeitfenster wird nie
+// verdrängt — ist der Speicher einer Art voll, räumt sie abgelaufene Schlüssel weg; bleibt er voll, gilt der neue Schlüssel als
+// gebremst (lieber eine neue Adresse kurz bremsen, als laufende Sperren zurückzusetzen). Schlüssel entstehen erst beim Zählen
+// (rateLimitReached legt keine an), leere Schlüssel (bremseFrei nach einem richtigen Passwort) verschwinden sofort. Zusammengesetzte
+// Schlüssel mit frei wählbarem Teil (login:<ip>|<mail>, mail:<mail>, register-mail:<mail> …) belegt ein Aufruf erst, wenn die
+// Bremse je IP frei ist — eine IP legt so höchstens so viele an, wie ihre IP-Bremse Versuche zulässt.
 // „Passwort vergessen“: 3 je E-Mail und 10 je IP in 15 Minuten (je IP großzügiger, damit ein Proxy ohne X-Forwarded-For nicht alle
 // Kunden gemeinsam sperrt).
 const FORGOT_IP_MAX = 10;
-const FORGOT_MAX_KEYS = 5000;
+const BREMSE_MAX_JE_ART = 20000;
 const STUNDE_MS = 3600e3;
-const forgotHits = new Map();   // Schlüssel → { win: Zeitfenster ms, hits: [Zeitpunkte] }
-let forgotSweep = 0;
+const bremsen = new Map();   // Art → Map(Schlüssel → { win: Zeitfenster ms, hits: [Zeitpunkte] })
+const bremseArt = (key) => { const s = String(key); const i = s.indexOf(':'); return i < 0 ? s : s.slice(0, i); };
+const bremseAufgeraeumt = new Map();   // Art → Zeitpunkt des letzten Aufräumens (höchstens alle 10 s, wenn sie voll ist)
+/** abgelaufene Schlüssel (kein Treffer mehr im eigenen Fenster) einer Art entfernen */
+function bremseAufraeumen(art, m, now = Date.now()) {
+  bremseAufgeraeumt.set(art, now);
+  for (const [k, v] of m) if (!v.hits.some((t) => now - t < v.win)) m.delete(k);
+  if (!m.size) bremsen.delete(art);
+}
 function forgotLimited(key, max = 3, windowMs = 15 * 60 * 1000) {
-  const now = Date.now();
-  const alt = forgotHits.get(key);
-  const hits = (alt?.hits || []).filter((t) => now - t < windowMs);
-  forgotHits.delete(key);   // ans Ende der (einfügegeordneten) Map: zuletzt benutzt
-  forgotHits.set(key, { win: Math.max(windowMs, alt?.win || 0), hits });
-  if (hits.length >= max) return true;
-  hits.push(now);
-  if (forgotHits.size > FORGOT_MAX_KEYS && now - forgotSweep > 60_000) {
-    forgotSweep = now;
-    for (const [k, v] of forgotHits) if (!v.hits.some((t) => now - t < v.win)) forgotHits.delete(k);
+  const now = Date.now(), art = bremseArt(key);
+  let m = bremsen.get(art);
+  const alt = m?.get(key);
+  if (!alt) {
+    // neuer Schlüssel: nur wenn Platz ist — laufende Zähler (auch anderer IPs und anderer Bremsen) werden nie verdrängt
+    if (m && m.size >= BREMSE_MAX_JE_ART) {
+      if (now - (bremseAufgeraeumt.get(art) || 0) > 10_000) bremseAufraeumen(art, m, now);
+      m = bremsen.get(art);
+      if (m && m.size >= BREMSE_MAX_JE_ART) {
+        if (!forgotLimited.gemeldet?.has(art)) { (forgotLimited.gemeldet ||= new Set()).add(art); console.warn(`⚠️  Bremse „${art}“: Speicher voll (${BREMSE_MAX_JE_ART} laufende Zähler) – neue Adressen werden gebremst, bis Zähler ablaufen`); }
+        return true;
+      }
+    }
+    if (!m) { m = new Map(); bremsen.set(art, m); }
+    if (max <= 0) return true;
+    m.set(key, { win: windowMs, hits: [now] });
+    return false;
   }
-  while (forgotHits.size > FORGOT_MAX_KEYS) forgotHits.delete(forgotHits.keys().next().value);
+  const hits = alt.hits.filter((t) => now - t < Math.max(windowMs, alt.win));
+  alt.win = Math.max(windowMs, alt.win);
+  alt.hits = hits;
+  if (hits.filter((t) => now - t < windowMs).length >= max) return true;
+  hits.push(now);
   return false;
 }
-/** Nur nachsehen (ohne zu zählen): ist das Limit für key im Zeitfenster erreicht? — für Sperren, die nur Fehlgriffe zählen */
+/** Nur nachsehen (ohne zu zählen, legt keinen Schlüssel an): ist das Limit für key im Zeitfenster erreicht? */
 function rateLimitReached(key, max, windowMs = 15 * 60 * 1000) {
   const now = Date.now();
-  return (forgotHits.get(key)?.hits || []).filter((t) => now - t < windowMs).length >= max;
+  return (bremsen.get(bremseArt(key))?.get(key)?.hits || []).filter((t) => now - t < windowMs).length >= max;
 }
 /**
  * Fehlversuch vorab belegen (Passwortprüfungen): zählt sofort, noch bevor die Prüfung (scrypt) fertig ist — sonst kämen parallel
@@ -1044,20 +1068,29 @@ function rateLimitReached(key, max, windowMs = 15 * 60 * 1000) {
  * (für bremseFrei, wenn das Passwort stimmt) oder 0, wenn die Grenze schon erreicht ist (dann wird nichts belegt).
  */
 function bremsePlatz(key, max, windowMs = 15 * 60 * 1000) {
-  return forgotLimited(key, max, windowMs) ? 0 : (forgotHits.get(key)?.hits.at(-1) || 0);
+  return forgotLimited(key, max, windowMs) ? 0 : (bremsen.get(bremseArt(key))?.get(key)?.hits.at(-1) || 0);
 }
+/** Belegten Platz zurückgeben (richtiges Passwort) — ein dadurch leerer Schlüssel verschwindet ganz */
 function bremseFrei(key, t) {
-  const hits = forgotHits.get(key)?.hits;
-  const i = t && hits ? hits.lastIndexOf(t) : -1;
-  if (i >= 0) hits.splice(i, 1);
+  const art = bremseArt(key), m = bremsen.get(art), e = m?.get(key);
+  const i = t && e ? e.hits.lastIndexOf(t) : -1;
+  if (i >= 0) e.hits.splice(i, 1);
+  if (e && !e.hits.length) { m.delete(key); if (!m.size) bremsen.delete(art); }
 }
-/** Anmeldeversuch (Login, Passwort ändern, Konto löschen) in beiden Bremsen belegen — je IP + Konto und je IP → { frei() } oder null */
+// Alle 10 Minuten abgelaufene Schlüssel aller Bremsen entfernen (hält den Speicher klein, ohne laufende Zähler anzufassen)
+setInterval(() => { const now = Date.now(); for (const [art, m] of bremsen) bremseAufraeumen(art, m, now); }, 10 * 60e3).unref();
+/**
+ * Anmeldeversuch (Login, Passwort ändern, Konto löschen) in beiden Bremsen belegen — je IP und je IP + Konto → { frei() } oder null.
+ * Erst die Bremse je IP (fester Schlüssel): Ist sie erreicht, entsteht für die frei wählbare Adresse gar kein Schlüssel — eine IP
+ * legt so höchstens LOGIN_FEHL_IP Konto-Schlüssel je 15 Minuten an und kann keine fremden Zähler aus dem Speicher drängen.
+ */
 function anmeldePlatz(ip, mail) {
   const kk = `login:${ip}|${mail}`, ki = `login-ip:${ip}`;
-  const a = bremsePlatz(kk, LOGIN_FEHL_KONTO);
-  if (!a) return null;
+  if (rateLimitReached(ki, LOGIN_FEHL_IP) || rateLimitReached(kk, LOGIN_FEHL_KONTO)) return null;
   const b = bremsePlatz(ki, LOGIN_FEHL_IP);
-  if (!b) { bremseFrei(kk, a); return null; }
+  if (!b) return null;
+  const a = bremsePlatz(kk, LOGIN_FEHL_KONTO);
+  if (!a) { bremseFrei(ki, b); return null; }
   return { frei: () => { bremseFrei(kk, a); bremseFrei(ki, b); } };
 }
 /**
@@ -1308,6 +1341,8 @@ async function wartungTor(req, res, p, url) {
 const mailer = createMailer({
   dataDir: DATA, getSettings: () => settings, log: (m) => console.log('✉️ ', m),
   onFinal: (e) => mailErgebnis(e), rebuildable: (e) => mailNeuBaubar(e), rebuild: (e) => mailNeuBauen(e),
+  // Zahlungserinnerung nie aus dem Speicher: Zahlstand, abgebrochene Kasse, eine je Tag und die Frist von heute gelten auch bei „Erneut“
+  frischBauen: (e) => e.kind === 'zahlungserinnerung',
 });
 const MAIL_KEYS = ['enabled', 'host', 'port', 'secure', 'user', 'pass', 'from', 'fromName', 'replyTo', 'adminTo', 'adminCopy', 'autoStatusMails', 'publicUrl', 'allowSelfSigned'];
 // isEmail kommt aus lib/eingaben.js (wie der Mailversand, aber linear und höchstens 254 Zeichen)
@@ -1395,7 +1430,7 @@ function erinnertHeute(order) {
   const tag = (t) => new Date(t).toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin' });
   return z && tag(z) === tag(Date.now()) ? new Date(z).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }) : '';
 }
-const erinnerungLaeuft = new Set();
+const erinnerungLaeuft = new Map();   // orderId → wer gerade sendet ('senden' = Knopf im Drawer, sonst ID des Protokolleintrags bei „Erneut“)
 // „Erneut“ im Versandprotokoll bei Mails, deren Inhalt nicht mehr gespeichert ist (zugestellt) oder deren Anhänge fehlen:
 // aus Bestellung bzw. Widerruf neu erzeugen — wie „senden“ im Bestell-Drawer. Passwort-/Bestätigungslinks und Freitext nicht.
 function mailNeuBaubar(e) {
@@ -1418,7 +1453,8 @@ async function mailNeuBauen(e) {
   if (kind === 'admin-neu') return { to: adminEmpfaenger(), replyTo: antwortAn(order.customer?.email), ...adminNewOrder({ order, settings, baseUrl }) };
   // „Erneut“ einer zugestellten Zahlungserinnerung: dieselbe Tagesgrenze wie der Knopf im Drawer
   const um = kind === 'zahlungserinnerung' ? erinnertHeute(order) : '';
-  if (um || (kind === 'zahlungserinnerung' && erinnerungLaeuft.has(orderId))) throw new Error(`Heute ist schon eine Zahlungserinnerung rausgegangen${um ? ` (um ${um} Uhr)` : ''} – eine je Tag`);
+  const laeuft = kind === 'zahlungserinnerung' ? erinnerungLaeuft.get(orderId) : undefined;
+  if (um || (laeuft !== undefined && laeuft !== e.id)) throw new Error(`Heute ist schon eine Zahlungserinnerung rausgegangen${um ? ` (um ${um} Uhr)` : ''} – eine je Tag`);
   const body = kind.startsWith('status:') ? { kind: 'status', status: kind.slice(7) }
     : kind.startsWith('reklamation:') ? { kind: 'reklamation', phase: kind.slice(12) } : { kind };
   const attachments = kind === 'bestaetigung' ? await legalAttachments() : [];
@@ -1907,15 +1943,16 @@ const adminAnfragen = new WeakSet(); // Anfragen mit geprüftem Admin-Passwort
 async function adminAnmeldung(req) {
   const k = req.headers['x-admin-key'];
   if (typeof k !== 'string' || !k) return 'ohne';
-  // Bremse vor dem Cache: sonst käme ein gesperrter Rater mit dem richtigen (gerade gemerkten) Passwort doch durch
   const ip = clientIp(req), kIp = `admin-fehl:${ip}`;
-  const breit = rateLimitReached('admin-fehl', ADMIN_FEHL_GESAMT);
-  if (rateLimitReached(kIp, breit ? 1 : ADMIN_FEHL_IP)) return 'gebremst';
-  const h = sha256(k), now = Date.now();
-  if (adminCache.get(h) > now) { adminCache.set(h, now + ADMIN_CACHE_MS); adminAnfragen.add(req); return 'ok'; }   // gleitend: 5 min nach der letzten Anfrage
-  const schluessel = `${ip}|${h}`;
+  const h = sha256(k), now = Date.now(), schluessel = `${ip}|${h}`;
+  // Läuft für dieselbe IP gerade die Prüfung desselben Passworts (Admin lädt mehreres gleichzeitig), wird sie mitgenutzt — das ist
+  // kein weiterer Rateversuch; sonst sperrte die Reservierung der ersten Anfrage die zweite (nach Tippfehlern oder bei Gesamtbremse)
   let pruefung = adminPruefungen.get(schluessel);
   if (!pruefung) {
+    // Bremse vor dem Cache: sonst käme ein gesperrter Rater mit dem richtigen (gerade gemerkten) Passwort doch durch
+    const breit = rateLimitReached('admin-fehl', ADMIN_FEHL_GESAMT);
+    if (rateLimitReached(kIp, breit ? 1 : ADMIN_FEHL_IP)) return 'gebremst';
+    if (adminCache.get(h) > now) { adminCache.set(h, now + ADMIN_CACHE_MS); adminAnfragen.add(req); return 'ok'; }   // gleitend: 5 min nach der letzten Anfrage
     const tIp = bremsePlatz(kIp, breit ? 1 : ADMIN_FEHL_IP);
     if (!tIp) return 'gebremst';
     const tAlle = bremsePlatz('admin-fehl', ADMIN_FEHL_GESAMT);
@@ -3125,7 +3162,7 @@ function pruefeKasse(data, { garantie = null } = {}) {
   const totals = computeTotals(items, data.couponCode, { email: customer.email });
   // Gutschein, der (inzwischen) nicht mehr gilt — laufende Aktion, Mindestbestellwert unterschritten, aufgebraucht: lieber abbrechen
   // als still ohne Gutschein abrechnen — der Kunde sieht die Meldung in der Kasse und kann den Code entfernen
-  if (data.couponCode && totals.couponError) return { status: 400, error: totals.couponError, customer };
+  if (data.couponCode && totals.couponError) return { status: 400, error: totals.couponError, code: 'gutschein', customer };
   const exp = data.expectedTotal === undefined || data.expectedTotal === null || data.expectedTotal === '' ? NaN : Number(data.expectedTotal);
   if (!Number.isFinite(exp)) {
     return { status: 409, code: 'preis', total: totals.total, customer, error: 'Die Kasse ist nicht mehr aktuell – bitte lade die Seite neu und prüf den Betrag.' };
@@ -3565,7 +3602,7 @@ async function handleCheckout(req, res) {
   // Reservierung passieren ohne await dazwischen (PayPal ist schon bezahlt → dann nicht mehr abbrechen)
   const gc = totals.coupon ? couponByCode(totals.coupon.code) : null;
   if (gc && isGuthaben(gc) && !paypalCap && couponRest(gc) + 0.005 < totals.coupon.off) {
-    return send(res, 400, { ok: false, error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst – bitte prüf den Betrag in der Kasse.` });
+    return send(res, 400, { ok: false, code: 'gutschein', error: `Gutschein „${gc.code}“ wurde inzwischen eingelöst – bitte prüf den Betrag in der Kasse.` });
   }
   if (!paypalCap) forgotLimited(kasseKey, KASSE_IP_MAX, STUNDE_MS);
   // neue Nummer, die es noch nicht gibt (synchron geprüft — ein vorhandener Ordner würde sonst überschrieben)
@@ -3642,7 +3679,7 @@ function uploadMenge(ip, eintrag = null) {
   if (eintrag) liste.push(eintrag);
   uploadMengen.delete(ip);
   if (liste.length) uploadMengen.set(ip, liste);
-  while (uploadMengen.size > FORGOT_MAX_KEYS) uploadMengen.delete(uploadMengen.keys().next().value);
+  while (uploadMengen.size > BREMSE_MAX_JE_ART) uploadMengen.delete(uploadMengen.keys().next().value);   // eine IP = ein Schlüssel
   return liste.reduce((s, e) => s + e.n, 0);
 }
 /** Abgebrochener oder abgelehnter Upload: belegt nichts auf der Platte → zählt nicht */
@@ -4044,10 +4081,15 @@ const server = http.createServer(async (req, res) => {
         await saveSessions();
         return send(res, 200, { ok: true, beendet: n });
       }
-      let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
-      // Passwortwechsel je Konto höchstens PW_WECHSEL_MAX je Stunde (jeder verschickt eine Mail, siehe unten)
-      if (p === '/api/auth/password' && forgotLimited(`pw-wechsel:${u.id}`, PW_WECHSEL_MAX, STUNDE_MS)) {
-        return send(res, 429, { ok: false, error: 'Du hast dein Passwort gerade mehrmals geändert – bitte versuch es in einer Stunde noch einmal.' });
+      const body = await readJson(req, 16 * 1024);
+      // Passwortwechsel je Konto höchstens PW_WECHSEL_MAX je Stunde (jeder verschickt eine Mail, siehe unten) — gezählt werden nur
+      // gelungene Wechsel (unten); Tippfehler beim alten Passwort bremst anmeldePlatz, ein zu kurzes neues kostet nichts
+      if (p === '/api/auth/password') {
+        if (rateLimitReached(`pw-wechsel:${u.id}`, PW_WECHSEL_MAX, STUNDE_MS)) {
+          return send(res, 429, { ok: false, error: 'Du hast dein Passwort gerade mehrmals geändert – bitte versuch es in einer Stunde noch einmal.' });
+        }
+        const pwFehler = pwRegel(body.neuesPasswort);
+        if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
       }
       const platz = anmeldePlatz(clientIp(req), u.email);
       if (!platz) return send(res, 429, LOGIN_GEBREMST);
@@ -4064,9 +4106,10 @@ const server = http.createServer(async (req, res) => {
         await kontoLoeschen(u, 'auf Wunsch im Konto');
         return send(res, 200, { ok: true });
       }
-      const pwFehler = pwRegel(body?.neuesPasswort);
-      if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
       if (!users.includes(u)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });   // inzwischen gelöscht
+      if (forgotLimited(`pw-wechsel:${u.id}`, PW_WECHSEL_MAX, STUNDE_MS)) {   // gleichzeitig abgeschickte Wechsel: Grenze gilt trotzdem
+        return send(res, 429, { ok: false, error: 'Du hast dein Passwort gerade mehrmals geändert – bitte versuch es in einer Stunde noch einmal.' });
+      }
       u.salt = crypto.randomBytes(16).toString('hex');
       u.hash = await hashPw(body.neuesPasswort, u.salt);
       delete u.reset;
@@ -4227,7 +4270,8 @@ const server = http.createServer(async (req, res) => {
         return res.end(await readFile(file));
       }
       // Admin (Produktfotos & Galerie → Vorschaubild eines Design-Codes): verunglücktes oder vorab fremd belegtes Bild entfernen —
-      // das nächste Speichern des Designs im Shop (Code anzeigen, Liste, Warenkorb) lädt ein neues hoch
+      // sobald der Code im Shop geöffnet (?d=, Code eingeben, Listeneintrag — app.js applyDesign) oder gespeichert wird, lädt der
+      // Browser ein neues hoch (nur für den leeren Platz)
       if (req.method === 'DELETE') {
         if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
         if (!designs[code]) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht' });
@@ -4278,11 +4322,13 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish, aufpreis }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis) })));
     }
     if (req.method === 'POST' && p === '/api/quote') {
-      const { items, couponCode } = await readJson(req);
+      const { items, couponCode, email: rohEmail } = await readJson(req);
+      // optional die E-Mail aus der Kasse: dann zählen beim Gutschein mit Höchstzahl auch offene Kassen anderer Kundinnen (wie /api/checkout)
+      const email = typeof rohEmail === 'string' && isEmail(rohEmail) ? rohEmail.trim().toLowerCase() : null;
       if (Array.isArray(items) && items.length > MAX_POSITIONEN) return send(res, 400, { ok: false, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.` });
       const sperre = (Array.isArray(items) && positionenFehler(items)) || produktSperre(items) || farbSperre(items);
       if (sperre) return send(res, 400, { ok: false, error: sperre });
-      const t = computeTotals(Array.isArray(items) ? items : [], couponCode);
+      const t = computeTotals(Array.isArray(items) ? items : [], couponCode, { email });
       return send(res, 200, {
         ok: true,
         lines: t.lines.map((l) => ({ qty: l.qty, unit: l.unit, off: l.off, line: l.line, parts: l.parts, color: l.color, uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName, aktionId: l.aktionId })),
@@ -4862,7 +4908,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && (p === '/api/admin/mail-preview' || p === '/api/admin/mail-send')) {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       try {
-        const body = JSON.parse((await readBody(req, 256 * 1024)).toString('utf8'));
+        const body = await readJson(req, 256 * 1024);
         if (!orderIdOk(body.orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
         let order;
         try { order = await readOrder(body.orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
@@ -4877,7 +4923,7 @@ const server = http.createServer(async (req, res) => {
         const erinnerung = m.key === 'zahlungserinnerung';
         if (erinnerung) {
           if (erinnerungLaeuft.has(order.orderId)) return send(res, 409, { ok: false, error: 'Die Zahlungserinnerung wird gerade gesendet – eine je Tag' });
-          erinnerungLaeuft.add(order.orderId);
+          erinnerungLaeuft.set(order.orderId, 'senden');
         }
         try {
           if (erinnerung) {
@@ -4898,7 +4944,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/admin/mail-test') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       try {
-        const body = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8'));
+        const body = await readJson(req, 64 * 1024);
         const to = String(body.to || '').trim();
         if (to && !isEmail(to)) return send(res, 400, { ok: false, error: 'Ungültige Empfängeradresse', log: [] });
         const override = {};
@@ -4906,7 +4952,7 @@ const server = http.createServer(async (req, res) => {
         const r = await mailer.test(override, to);
         return send(res, 200, { ok: !!r.ok, error: r.error || '', log: r.log || [] });
       } catch (err) {
-        return send(res, 500, { ok: false, error: err.message || 'Serverfehler', log: [] });
+        return send(res, err.httpCode || 500, { ok: false, error: err.message || 'Serverfehler', log: [] });
       }
     }
     if (p === '/api/admin/mail-log') {
@@ -4930,22 +4976,32 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/admin/mail-quittieren') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       try {
-        const { id } = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8'));
+        const { id } = await readJson(req, 16 * 1024);
         if (typeof id !== 'string' || !(id === 'alle' || /^[a-z0-9]{6,40}$/.test(id))) return send(res, 400, { ok: false, error: 'Ungültige Protokoll-ID' });
         return send(res, 200, await mailer.quittieren(id));
       } catch (err) {
-        return send(res, 500, { ok: false, error: err.message || 'Serverfehler' });
+        return send(res, err.httpCode || 500, { ok: false, error: err.message || 'Serverfehler' });
       }
     }
     if (req.method === 'POST' && p === '/api/admin/mail-resend') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       try {
-        const { id } = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8'));
+        const { id } = await readJson(req, 16 * 1024);
         if (typeof id !== 'string' || !/^[a-z0-9]{6,40}$/.test(id)) return send(res, 400, { ok: false, error: 'Ungültige Protokoll-ID' });
-        const r = await mailer.resend(id);
-        return send(res, 200, { ok: !!r.ok, error: r.error || '' });
+        // „Erneut“ auf eine Zahlungserinnerung: die Bestellung für die Dauer des Versands reservieren (wie der Knopf im Drawer) —
+        // der Mailer erzeugt sie frisch (frischBauen), also mit Zahlstand, Tagesgrenze und Frist von heute
+        const e = await mailer.eintrag(id);
+        const erinnerung = e?.kind === 'zahlungserinnerung' ? mailOrderId(e) : '';
+        if (erinnerung) {
+          if (erinnerungLaeuft.has(erinnerung)) return send(res, 409, { ok: false, error: 'Die Zahlungserinnerung wird gerade gesendet – eine je Tag' });
+          erinnerungLaeuft.set(erinnerung, id);
+        }
+        try {
+          const r = await mailer.resend(id);
+          return send(res, 200, { ok: !!r.ok, error: r.error || '' });
+        } finally { if (erinnerung && erinnerungLaeuft.get(erinnerung) === id) erinnerungLaeuft.delete(erinnerung); }
       } catch (err) {
-        return send(res, 500, { ok: false, error: err.message || 'Serverfehler' });
+        return send(res, err.httpCode || 500, { ok: false, error: err.message || 'Serverfehler' });
       }
     }
     // Druckzettel (Seite, A4) — nur mit Admin-Kopf (die Oberfläche lädt ihn per fetch; ein Passwort in der URL landet in Verlauf und Logs)
