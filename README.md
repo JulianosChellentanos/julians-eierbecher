@@ -311,9 +311,12 @@ Vor dem ganzen Shop steht dann eine Wartungsseite mit Zugangskennwort (unten Lin
 Kennwort-Hash und Ablauf; ein neues Kennwort sperrt alle Freigaben, Cookies aus der Zeit vor diesem Format gelten nicht
 mehr — einmal neu eingeben). **Ohne Kennwort erreichbar** bleiben: die Rechtsseiten, die Widerrufsfunktion
 (`POST /api/widerruf`), Belege aus Mails und Konto (`/orders/<ID>/rechnung|gutschrift|storno.html|.pdf`, Schlüssel wird wie
-immer geprüft), `/robots.txt` (dann `Disallow: /`), Favicon, Logos, Schriften, Manifest und `sw.js`. Alles andere: Seiten →
-Wartungsseite (503), API → 503 mit `Retry-After`. Pfade mit kodiertem Schrägstrich/Backslash oder `..` beantwortet das Tor
-mit 400; das Ziel nach dem Kennwort ist immer ein Pfad dieser Seite (keine Steuer-/Leerzeichen, gleicher Host).
+immer geprüft), `/robots.txt` (dann `Disallow: /` mit `Cache-Control: max-age=300`, damit Suchmaschinen die Sperre nach
+der Wartung nicht noch einen Tag lang behalten), Favicon, Logos, Schriften, Manifest und `sw.js`. Alles andere: Seiten →
+Wartungsseite (503, `Retry-After: 3600`), API → 503 bewusst ohne `Retry-After` (sonst warten `curl --retry` und Überwachungen
+eine Stunde, auch wenn die Wartung längst vorbei ist). Pfade mit kodiertem Schrägstrich/Backslash oder `..` beantwortet das
+Tor mit 400; das Ziel nach dem Kennwort ist immer ein Pfad dieser Seite (keine Steuer-/Leerzeichen, gleicher Host, auch
+nach dem Auflösen von Punktsegmenten kein `//host`).
 Schalten im Admin unter System oder auf dem Server (Shop-Server vorher stoppen, danach starten):
 
 ```
@@ -323,8 +326,9 @@ node tools/wartung.mjs status
 ```
 
 Gespeichert wird nur ein scrypt-Hash (settings.wartung). Nach 10 Fehlversuchen je IP in 15 Minuten prüft das Tor für diese
-IP nur noch alle 30 Sekunden ein Kennwort (429 mit `Retry-After`) — Raten bleibt gebremst, das richtige Kennwort kommt nach
-kurzer Wartezeit trotzdem durch. Hinter nginx (`TRUST_PROXY=1`) bekommt das Cookie `Secure`, wenn `X-Forwarded-Proto` https ist
+IP ein Kennwort nur noch nach einer Pause, die mit jeder Prüfung wächst (30 s, 60 s, 120 s … höchstens 5 Minuten; 429 mit
+`Retry-After`; vergessen nach einer Stunde Ruhe oder beim richtigen Kennwort) — Raten bleibt etwa so langsam wie mit fester
+Sperre, das richtige Kennwort kommt nach kurzer Wartezeit trotzdem durch. Hinter nginx (`TRUST_PROXY=1`) bekommt das Cookie `Secure`, wenn `X-Forwarded-Proto` https ist
 (Groß-/Kleinschreibung egal).
 
 ## Flüssige Bedienung auf dem Handy

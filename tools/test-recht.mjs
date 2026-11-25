@@ -206,6 +206,7 @@ for (const p of ['/impressum', '/impressum/', '/datenschutz', '/agb', '/widerruf
 }
 let x = await req('GET', '/robots.txt');
 check(x.status === 200 && x.text === 'User-agent: *\nDisallow: /\n', 'robots.txt in der Wartung: Disallow: /', x.text);
+check(x.headers['cache-control'] === 'max-age=300', 'robots.txt in der Wartung nur kurz zwischenspeichern (max-age=300)', x.headers['cache-control']);
 x = await req('POST', '/api/widerruf', { name: 'Hans Wartung', email: 'hans@example.test', orderId: b.orderId });
 check(x.status === 200 && x.json?.ok && /^WR-/.test(x.json?.ref || ''), 'Widerrufsfunktion (POST /api/widerruf) in der Wartung', x.json);
 x = await req('GET', `/orders/${b.orderId}/rechnung.html?k=${b.accessKey}`, null, { accept: 'text/html' });
@@ -215,7 +216,10 @@ check(x.status === 404, 'Rechnung ohne Schlüssel: 404 aus dem Handler (Schlüss
 x = await req('GET', `/orders/${b.orderId}/modell-1-vase.stl?k=${b.accessKey}`);
 check(x.status === 503, 'Modelldateien bleiben hinter dem Tor', x.status);
 x = await req('GET', '/api/pricing');
-check(x.status === 503 && x.headers['retry-after'] === '3600', 'API: 503 mit Retry-After', x.headers);
+// API-503 bewusst ohne Retry-After (wie vor dem Paket): curl --retry & Co. halten sich daran und warteten sonst eine Stunde
+check(x.status === 503 && x.headers['retry-after'] === undefined && x.headers['x-formsam-wartung'] === '1', 'API: 503 ohne Retry-After (Werkzeuge mit Wiederholung hängen nicht)', x.headers);
+x = await req('GET', '/', null, { accept: 'text/html' });
+check(x.status === 503 && x.headers['retry-after'] === '3600', 'Wartungsseite: 503 mit Retry-After 3600', x.headers['retry-after']);
 for (const p of ['/sitemap.xml', '/content.json', '/admin']) { x = await req('GET', p); check(x.status === 503, `${p} gesperrt`, x.status); }
 x = await req('GET', '/', null, { accept: 'text/html' });
 check(x.status === 503 && /href="\/impressum"/.test(x.text) && /href="\/datenschutz"/.test(x.text), 'Wartungsseite verlinkt Impressum und Datenschutz');
@@ -232,7 +236,8 @@ x = await roh('/fonts/inter-latin.woff2');
 check(x.status === 200, 'normale Schrift unter /fonts weiter frei', x.status);
 x = await roh('/%09/evil.example/pfad', { headers: { Accept: 'text/html' } });
 check(!/value="[^"]*\t/.test(x.text), 'verstecktes Ziel ohne Tabulator', (x.text.match(/name="ziel" value="([^"]*)"/) || [])[1]);
-for (const [ziel, soll] of [['/\t/evil.example/pfad', '/'], ['/foo\n/bar', '/'], ['//evil.example', '/'], ['/\\evil.example', '/'], ['https://evil.example/', '/'], ['/agb?x=1', '/agb?x=1'], ['/__wartung', '/']]) {
+for (const [ziel, soll] of [['/\t/evil.example/pfad', '/'], ['/foo\n/bar', '/'], ['//evil.example', '/'], ['/\\evil.example', '/'], ['https://evil.example/', '/'], ['/agb?x=1', '/agb?x=1'], ['/__wartung', '/'],
+  ['/.//evil.example/x', '/'], ['/..//evil.example', '/'], ['/a/..//evil.example', '/'], ['/./\\evil.example', '/'], ['/x/../\\evil.example', '/'], ['/a/../agb', '/agb']]) {
   x = await login('pruef-kennwort-1', ziel);
   check(x.status === 303 && x.hd('Location') === soll, `Ziel ${JSON.stringify(ziel)} → ${soll}`, { s: x.status, l: x.hd('Location') });
 }
@@ -247,14 +252,23 @@ check((await req('GET', '/', null, { cookie: `fs_zugang=${alt}`, accept: 'text/h
 check((await req('GET', '/', null, { cookie: `fs_zugang=${vorbei}.${sig(vorbei)}`, accept: 'text/html' })).status === 503, 'abgelaufenes Cookie gilt nicht');
 check((await req('GET', '/', null, { cookie: `fs_zugang=${spaeter}.${sig(vorbei)}`, accept: 'text/html' })).status === 503, 'verlängertes Ablaufdatum (Signatur passt nicht) gilt nicht');
 check((await req('GET', '/', null, { cookie: `fs_zugang=${spaeter}.${sig(spaeter)}`, accept: 'text/html' })).status === 200, 'gültiges Cookie mit Ablauf in der Zukunft');
-// Bremse: 10 Fehlversuche, dann geht das richtige Kennwort trotzdem; weitere Fehlversuche → 30 s Pause (Retry-After)
+// Bremse: 10 Fehlversuche, dann geht das richtige Kennwort trotzdem; weitere Fehlversuche → wachsende Pause (30 s, 60 s …)
 for (let i = 0; i < 10; i++) await login('falsch');
 x = await login('pruef-kennwort-1');
 check(x.status === 303, 'richtiges Kennwort trotz Sperre (nur verzögert)', x.status);
 x = await login('falsch');
-check(x.status === 429 && Number(x.hd('Retry-After')) === 30, 'Fehlversuch während der Sperre → 429, Retry-After 30', { s: x.status, ra: x.hd('Retry-After') });
+check(x.status === 429 && Number(x.hd('Retry-After')) === BREMSE_S && /erst in \d+ Sekunden?\b/.test(x.text), `erster Fehlversuch während der Sperre → 429, Retry-After ${BREMSE_S}`, { s: x.status, ra: x.hd('Retry-After') });
 x = await login('pruef-kennwort-1');
-check(x.status === 429 && Number(x.hd('Retry-After')) > 0 && /warte \d+ Sekunden/.test(x.text), 'innerhalb der Pause wird nicht geprüft (429 mit Wartezeit)', { s: x.status, ra: x.hd('Retry-After') });
+check(x.status === 429 && Number(x.hd('Retry-After')) > 0 && /warte \d+ (Sekunden?|Minuten) und/.test(x.text), 'innerhalb der Pause wird nicht geprüft (429 mit Wartezeit)', { s: x.status, ra: x.hd('Retry-After') });
+// wachsende Pause: die Instanz läuft mit WARTUNG_BREMSE_S=1 (Grundpause 1 s statt 30 s) → 1 s, 2 s, 4 s …
+await new Promise((r) => setTimeout(r, Number(x.hd('Retry-After')) * 1000 + 150));
+x = await login('falsch');
+check(x.status === 429 && Number(x.hd('Retry-After')) === 2 * BREMSE_S, `zweite Prüfung in der Sperre → Pause verdoppelt (${2 * BREMSE_S} s)`, { s: x.status, ra: x.hd('Retry-After') });
+await new Promise((r) => setTimeout(r, 2 * BREMSE_S * 1000 + 150));
+x = await login('pruef-kennwort-1');
+check(x.status === 303, 'nach der Pause kommt das richtige Kennwort durch', x.status);
+x = await login('falsch');
+check(x.status === 429 && Number(x.hd('Retry-After')) === BREMSE_S, 'nach Erfolg beginnt die Pause wieder bei der Grundpause', { s: x.status, ra: x.hd('Retry-After') });
 r = await admin('POST', '/api/admin/settings', { wartung: { aktiv: false } }, { cookie });
 check(r.status === 200 && (await req('GET', '/', null, { accept: 'text/html' })).status === 200, 'Wartung aus → Shop für alle');
 x = await req('GET', '/robots.txt');

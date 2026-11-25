@@ -853,19 +853,28 @@ function wartungKennwortStimmt(kennwort) {
 const istHttps = (req) => !!req.socket?.encrypted || (TRUST_PROXY > 0 && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https');
 const wartungCookie = (req) => `${WARTUNG_COOKIE}=${wartungToken()}; Path=/; Max-Age=${WARTUNG_TAGE * 86400}; HttpOnly; SameSite=Lax${istHttps(req) ? '; Secure' : ''}`;
 // Ziel nach dem Freischalten: nur Pfade dieser Seite — kein //host, kein Schema, keine Steuer- oder Leerzeichen (Browser
-// entfernen Tabs: aus „/<Tab>/evil.example“ würde „//evil.example“); aufgelöst gegen eine feste Basis bleibt der Host gleich
+// entfernen Tabs: aus „/<Tab>/evil.example“ würde „//evil.example“); aufgelöst gegen eine feste Basis bleibt der Host gleich.
+// Das Ergebnis wird noch einmal geprüft: Punktsegmente ergeben nach dem Auflösen sonst wieder „//host“ („/.//evil.example“).
+const ZIEL_PFAD = /^\/(?![/\\])[\x21-\x7e]*$/;
 function wartungZiel(z) {
-  if (typeof z !== 'string' || z.length >= 500 || !/^\/[\x21-\x7e]*$/.test(z) || /^\/[/\\]/.test(z)) return '/';
+  if (typeof z !== 'string' || z.length >= 500 || !ZIEL_PFAD.test(z)) return '/';
   let u;
   try { u = new URL(z, 'http://formsam.invalid'); } catch { return '/'; }
   if (u.origin !== 'http://formsam.invalid') return '/';
   const ziel = u.pathname + u.search;
-  return ziel.startsWith('/__wartung') ? '/' : ziel;
+  return ZIEL_PFAD.test(ziel) && !ziel.startsWith('/__wartung') ? ziel : '/';
 }
-// Sperre nach 10 Fehlversuchen je IP in 15 Minuten: danach prüft das Tor höchstens alle 30 Sekunden ein Kennwort dieser IP —
-// Raten bleibt gebremst, wer das richtige Kennwort hat (z. B. hinter derselben Adresse wie ein Rater), kommt trotzdem hinein
-const WARTUNG_BREMSE_MS = 30 * 1000;
-const wartungGeprueft = new Map();   // Schlüssel wartung:<IP> → Zeitpunkt der letzten Prüfung während der Sperre
+// Sperre nach 10 Fehlversuchen je IP in 15 Minuten: danach prüft das Tor ein Kennwort dieser IP nur noch nach einer Pause,
+// die mit jeder Prüfung wächst (30 s, 60 s, 120 s … höchstens 5 Minuten; vergessen nach einer Stunde Ruhe oder beim richtigen
+// Kennwort). Raten bleibt so etwa so langsam wie mit fester Sperre, wer das richtige Kennwort hat (z. B. hinter derselben
+// Adresse wie ein Rater), kommt nach kurzer Wartezeit trotzdem hinein. WARTUNG_BREMSE_S ändert die Grundpause (nur für Prüfskripte).
+const WARTUNG_BREMSE_MS = (Math.max(1, parseInt(process.env.WARTUNG_BREMSE_S || '30', 10) || 30)) * 1000;
+const WARTUNG_BREMSE_MAX_MS = 10 * WARTUNG_BREMSE_MS;   // 5 Minuten
+const WARTUNG_BREMSE_RUHE_MS = 60 * 60 * 1000;
+const wartungGeprueft = new Map();   // Schlüssel wartung:<IP> → { t: letzte Prüfung während der Sperre, n: Zahl dieser Prüfungen }
+/** Pause nach der n-ten Prüfung während der Sperre */
+const wartungPause = (n) => Math.min(WARTUNG_BREMSE_MS * 2 ** Math.max(0, n - 1), WARTUNG_BREMSE_MAX_MS);
+const wartungDauer = (sek) => (sek >= 90 ? `${Math.ceil(sek / 60)} Minuten` : sek === 1 ? '1 Sekunde' : `${sek} Sekunden`);
 let wartungLogo = '';
 try { wartungLogo = readFileSync(path.join(PUBLIC, 'img/brand/formsam-logo.svg'), 'utf8').replace(/<title>.*?<\/title>/, '').replace('<svg ', '<svg class="logo" aria-label="formsam" '); } catch { /* Logo fehlt → nur Text */ }
 function wartungSeite(res, code, { fehler = '', ziel = '/', warten = 0 } = {}) {
@@ -929,15 +938,21 @@ async function wartungTor(req, res, p, url) {
     const ziel = wartungZiel(body.get('ziel'));
     const key = `wartung:${clientIp(req)}`;
     const gesperrt = rateLimitReached(key, 10);
+    let pause = 0;
     if (gesperrt) {
-      const warten = Math.ceil(((wartungGeprueft.get(key) || 0) + WARTUNG_BREMSE_MS - Date.now()) / 1000);
-      if (warten > 0) { wartungSeite(res, 429, { fehler: `Zu viele Versuche – bitte warte ${warten} Sekunden und gib das Kennwort dann noch einmal ein.`, ziel, warten }); return true; }
-      wartungGeprueft.set(key, Date.now());
+      const jetzt = Date.now();
+      let g = wartungGeprueft.get(key);
+      if (g && jetzt - g.t > WARTUNG_BREMSE_RUHE_MS) g = null;
+      const warten = g ? Math.ceil((g.t + wartungPause(g.n) - jetzt) / 1000) : 0;
+      if (warten > 0) { wartungSeite(res, 429, { fehler: `Zu viele Versuche – bitte warte ${wartungDauer(warten)} und gib das Kennwort dann noch einmal ein.`, ziel, warten }); return true; }
+      g = { t: jetzt, n: (g?.n || 0) + 1 };
+      wartungGeprueft.delete(key); wartungGeprueft.set(key, g);   // neu einreihen → bei Überlauf fliegen die ältesten raus
       if (wartungGeprueft.size > 5000) wartungGeprueft.delete(wartungGeprueft.keys().next().value);
+      pause = Math.ceil(wartungPause(g.n) / 1000);
     }
     if (!wartungKennwortStimmt(body.get('kennwort') || '')) {
       forgotLimited(key, 10); // nur Fehlgriffe zählen
-      if (gesperrt) wartungSeite(res, 429, { fehler: `Das Kennwort stimmt nicht. Nach vielen Fehlversuchen geht der nächste Versuch erst in ${WARTUNG_BREMSE_MS / 1000} Sekunden.`, ziel, warten: WARTUNG_BREMSE_MS / 1000 });
+      if (gesperrt) wartungSeite(res, 429, { fehler: `Das Kennwort stimmt nicht. Nach vielen Fehlversuchen geht der nächste Versuch erst in ${wartungDauer(pause)}.`, ziel, warten: pause });
       else wartungSeite(res, 401, { fehler: 'Das Kennwort stimmt nicht.', ziel });
       return true;
     }
@@ -954,7 +969,9 @@ async function wartungTor(req, res, p, url) {
     return false;
   }
   if (p.startsWith('/api/')) {
-    res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1', 'Retry-After': '3600' });
+    // bewusst ohne Retry-After: Werkzeuge mit automatischer Wiederholung (curl --retry, Überwachung) hielten sich daran und
+    // warteten eine Stunde — auch wenn die Wartung längst vorbei ist; Seiten und Dateien behalten Retry-After 3600
+    res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1' });
     res.end(JSON.stringify({ ok: false, error: 'Wartungsmodus – bitte später noch einmal versuchen.' }));
     return true;
   }
@@ -3563,7 +3580,9 @@ const server = http.createServer(async (req, res) => {
     // --- robots.txt und sitemap.xml aus der öffentlichen Adresse (robots.txt ist auch im Wartungsmodus erreichbar: „Disallow: /“)
     if ((p === '/robots.txt' || p === '/sitemap.xml') && (req.method === 'GET' || req.method === 'HEAD')) {
       const txt = p === '/robots.txt' ? robotsTxt() : sitemapXml();
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(p)], 'Cache-Control': 'no-cache', 'Content-Length': Buffer.byteLength(txt) });
+      // Wartung: „Disallow: /“ nur kurz gültig — Google hält robots.txt sonst bis zu 24 h, kürzt das aber nach max-age
+      const cache = p === '/robots.txt' && wartungAktiv() ? 'max-age=300' : 'no-cache';
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(p)], 'Cache-Control': cache, 'Content-Length': Buffer.byteLength(txt) });
       return res.end(req.method === 'HEAD' ? undefined : txt);
     }
     // --- Startseite: Canonical und Vorschau-Adressen aus der öffentlichen Adresse (sonst wie eine statische HTML-Datei)
