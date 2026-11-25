@@ -263,7 +263,9 @@ export function openAccount() {
   $('#account-modal').showModal();
 }
 
+let addrMsgTimer = 0;
 async function saveAddress() {
+  clearTimeout(addrMsgTimer);   // ein älteres „Gespeichert“ darf eine neue Meldung nicht wegräumen
   const address = { street: $('#acc-street').value.trim(), zip: $('#acc-zip').value.trim(), city: $('#acc-city').value.trim() };
   let r = null;
   try {
@@ -276,7 +278,7 @@ async function saveAddress() {
   if (!r?.ok) { $('#acc-addr-msg').textContent = `⚠️ ${r?.error || 'Das hat gerade nicht geklappt.'}`; return; }
   currentUser.address = address;
   $('#acc-addr-msg').textContent = '✅ Gespeichert';
-  setTimeout(() => $('#acc-addr-msg').textContent = '', 2000);
+  addrMsgTimer = setTimeout(() => { $('#acc-addr-msg').textContent = ''; }, 2000);
 }
 
 async function logout() {
