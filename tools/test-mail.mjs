@@ -188,6 +188,15 @@ function vorlagen() {
   check(/bereits vollständig zurückbekommen/.test(s2.text) && !/erstatte ich dir zurück/.test(s2.text), 'Storno nach voller Gutschrift: nichts weiter zu erstatten');
   const s3 = T.orderStatus({ order: { ...so, payment: 'paypal' }, status: 'storniert', settings: SET, baseUrl: BASE, storno: { gutschrift: 0, guthaben: { code: 'GS-AAAA-BBBB', off: 5 } } });
   check(/über PayPal zurück: 44,82 €/.test(nb(s3.text)) && /Guthaben „GS-AAAA-BBBB“ über 5,00 € steht dir wieder zur Verfügung/.test(nb(s3.text)), 'Storno PayPal ohne Gutschrift: voller Betrag, freigegebenes Guthaben genannt');
+  // Status-Mails und Meldung an den Shop: Gesamtbetrag wie Rechnung/Stornorechnung — bei Guthaben vor dessen Abzug, samt beglichenem Teil
+  const sgh = T.orderStatus({ order: ORDER({ status: 'storniert', coupon: { code: 'GH-AAAA-BBBB', off: 10, guthaben: true }, total: 34.82 }), status: 'storniert', settings: SET, baseUrl: BASE, storno: { gutschrift: 0, guthaben: { code: 'GH-AAAA-BBBB', off: 10 } } });
+  check(/Gesamtbetrag: 44,82 € \(davon 10,00 € mit Guthaben GH-AAAA-BBBB beglichen\)/.test(nb(sgh.text)) && !/\nGesamt: /.test(sgh.text) && /Gesamtbetrag:/.test(sgh.html) && /mit Guthaben GH-AAAA-BBBB beglichen/.test(nb(sgh.html)),
+    'Status-Mail mit Guthaben: „Gesamtbetrag: 44,82 € (davon 10,00 € mit Guthaben … beglichen)“ wie Rechnung/Stornorechnung', nb(sgh.text).split('\n').filter((x) => /Gesamt/.test(x)));
+  const sohne = T.orderStatus({ order: ORDER({ status: 'bezahlt' }), status: 'bezahlt', settings: SET, baseUrl: BASE });
+  check(/\nGesamtbetrag: 44,82 €\n/.test(nb(sohne.text)) && !/beglichen/.test(sohne.text), 'Status-Mail ohne Guthaben: „Gesamtbetrag: 44,82 €“');
+  const anGh = T.adminNewOrder({ order: ORDER({ coupon: { code: 'GH-AAAA-BBBB', off: 10, guthaben: true }, total: 34.82 }), settings: SET, baseUrl: BASE });
+  check(/^Gesamtbetrag 44,82 € · abzüglich Guthaben −10,00 € · zu zahlen 34,82 € · Zahlung:/m.test(nb(anGh.text)) && /Gesamtbetrag 44,82 €/.test(nb(anGh.html)) && !/^Gesamt: /m.test(anGh.text),
+    'Meldung an den Shop mit Guthaben: erste Zeile Gesamtbetrag · abzüglich Guthaben · zu zahlen', nb(anGh.text).split('\n')[1]);
   // Zahlungserinnerung: 7 Tage Nachfrist ab heute, aber nie vor dem Ende der Zahlungsfrist (AGB § 8: 14 Tage nach Vertragsschluss)
   const ze = T.zahlungserinnerung({ order: ORDER({ userId: null }), settings: SET, baseUrl: BASE, heute: new Date('2026-12-20T10:00:00Z') });
   check(/Erinnerung/.test(ze.subject) && /DE00 1111 2222 3333 4444 55/.test(ze.text) && /Verwendungszweck: FS-261125-ABC123/.test(ze.text) && /bis spätestens Sonntag, 27\. Dezember 2026/.test(ze.text) &&
@@ -398,6 +407,34 @@ async function mailerTests() {
   check(fc?.status === 'fehler' && fc.vermerkt === true && fc2 !== fc && fc2.status === 'gesendet' && fc2.vermerkt === false,
     'Altbestand gescheitert, später per „Erneut“ zugestellt: diese Zustellung wird normal vermerkt (Markierung gilt nur für den ersten Endstand)', finAlt.map((f) => [f.id, f.status, f.vermerkt]));
   mAlt.stop();
+  // Beschädigtes Protokoll beim Start: beiseitegelegt, Inhalte nicht gelöscht, wartende Mails als „nicht zugestellt“ zurückgeholt
+  const dirKaputt = path.join(TMP, 'outbox-kaputt');
+  rmSync(dirKaputt, { recursive: true, force: true }); mkdirSync(path.join(dirKaputt, 'mail-outbox'), { recursive: true });
+  const kaputtId = `${(Date.now() - 60e3).toString(36)}0a1b2c3d`;
+  writeFileSync(path.join(dirKaputt, 'mail-outbox.json'), '{"version":2,"entries":[{"id":"abc","to":"kunde@exa');
+  writeFileSync(path.join(dirKaputt, 'mail-outbox', `${kaputtId}.json`), JSON.stringify({ to: 'kunde@example.com', subject: 'Deine Bestellung FS-261125-ABCDEF ist eingegangen', text: 'Hallo', html: '', attachments: [] }));
+  writeFileSync(path.join(dirKaputt, 'mail-outbox', 'kaputt.json'), '{"to":');
+  const kaputtLog = [];
+  const mK = createMailer({ dataDir: dirKaputt, getSettings: () => ({ mail: cfg({ port: 1 }), company: {} }), log: (x) => kaputtLog.push(x), timeouts: T0 });
+  await mK.resume();
+  const kList = await mK.list(), kDef = mK.defekt(), kDateien = readdirSync(dirKaputt);
+  const kE = kList.find((e) => e.id === kaputtId);
+  check(kDef?.gerettet === 1 && kDateien.some((f) => /^mail-outbox\.json\.defekt-/.test(f)) && kE?.status === 'fehler' && kE.resendable && kE.orderId === 'FS-261125-ABCDEF' && /beschädigt/.test(kE.error)
+    && existsSync(path.join(dirKaputt, 'mail-outbox', `${kaputtId}.json`)) && existsSync(path.join(dirKaputt, 'mail-outbox', 'kaputt.json')) && kaputtLog.some((x) => /mail-outbox\.json beschädigt/.test(x)),
+    'Protokoll beschädigt: als .defekt-… gesichert, laut gemeldet, gespeicherte Mail als „nicht zugestellt“ mit „Erneut“, kein Inhalt gelöscht', { kDef, kE, kDateien });
+  check((await mK.problems()).fehler.some((e) => e.id === kaputtId), 'Protokoll beschädigt: wiederhergestellte Mail erscheint unter „nicht zugestellt“ (Admin-Übersicht)');
+  mK.stop();
+  const mK2 = createMailer({ dataDir: dirKaputt, getSettings: () => ({ mail: cfg({ port: 1 }), company: {} }), log: () => {}, timeouts: T0 });
+  await mK2.resume();
+  check(mK2.defekt() === null && (await mK2.list()).some((e) => e.id === kaputtId), 'nach dem Neustart: Protokoll wieder lesbar, wiederhergestellter Eintrag bleibt');
+  mK2.stop();
+  const dirLeer = path.join(TMP, 'outbox-leer');
+  rmSync(dirLeer, { recursive: true, force: true }); mkdirSync(path.join(dirLeer, 'mail-outbox'), { recursive: true });
+  writeFileSync(path.join(dirLeer, 'mail-outbox', 'waise.json'), '{}');
+  const mL = createMailer({ dataDir: dirLeer, getSettings: () => ({ mail: cfg({ port: 1 }), company: {} }), log: () => {}, timeouts: T0 });
+  await mL.resume();
+  check(mL.defekt() === null && !existsSync(path.join(dirLeer, 'mail-outbox', 'waise.json')), 'fehlendes Protokoll (Neuinstallation) gilt als leer, Inhalte ohne Eintrag werden wie bisher aufgeräumt');
+  mL.stop();
   // Testmail: anderer Zugang + leeres Passwortfeld → keine Anmeldung mit dem gespeicherten Passwort
   const cap = await fakeSmtp();
   live.mail = cfg({ pass: 'gespeichert' });

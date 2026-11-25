@@ -291,6 +291,7 @@ console.log('Migration: früherer Standard-Hoster (IONOS)');
 const IONOS_ALT = 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur';
 const st = JSON.parse(readFileSync(path.join(DATA, 'settings.json'), 'utf8'));
 st.legal = { hoster: IONOS_ALT, serverOrt: 'Berlin (Deutschland)' };
+delete st.rechtsangaben;   // Bestand der älteren Fassung (ohne Spiegel) — der Rückweg mit Spiegel folgt unten
 writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify(st, null, 2));
 await starten();
 d = await admin('GET', '/api/admin/data'); ds = await req('GET', '/datenschutz');
@@ -302,6 +303,36 @@ check(/früheren Standardwert/.test(log), 'Hinweis auch im Startprotokoll');
 await admin('POST', '/api/admin/settings', { legal: { avVertrag: true } });
 d = await admin('GET', '/api/admin/data'); ds = await req('GET', '/datenschutz');
 check(/IONOS SE verarbeitet diese Daten nur in meinem Auftrag/.test(ds.text) && !(d.json?.hinweise || []).some((h) => /früheren Standardwert|^AV-Vertrag/.test(h)), 'nach Bestätigung im Admin: AV-Satz, kein Hinweis mehr');
+
+// --- Rückweg auf die ältere Fassung und erneutes Update: die ältere Fassung schreibt settings.legal nur mit hoster/serverOrt (leer →
+// ihre Standardwerte) und lässt unbekannte Wurzelschlüssel stehen → Rechtsangaben kommen aus settings.rechtsangaben zurück
+console.log('Rückweg auf die ältere Fassung und erneutes Update');
+const SETF = path.join(DATA, 'settings.json');
+const alteFassung = (legal) => { const x = JSON.parse(readFileSync(SETF, 'utf8')); x.legal = legal(x.legal); writeFileSync(SETF, JSON.stringify(x, null, 2)); };
+const NEU_HOSTER = 'Neu-Hoster AG, Allee 2, 60311 Frankfurt am Main';
+await admin('POST', '/api/admin/settings', { legal: { hoster: NEU_HOSTER, serverOrt: 'Frankfurt am Main (Deutschland)', avVertrag: false, mailVersand: 'eigen', mailAnbieter: '' } });
+const spiegel = JSON.parse(readFileSync(SETF, 'utf8')).rechtsangaben;
+check(spiegel?.mailVersand === 'eigen' && spiegel.avVertrag === false && spiegel.hoster === NEU_HOSTER && d.json?.settings?.rechtsangaben === undefined, 'Spiegel settings.rechtsangaben gespeichert (nicht im Admin-JSON)', spiegel);
+alteFassung((l) => ({ hoster: l.hoster, serverOrt: l.serverOrt }));
+await starten();
+d = await admin('GET', '/api/admin/data'); ds = await req('GET', '/datenschutz');
+check(d.json?.settings?.legal?.mailVersand === 'eigen' && d.json?.settings?.legal?.avVertrag === false && !/Vertrag zur Auftragsverarbeitung/.test(ds.text) && (d.json?.hinweise || []).some((h) => /AV-Vertrag/.test(h)),
+  'Rückweg mit offenem AV-Vertrag: bleibt offen (kein AV-Satz, Hinweis), Mail-Versand bleibt „eigen“', d.json?.settings?.legal);
+await admin('POST', '/api/admin/settings', { legal: { avVertrag: true } });
+alteFassung((l) => ({ hoster: l.hoster, serverOrt: l.serverOrt }));
+await starten();
+d = await admin('GET', '/api/admin/data'); ds = await req('GET', '/datenschutz');
+check(d.json?.settings?.legal?.avVertrag === true && d.json?.settings?.legal?.mailVersand === 'eigen' && /Vertrag zur Auftragsverarbeitung/.test(ds.text), 'Rückweg mit bestätigtem AV-Vertrag: bleibt bestätigt', d.json?.settings?.legal);
+alteFassung((l) => ({ hoster: 'Anderer Hoster GmbH, Weg 5, 20095 Hamburg', serverOrt: l.serverOrt }));
+await starten();
+d = await admin('GET', '/api/admin/data');
+check(d.json?.settings?.legal?.hoster === 'Anderer Hoster GmbH, Weg 5, 20095 Hamburg' && d.json?.settings?.legal?.avVertrag === false, 'in der älteren Fassung anderen Hoster eingetragen → AV-Vertrag neu bestätigen', d.json?.settings?.legal);
+await admin('POST', '/api/admin/settings', { legal: { hoster: '', serverOrt: '', mailVersand: 'anbieter', mailAnbieter: 'Muster-Mail GmbH' } });
+alteFassung(() => ({ hoster: IONOS_ALT, serverOrt: 'Berlin (Deutschland)' }));
+await starten();
+d = await admin('GET', '/api/admin/data');
+check(d.json?.settings?.legal?.hoster === '' && d.json?.settings?.legal?.serverOrt === '' && d.json?.settings?.legal?.mailAnbieter === 'Muster-Mail GmbH' && d.json?.settings?.legal?.avVertrag === false,
+  'leerer Hoster: Standardwerte der älteren Fassung werden wieder leer, Mail-Anbieter bleibt', d.json?.settings?.legal);
 
 console.log(`\n${pass} ok, ${fail} Fehler`);
 if (fail) console.log('Server-Log (Ende):\n' + log.slice(-1500));

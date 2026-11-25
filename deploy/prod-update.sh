@@ -2,15 +2,18 @@
 # formsam — Produktivserver auf den aktuellen Stand von GitHub (main) bringen. Läuft AUF dem Produktivserver als root:
 #   bash /srv/formsam/deploy/prod-update.sh             sichern, main holen, Syntax prüfen, neu starten, Erreichbarkeit prüfen
 #   bash /srv/formsam/deploy/prod-update.sh --zurueck   Code auf den Stand vor dem letzten Update zurück (Daten bleiben)
+#   bash /srv/formsam/deploy/prod-update.sh --zurueck <commit>   … auf einen bestimmten Stand (z. B. laut git reflog)
 #   bash /srv/formsam/deploy/prod-update.sh --pruefen   nur Betriebsdateien prüfen (Sicherung, Protokoll-Aufbewahrung)
-# Daten (data/, orders/, Galerie-Bilder) sind nicht im Git und bleiben unberührt. Vorher wird gesichert — schlägt die
-# Sicherung fehl, bricht das Update ab, ohne etwas zu ändern. Den alten Stand merkt sich das Skript in
-# /var/backups/formsam/letztes-update. Startet der neue Stand nicht (Syntaxfehler, Dienst antwortet nicht binnen 60 s),
+# Daten (data/, orders/, Galerie-Bilder) sind nicht im Git und bleiben unberührt. Vorher prüft das Skript, ob die
+# Datendateien lesbares JSON sind, und sichert — schlägt eins fehl, bricht es ab, ohne etwas zu ändern. Den alten Stand merkt
+# sich das Skript in /var/backups/formsam/letztes-update (fehlt er, weil das Update noch mit dem alten Skript lief, trägt
+# --pruefen ihn aus git reflog nach). Startet der neue Stand nicht (Syntaxfehler, Dienst antwortet nicht binnen 60 s),
 # geht es automatisch auf den alten Stand zurück.
 # Das Skript liest sich vor dem Ausführen ganz ein (Aufruf von main in der letzten Zeile) — git reset darf die Datei ersetzen.
 set -euo pipefail
-# Pfade (APP, BACKUP, ZUSTAND, PRUEF_URL) lassen sich nur für Tests per Umgebung umbiegen
+# Pfade (APP, DATEN, BACKUP, ZUSTAND, PRUEF_URL) lassen sich nur für Tests per Umgebung umbiegen
 APP=${APP:-/srv/formsam}
+DATEN=${DATEN:-$APP/data}
 BACKUP=${BACKUP:-/usr/local/sbin/formsam-backup}
 ZUSTAND=${ZUSTAND:-/var/backups/formsam/letztes-update}
 PRUEF_URL=${PRUEF_URL:-http://127.0.0.1:4488/api/pricing}
@@ -37,10 +40,43 @@ syntax_ok() {
 }
 neustart_auf() { als_formsam git reset --quiet --hard "$1"; systemctl restart formsam; }
 
+# Datendateien, die der Shop beim Start liest, müssen lesbares JSON sein: Die neue Fassung bricht sonst den Start ab, eine ältere
+# (Rückweg) startete mit Standardwerten (bekanntes Admin-Passwort, Rechnungsnummer 1) und überschriebe settings.json
+daten_pruefen() {
+  local f kaputt=""
+  for f in settings users designs lists paypal-captures; do
+    [ -e "$DATEN/$f.json" ] || continue
+    als_formsam node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$DATEN/$f.json" 2>/dev/null || kaputt="$kaputt $f.json"
+  done
+  [ -z "$kaputt" ] && return 0
+  echo "❌ Beschädigte Datendatei(en) in $DATEN:$kaputt – nichts geändert."
+  echo "   Erst reparieren oder aus der Sicherung holen (README „Wiederherstellung aus der Sicherung“). Nicht auf eine ältere"
+  echo "   Fassung zurückgehen: Die liefe mit Standardwerten los und schriebe settings.json neu."
+  return 1
+}
+
+# Stand vor dem letzten Update laut git reflog — für Updates mit dem alten Skript (das merkt sich keinen Stand). Nur wenn der
+# letzte Eintrag ein „reset: moving to …“ (= Update) ist und der Stand davor ein anderer war.
+vorher_laut_reflog() {
+  local msg vor jetzt
+  msg=$(als_formsam git reflog -1 --format=%gs HEAD 2>/dev/null) || return 1
+  case "$msg" in "reset: moving to "*) ;; *) return 1 ;; esac
+  vor=$(als_formsam git rev-parse --verify -q 'HEAD@{1}^{commit}') || return 1
+  jetzt=$(als_formsam git rev-parse HEAD)
+  [ "$vor" != "$jetzt" ] || return 1
+  echo "$vor"
+}
+
 # Betriebsdateien aus deploy/ mit den eingespielten vergleichen: Sicherungsskripte selbst aktualisieren (laufen per cron),
 # Systemeinstellungen nur melden (README „Protokolle und Sicherungen“)
 betrieb_pruefen() {
-  local d=$APP/deploy s
+  local d=$APP/deploy s vor
+  # Erstes Update mit dem alten Skript: Stand davor aus git reflog merken, damit --zurueck geht
+  if [ ! -s "$ZUSTAND" ] && vor=$(vorher_laut_reflog); then
+    mkdir -p "$(dirname "$ZUSTAND")"
+    printf '%s %s %s\n' "$vor" "$(als_formsam git rev-parse HEAD)" "$(date '+%d.%m.%Y %H:%M') (aus git reflog)" > "$ZUSTAND"
+    echo "📝 Stand vor dem letzten Update aus git reflog gemerkt: ${vor:0:7} (für --zurueck)"
+  fi
   for s in formsam-backup stalwart-backup; do
     [ -e "/usr/local/sbin/$s" ] || [ "$s" = formsam-backup ] || continue
     if ! cmp -s "$d/$s" "/usr/local/sbin/$s" && bash -n "$d/$s"; then
@@ -57,9 +93,23 @@ betrieb_pruefen() {
 }
 
 zurueck() {
-  local alt neu wann
-  [ -s "$ZUSTAND" ] || { echo "❌ Kein gemerkter Stand ($ZUSTAND fehlt) – zurück nur von Hand: git log, git reset --hard <commit>"; return 1; }
-  read -r alt neu wann < "$ZUSTAND"
+  local alt neu wann vor ziel=${1:-}
+  if [ -n "$ziel" ]; then
+    alt=$(als_formsam git rev-parse --verify -q "$ziel^{commit}") || { echo "❌ Unbekannter Stand: $ziel (sudo -u formsam git -C $APP log --oneline -10)"; return 1; }
+    neu=$(als_formsam git rev-parse HEAD); wann="(von Hand gewählt)"
+  elif [ -s "$ZUSTAND" ]; then
+    read -r alt neu wann < "$ZUSTAND"
+  else
+    echo "❌ Kein gemerkter Stand ($ZUSTAND fehlt – das letzte Update lief noch mit dem alten Skript)."
+    if vor=$(vorher_laut_reflog); then
+      echo "   Stand vor dem letzten Update laut git reflog: $(als_formsam git log -1 --format='%h %cd %s' --date=format:'%d.%m.%Y' "$vor")"
+      echo "   Zurück dorthin: bash $APP/deploy/prod-update.sh --zurueck $vor"
+    else
+      echo "   Stand suchen: sudo -u formsam git -C $APP reflog -10, dann: bash $APP/deploy/prod-update.sh --zurueck <commit>"
+    fi
+    return 1
+  fi
+  daten_pruefen || return 1
   echo "↩️  Zurück auf ${alt:0:7} (Stand vor dem Update auf ${neu:0:7} vom $wann) …"
   neustart_auf "$alt"
   if laeuft; then
@@ -72,11 +122,12 @@ zurueck() {
 main() {
   cd "$APP"
   case "${1:-}" in
-    --zurueck) zurueck; return ;;
+    --zurueck) zurueck "${2:-}"; return ;;
     --pruefen) betrieb_pruefen; return ;;
     '') ;;
-    *) echo "Aufruf: bash $APP/deploy/prod-update.sh [--zurueck | --pruefen]"; return 2 ;;
+    *) echo "Aufruf: bash $APP/deploy/prod-update.sh [--zurueck [<commit>] | --pruefen]"; return 2 ;;
   esac
+  daten_pruefen || return 1
   if ! "$BACKUP"; then
     echo "❌ Sicherung fehlgeschlagen – Update abgebrochen, nichts geändert. Details: journalctl -t formsam-backup -n 20"
     return 1

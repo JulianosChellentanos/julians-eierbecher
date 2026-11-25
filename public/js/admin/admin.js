@@ -72,12 +72,14 @@ function guthabenOff(o) {
 }
 /** Rechnungsbetrag (Gesamtbetrag der Rechnung): zu zahlen + Guthaben-Anteil — Guthaben ist eine Zahlung, kein Rabatt */
 const rechnungsbetrag = (o) => r2c(euro(o.total) + guthabenOff(o));
+/** Rechnung ausgestellt und bezahlt (Vorkasse nach Zahlungseingang, PayPal, 0-€-Bestellung), nicht storniert — zählt zum Umsatz */
+const umsatzBezahlt = (o) => !!o.invoiceNo && o.paymentStatus === 'bezahlt' && st(o) !== 'storniert';
 /**
- * Umsatz einer Bestellung für Kennzahlen: nur mit Rechnung (nie abgeschlossene Kassen zählen nicht), storniert = 0,
- * sonst Rechnungsbetrag minus erledigte Gutschrift/Erstattung — ein eingelöstes Guthaben mindert den Umsatz nur einmal (beim
- * Ausstellen der Gutschrift), nicht noch einmal bei der Bestellung, in der es eingelöst wird
+ * Umsatz einer Bestellung für Kennzahlen: nur bezahlte Rechnungen (umsatzBezahlt — nie abgeschlossene Kassen und offene
+ * Vorkasse-Rechnungen zählen nicht), sonst Rechnungsbetrag minus erledigte Gutschrift/Erstattung — ein eingelöstes Guthaben
+ * mindert den Umsatz nur einmal (beim Ausstellen der Gutschrift), nicht noch einmal bei der Bestellung, in der es eingelöst wird
  */
-const umsatz = (o) => (!o.invoiceNo || st(o) === 'storniert' ? 0 : Math.max(0, r2c(rechnungsbetrag(o) - refundAmount(o))));
+const umsatz = (o) => (umsatzBezahlt(o) ? Math.max(0, r2c(rechnungsbetrag(o) - refundAmount(o))) : 0);
 /** Datum, an dem der Umsatz entsteht: Rechnungsdatum (Abschluss der Kasse), ältere Bestellungen: Bestelldatum */
 const umsatzDatum = (o) => o.completedAt || o.invoiceAt || o.createdAt;
 /**
@@ -154,11 +156,13 @@ async function login() {
   setKey($('#pw').value);
   $('#login-err').textContent = '';
   try { await load(); } catch (e) {
-    if (e?.message === 'auth' || e?.message === 'gebremst') setKey('');   // gespeichert bleibt nur ein angenommenes Passwort
-    $('#login-err').textContent = e?.message === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.' : 'Falsches Passwort';
+    if (e?.message === 'auth' || e?.message === 'gebremst' || e?.message === 'ueberlast') setKey('');   // gespeichert bleibt nur ein angenommenes Passwort
+    $('#login-err').textContent = e?.message === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.'
+      : e?.message === 'ueberlast' ? 'Gerade ist sehr viel los – bitte gleich noch einmal versuchen.' : 'Falsches Passwort';
   }
 }
-function logout() { setKey(''); showLogin(); }
+// Abmelden leert auch das Passwortfeld — sonst genügte ein Klick auf „Anmelden“ (load() leert es nach jeder Anmeldung)
+function logout() { setKey(''); $('#pw').value = ''; showLogin(); }
 function toast(msg, type = '', ms = 3200) {
   const box = $('#toasts');
   // Gleicher Text ersetzt den alten Toast; höchstens drei gleichzeitig (der älteste weicht)
@@ -343,21 +347,25 @@ function renderDash() {
   const all = DATA.orders;
   const orders = all.filter((o) => st(o) !== 'storniert');
   const now = Date.now(), d30 = 30 * 864e5;
-  // Umsatz = Rechnungsbeträge (nur abgeschlossene Kassen, Guthaben zählt als Zahlung) abzüglich Gutschriften/Erstattungen
-  const mitRechnung = orders.filter((o) => o.invoiceNo);
+  // Umsatz = bezahlte Rechnungen (Guthaben zählt als Zahlung) abzüglich Gutschriften/Erstattungen (umsatz()); Kennzahl, Diagramm,
+  // Kopfzeile und Kunden-Umsatz rechnen gleich. Offene Vorkasse-Rechnungen stehen als Zusatzzeile darunter.
+  const mitRechnung = orders.filter(umsatzBezahlt);
   const in30 = (o) => now - new Date(umsatzDatum(o)) < d30;
-  const rev = mitRechnung.reduce((s, o) => s + rechnungsbetrag(o), 0);
-  const rev30 = mitRechnung.filter(in30).reduce((s, o) => s + rechnungsbetrag(o), 0);
-  // Erledigte Erstattungen/Gutschriften (kein Nachdruck) mindern den Umsatz — Server liefert dasselbe in DATA.kpi.erstattet
+  const rev = mitRechnung.reduce((s, o) => s + umsatz(o), 0);
+  const rev30 = mitRechnung.filter(in30).reduce((s, o) => s + umsatz(o), 0);
+  // Erledigte Erstattungen/Gutschriften (kein Nachdruck) sind darin schon abgezogen — die Zeile darunter nennt sie
   const refunds = mitRechnung.reduce((s, o) => s + refundAmount(o), 0);
   const refunds30 = mitRechnung.filter(in30).reduce((s, o) => s + refundAmount(o), 0);
-  const refundLine = (v) => (v > 0 ? `<small class="kpi-sub">− ${money(v)} Erstattungen</small>` : '');
+  const offen = orders.filter((o) => o.invoiceNo && o.paymentStatus !== 'bezahlt');
+  const offen30 = offen.filter(in30);
+  const refundLine = (v, off) => (v > 0 ? `<small class="kpi-sub">− ${money(v)} Erstattungen</small>` : '') +
+    (off.length ? `<small class="kpi-sub" title="Rechnungen, deren Zahlung noch aussteht — zählen erst nach dem Zahlungseingang">+ ${money(off.reduce((s, o) => s + rechnungsbetrag(o), 0))} offen</small>` : '');
   const open = all.filter((o) => ['neu', 'bezahlt', 'im-druck', 'gedruckt'].includes(st(o))).length;
   const printed = all.flatMap((o) => o.lines || []).filter((l) => l.print?.status === 'fertig').reduce((s, l) => s + (l.qty || 0), 0);
-  const avg = mitRechnung.length ? rev / mitRechnung.length : 0;
+  const avg = mitRechnung.length ? mitRechnung.reduce((s, o) => s + rechnungsbetrag(o), 0) / mitRechnung.length : 0;   // Rechnungsbetrag vor Erstattungen
   $('#kpis').innerHTML = `
-    <div class="kpi"><span>Umsatz gesamt</span><b>${money(rev - refunds)}</b>${refundLine(refunds)}</div>
-    <div class="kpi"><span>Umsatz 30 Tage</span><b>${money(rev30 - refunds30)}</b>${refundLine(refunds30)}</div>
+    <div class="kpi"><span>Umsatz gesamt</span><b>${money(rev)}</b>${refundLine(refunds, offen)}</div>
+    <div class="kpi"><span>Umsatz 30 Tage</span><b>${money(rev30)}</b>${refundLine(refunds30, offen30)}</div>
     <div class="kpi"><span>Bestellungen</span><b>${all.length}</b></div>
     <div class="kpi"><span>Offen</span><b>${open}</b></div>
     <div class="kpi"><span>Ø Bestellwert</span><b>${money(avg)}</b></div>
@@ -366,7 +374,9 @@ function renderDash() {
 
   // Heute zu tun
   const item = (o, extra = '') => `<div class="todo-item"><a href="#orders/${esc(o.orderId)}" onclick="event.preventDefault();openOrder('${esc(o.orderId)}')"><b>${esc(shortId(o.orderId))}</b></a><span class="who">${esc(custName(o))}</span>${extra}</div>`;
-  const unpaid = all.filter((o) => st(o) === 'neu' && o.payment !== 'paypal' && o.paymentStatus !== 'bezahlt');
+  // Nie abgeschlossene Kassen (kasseAbgebrochen) gehören nicht dazu: keine Rechnung, keine Zahlungspflicht — der Server lehnt
+  // „bezahlt“ für sie ab; sie stehen mit Abzeichen in der Bestell-Liste (dort stornieren)
+  const unpaid = all.filter((o) => st(o) === 'neu' && o.payment !== 'paypal' && o.paymentStatus !== 'bezahlt' && !kasseAbgebrochen(o));
   const toPrint = all.filter((o) => inQueue(o) && progress(o).done === 0 && progress(o).printing === 0);
   const printing = all.filter((o) => st(o) === 'im-druck' || (inQueue(o) && progress(o).printing > 0));
   const toShip = all.filter((o) => st(o) === 'gedruckt');
@@ -385,7 +395,7 @@ function renderDash() {
   for (const o of mitRechnung) {
     const t = new Date(umsatzDatum(o)); t.setHours(0, 0, 0, 0);
     const day = days.find((x) => x.d.getTime() === t.getTime());
-    if (day) { day.sum += rechnungsbetrag(o); day.n++; }
+    if (day) { day.sum += umsatz(o); day.n++; }   // wie die Kennzahl: abzüglich Erstattungen
   }
   const W = 440, H = 160, padL = 44, padB = 22, padT = 10, bw = (W - padL - 6) / 30;
   const max = Math.max(10, ...days.map((x) => x.sum));
@@ -513,7 +523,7 @@ function renderDrawer() {
     ? `<span class="step cur">✕ Storniert</span>${stornoEndgueltig(o) ? `<span class="muted" style="font-size:.8rem">${esc(stornoEndgueltig(o))}</span>` : `<button class="ghost mini" onclick="setStatus('${esc(o.orderId)}','neu')">Storno aufheben → Neu</button>`}`
     : STATUS_FLOW.map((x, i) => {
       const cls = i < idx ? 'done' : i === idx ? 'cur' : i === idx + 1 ? 'next' : '';
-      const click = cls === 'next' ? ` onclick="setStatus('${esc(o.orderId)}','${x}')" title="Weiter zu „${esc(stLabel(x))}“"` : '';
+      const click = cls === 'next' && !kasseAbgebrochen(o) ? ` onclick="setStatus('${esc(o.orderId)}','${x}')" title="Weiter zu „${esc(stLabel(x))}“"` : '';
       return `<span class="step ${cls}"${click}>${i < idx ? '✓ ' : ''}${esc(stLabel(x))}</span>`;
     }).join('<span class="step-arrow">›</span>');
   const hist = [...(o.history || [])].reverse().map((h) => `<li class="${h.by === 'system' ? 'sys' : ''}"><time>${fmtDT(h.at)} · ${esc(h.by)}</time><span class="badge st-${esc(h.status)}" style="margin-right:6px">${esc(stLabel(h.status))}</span>${esc(h.note || '')}</li>`).join('');
@@ -553,7 +563,7 @@ function renderDrawer() {
   const payBlock = o.payment === 'paypal'
     ? `<dl class="kv"><dt>Zahlart</dt><dd>PayPal ${o.paymentStatus === 'bezahlt' ? '✅ bezahlt' : '⏳ offen'}</dd><dt>PayPal-ID</dt><dd><code>${esc(o.paypalOrderId || '—')}</code></dd>${o.paidAt ? `<dt>Bezahlt am</dt><dd>${fmtDT(o.paidAt)}</dd>` : ''}</dl>`
     : `<dl class="kv"><dt>Zahlart</dt><dd>Vorkasse (Überweisung)</dd><dt>Betrag</dt><dd><b>${o.total != null ? money(o.total) : '—'}</b></dd><dt>Verwendungszweck</dt><dd>${vzweck}</dd>
-       <dt>Status</dt><dd>${o.paymentStatus === 'bezahlt' ? `✅ bezahlt${o.paidAt ? ' am ' + fmtDT(o.paidAt) : ''} ${undoable ? `<button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu (Zahlung offen)</button>` : `<button class="link mini" onclick="setPayment('${esc(o.orderId)}','offen')">zurücksetzen</button>`}` : `⏳ offen seit ${ageText(o.createdAt)} <button class="mini acc" style="margin-left:8px" onclick="markPaid('${esc(o.orderId)}')">✓ Zahlung eingegangen</button>${undoable ? ` <button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu</button>` : ''}`}</dd></dl>`;
+       <dt>Status</dt><dd>${o.paymentStatus === 'bezahlt' ? `✅ bezahlt${o.paidAt ? ' am ' + fmtDT(o.paidAt) : ''} ${undoable ? `<button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu (Zahlung offen)</button>` : `<button class="link mini" onclick="setPayment('${esc(o.orderId)}','offen')">zurücksetzen</button>`}` : `⏳ offen seit ${ageText(o.createdAt)} ${kasseAbgebrochen(o) ? '' : `<button class="mini acc" style="margin-left:8px" onclick="markPaid('${esc(o.orderId)}')">✓ Zahlung eingegangen</button>`}${undoable ? ` <button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu</button>` : ''}`}</dd></dl>`;
 
   const account = o.userId ? '<span class="badge">👤 Kundenkonto</span>' : (USERS.some((u) => u.email === custEmail(o)) ? '<span class="badge">👤 hat Konto</span>' : '<span class="badge">Gast</span>');
   const tel = cu.phone ? `<br><a href="tel:${esc(cu.phone)}">${esc(cu.phone)}</a>` : '';
@@ -2174,7 +2184,8 @@ async function downloadBackup() {
 // ---------------------------------------------------------------------------
 async function load() {
   const d = await api('/api/admin/data');
-  if (!d.ok) throw new Error('auth');
+  if (!d.ok) throw new Error(d.code === 'ueberlast' ? 'ueberlast' : 'auth');   // 503: Server ausgelastet, kein falsches Passwort
+  $('#pw').value = '';   // angenommen (liegt jetzt nur im sessionStorage) — nicht im Feld stehen lassen
   DATA = d;
   DATA.statuses ||= ['neu', 'bezahlt', 'im-druck', 'gedruckt', 'versendet', 'abgeschlossen', 'storniert'];
   try { USERS = (await api('/api/admin/users')).users || []; } catch { USERS = []; }

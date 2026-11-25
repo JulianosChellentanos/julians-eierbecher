@@ -18,6 +18,8 @@ if (!arg) {
 const zufall = arg === '--zufall';
 const pw = zufall ? crypto.randomBytes(15).toString('base64url') : arg.trim();
 if (pw.length < 8 || pw.length > 200) { console.error('❌ Admin-Passwort: 8 bis 200 Zeichen'); process.exit(1); }
+// wie server.js ADMIN_STANDARD_PW: früher veröffentlichte Standard-Passwörter gelten nie als neues Passwort
+if (['formsam-admin', 'ovju-admin'].includes(pw)) { console.error('❌ Das ist ein früher veröffentlichtes Standard-Passwort – bitte ein eigenes wählen.'); process.exit(1); }
 
 const dir = path.resolve(process.env.DATA_DIR || 'data');
 const file = path.join(dir, 'settings.json');

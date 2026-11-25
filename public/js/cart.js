@@ -331,7 +331,7 @@ function zahlartFuerBetrag(t) {
 /**
  * „Deine Bestellung“ unmittelbar über dem Bestellknopf (§ 312j Abs. 2 BGB): je Position Menge, Titel und alle gewählten Merkmale
  * (itemSub: Muster, Tiefe, Höhe, Breite, Rand, Farbe, Gravurtext, Aufpreise), Mengenrabatt, Streichpreis nur mit Zeilen-Bezugspreis;
- * danach Aktion, Gutschein, Versand und Gesamt
+ * danach Aktion, Rabatt-Gutschein, Versand und Gesamt — bei Guthaben wie auf der Rechnung: Gesamtbetrag, abzüglich Guthaben, Zu zahlen
  */
 function renderCheckoutSummary() {
   const t = checkoutTotals();
@@ -344,9 +344,11 @@ function renderCheckoutSummary() {
       `<b${mitRef ? ' class="aktion-price"' : ''}>${fmt(line)}${mitRef ? ` ${refStrike(lp, it.qty)}` : ''}</b></div>`;
   }).join('') + `
     ${aktionRowHTML(t, 'co-aktion')}
-    ${coupon ? `<div><span>${coupon.guthaben ? '💳 Guthaben' : '🎟️ Gutschein'} „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
+    ${coupon && !coupon.guthaben ? `<div><span>🎟️ Gutschein „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
-    <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>
+    ${coupon?.guthaben ? `<div><span>Gesamtbetrag</span><b>${fmt(Math.round((t.subtotal + t.shipping) * 100) / 100)}</b></div>
+    <div><span>💳 abzüglich Guthaben „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
+    <div class="ct-grand"><span>${coupon?.guthaben ? 'Zu zahlen' : 'Gesamt'}</span><b>${fmt(t.total)}</b></div>
     ${mwstZeile('co-ref')}
     ${cart.length && t.total <= 0 ? `<small class="co-ref">Nichts zu zahlen – dein ${coupon?.guthaben ? 'Guthaben' : 'Gutschein'} deckt den Gesamtbetrag.</small>` : ''}
     ${t.mitRef ? `<small class="co-ref">${REF_FUSSNOTE}</small>` : ''}`;
@@ -440,8 +442,8 @@ function setupPayPal() {
         return r.id;
       },
       onApprove: async (data) => {
-        const r = await (await fetch(`/api/paypal/capture/${data.orderID}`, { method: 'POST' })).json();
-        if (!r.ok) { alert('Zahlung fehlgeschlagen'); return; }
+        const r = await (await fetch(`/api/paypal/capture/${data.orderID}`, { method: 'POST' })).json().catch(() => ({}));
+        if (!r.ok) { alert(r.error || 'Zahlung fehlgeschlagen'); return; }
         await submitOrder('paypal', data.orderID);
       },
       onError: (err) => console.warn('PayPal:', err?.message || err),

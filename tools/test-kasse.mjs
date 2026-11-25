@@ -266,7 +266,13 @@ try {
   check(/enthaltene USt \(19 %\): 1,60/.test(beleg(rb.orderId, 'gutschrift.html')) && /Rechnungskorrektur/.test(beleg(rb.orderId, 'gutschrift.html')), 'Gutschrift zur Regel-Rechnung mit USt 1,60, Titel „Gutschrift (Rechnungskorrektur)“');
   const rc = await bestelle([V(2)]);
   // Altbestand: Bestellung ohne order.steuer (wie vor dem Update) — der Status kommt aus der gespeicherten rechnung.html
-  const oc = lies(rc.orderId); delete oc.steuer; writeFileSync(path.join(ORDERS, rc.orderId, 'order.json'), JSON.stringify(oc, null, 2));
+  // Der Abschluss vermerkt die (bei Mail aus nicht gesendeten) Mails kurz danach selbst an der Bestellung — solange wiederholen, bis
+  // das Entfernen nicht mehr überschrieben wird (sonst gelegentlich ein Wettlauf zwischen Test und Server)
+  for (let i = 0; i < 20; i++) {
+    const oc = lies(rc.orderId); delete oc.steuer; writeFileSync(path.join(ORDERS, rc.orderId, 'order.json'), JSON.stringify(oc, null, 2));
+    await new Promise((r) => setTimeout(r, 150));
+    if (!lies(rc.orderId).steuer) break;
+  }
   await setze({ company: { kleinunternehmer: false } });
   await status(rc.orderId, 'storniert');
   const sc = beleg(rc.orderId, 'storno.html');

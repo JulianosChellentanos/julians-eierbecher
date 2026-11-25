@@ -3,6 +3,7 @@ const $ = (s) => document.querySelector(s);
 
 let currentUser = null;
 let myOrders = [];
+let meStand = 0;   // Zeitpunkt des letzten erfolgreichen refreshMe() (openAccount lädt nur nach, wenn der Stand älter ist)
 let resetToken = '';   // aus ?reset=TOKEN (Link aus der „Passwort vergessen“-Mail)
 let verifyToken = '';  // aus ?verify=TOKEN (Link aus der Willkommens-/Bestätigungsmail) — gilt nur zusammen mit der Anmeldung
 
@@ -115,7 +116,7 @@ async function refreshMe() {
   if (!token()) { currentUser = null; renderButton(); return; }
   try {
     const r = await (await fetch('/api/auth/me', { headers: getAuthHeaders() })).json();
-    if (r.ok) { currentUser = r.user; myOrders = r.orders; }
+    if (r.ok) { currentUser = r.user; myOrders = r.orders; meStand = Date.now(); }
     else { localStorage.removeItem('ovju-auth'); currentUser = null; }
   } catch { /* offline etc. */ }
   renderButton();
@@ -161,6 +162,7 @@ async function startSession(r) {
 // --- E-Mail-Adresse bestätigen: Link ?verify=TOKEN — der Server nimmt ihn nur zusammen mit der Anmeldung in genau diesem Konto
 /** Hinweis im Konto (über den Bestellungen): unbestätigt → Bitte + „Link erneut senden“; Ergebnis einer Bestätigung */
 let verifyMsg = '';
+let ohneWillkommen = false;   // Registrierung ohne Willkommensmail (Server: ohneMail) — Link über „Link erneut senden“
 function verifyBox() {
   let box = $('#acc-verify');
   if (!box) {
@@ -173,7 +175,7 @@ function verifyBox() {
   const offen = currentUser && !currentUser.emailVerified;
   box.hidden = !offen && !verifyMsg;
   box.innerHTML = offen
-    ? `✉️ <b>Bitte bestätige deine E-Mail-Adresse.</b> Erst danach zeige ich dir hier auch Bestellungen, die du ohne Anmeldung mit dieser Adresse aufgegeben hast. Den Link hast du nach der Registrierung per E-Mail bekommen.
+    ? `✉️ <b>Bitte bestätige deine E-Mail-Adresse.</b> Erst danach zeige ich dir hier auch Bestellungen, die du ohne Anmeldung mit dieser Adresse aufgegeben hast.${ohneWillkommen ? '' : ' Den Link hast du nach der Registrierung per E-Mail bekommen.'}
        <br><button type="button" class="linkbtn" id="acc-verify-send">Link erneut senden</button> <span id="acc-verify-msg">${esc(verifyMsg)}</span>`
     : esc(verifyMsg);
   $('#acc-verify-send')?.addEventListener('click', resendVerify);
@@ -206,6 +208,8 @@ async function doAuth(path, body) {
   showErr('');
   const r = await api(path, body);
   if (!r.ok) { showErr(r.error); return; }
+  // Konto angelegt, Willkommensmail aber gerade gedeckelt (viele Registrierungen): Link im Konto anfordern
+  if (r.ohneMail) { ohneWillkommen = true; verifyMsg = 'Die Mail mit dem Bestätigungslink konnte ich gerade nicht verschicken – fordere sie bitte mit „Link erneut senden“ an.'; }
   await startSession(r);
 }
 
@@ -259,13 +263,22 @@ function money(v) {
 export function openAccount() {
   if (!currentUser) { showAuthTab('login'); $('#auth-modal').showModal(); return; }
   $('#acc-greeting').textContent = `Hallo, ${currentUser.name}! 👋`;
-  $('#acc-email').textContent = currentUser.email + (currentUser.emailVerified ? ' ✓' : '');
-  verifyBox();
   const a = currentUser.address || {};
   $('#acc-street').value = a.street || '';
   $('#acc-zip').value = a.zip || '';
   $('#acc-city').value = a.city || '';
   sicherZuruecksetzen();
+  renderAccountOrders();
+  $('#account-modal').showModal();
+  // Bestellungen von einem anderen Gerät/Tab: gleich mit dem gemerkten Stand öffnen, frisch vom Server nachziehen
+  if (Date.now() - meStand > 3000) {
+    refreshMe().then(() => { if (currentUser && $('#account-modal').open) renderAccountOrders(); });
+  }
+}
+/** E-Mail-Zeile, Bestätigungs-Hinweis und Bestellungen im Konto (Adressfelder bleiben, wie sie gerade bearbeitet werden) */
+function renderAccountOrders() {
+  $('#acc-email').textContent = currentUser.email + (currentUser.emailVerified ? ' ✓' : '');
+  verifyBox();
   $('#acc-orders').innerHTML = myOrders.length ? myOrders.map((o) => `
     <div class="acc-order" style="flex-wrap:wrap">
       <div><b>${esc(o.orderId)}</b><br><small>${new Date(o.createdAt).toLocaleDateString('de-DE')} · ${o.pieces} Stück</small></div>
@@ -278,7 +291,6 @@ export function openAccount() {
       ${reklaHtml(o)}
     </div>`).join('')
     : `<p class="tiny" style="text-align:left">${currentUser.emailVerified ? 'Noch keine Bestellungen – dein erstes Unikat wartet im Konfigurator! 🎨' : 'Noch keine Bestellungen mit diesem Konto. Hast du ohne Anmeldung bestellt? Dann bestätige oben deine E-Mail-Adresse.'}</p>`;
-  $('#account-modal').showModal();
 }
 
 let addrMsgTimer = 0;

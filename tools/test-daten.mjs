@@ -154,8 +154,13 @@ try {
   const da = (id) => existsSync(path.join(dir, 'orders', id));
   pruefe('abgebrochene Kasse nach 14 Tagen samt Ordner gelöscht, Protokollzeile', !da('FS-261101-AAAA01') && /Abgebrochene Kasse FS-261101-AAAA01/.test(s.log), s.log.slice(-400));
   pruefe('Rechnung, Zahlung, PayPal, jung, Notiz, Status, Altbestand, kaputt: bleiben', ['02', '03', '04', '05', '06', '07', '08', '09'].every((n) => da(`FS-261101-AAAA${n}`)));
+  let r0;
   const inOrdner = (id) => (da(id) ? readdirSync(path.join(dir, 'orders', id)).sort().join() : '–');
   pruefe('nie abgeschlossene Kasse nach 48 h: Druck- und Temp-Dateien weg, order.json bleibt, Protokollzeile', inOrdner('FS-261101-AAAA10') === 'order.json' && /Druckdateien der nie abgeschlossenen Kasse FS-261101-AAAA10/.test(s.log), inOrdner('FS-261101-AAAA10'));
+  r0 = await s.req('POST', '/api/admin/order-update', { orderId: 'FS-261101-AAAA05', paymentStatus: 'bezahlt', status: 'bezahlt' }, admin('test-admin-123'));
+  const r0b = await s.req('POST', '/api/admin/order-status', { orderId: 'FS-261101-AAAA05', status: 'im-druck' }, admin('test-admin-123'));
+  pruefe('nie abgeschlossene Kasse: „bezahlt“ bzw. weiterer Status → 409 (keine Rechnung), Bestellung unverändert', r0.status === 409 && r0.json?.code === 'kasse-offen' && r0b.status === 409
+    && JSON.parse(readFileSync(path.join(dir, 'orders/FS-261101-AAAA05/order.json'), 'utf8')).paymentStatus === 'offen', [r0.status, r0b.status]);
   pruefe('Druckdateien einer jungen Kasse und einer Bestellung mit Rechnung bleiben', inOrdner('FS-261101-AAAA11') === 'modell-1-vase.stl,order.json' && inOrdner('FS-261101-AAAA02') === 'modell-1-vase.stl,order.json', [inOrdner('FS-261101-AAAA11'), inOrdner('FS-261101-AAAA02')]);
 
   // Admin-Bremse: IPv6 /64 teilt sich einen Zähler, andere Netze kommen durch; IPv4-mapped = IPv4
@@ -363,7 +368,7 @@ try {
   const app = await s.req('GET', '/js/app.js');
   const appMs = Date.now() - t0;
   const sz = zaehle((await schub).map((x) => x.st));
-  pruefe('Last: /js/app.js während 400 gleichzeitiger Admin-Rateversuche schnell (< 1 s), Überzahl → 429', app.status === 200 && appMs < 1000 && (sz[429] || 0) > 0, { appMs, ...sz });
+  pruefe('Last: /js/app.js während 400 gleichzeitiger Admin-Rateversuche schnell (< 1 s), Überzahl → 503 „sehr viel los“ (kein Fehlversuch)', app.status === 200 && appMs < 1000 && (sz[503] || 0) > 0, { appMs, ...sz });
   await s.stop();
   // Neustart: Hash bleibt (Platzhalter erkannt, keine neue Umstellung), geänderte Daten sind lesbar
   const s2 = await starte(dir);
@@ -388,6 +393,70 @@ try {
     for (let i = 0; i < 100; i++) await s.req('GET', '/api/admin/data', null, admin('falsch', `203.0.${113 + (i % 10)}.${i + 1}`));
     par = (await parallel(s, 2, () => ({ pfad: '/api/admin/data', headers: admin('test-admin-123', '198.18.5.5') }))).map((x) => x.st);
     pruefe('Admin: Gesamtbremse aktiv, Inhaber ohne Tippfehler, zwei gleichzeitige Anfragen → 200 + 200', par.join() === '200,200', par);
+    await s.stop();
+  }
+
+  // Früher veröffentlichtes Standard-Passwort nach dem Update: laut gemeldet, Admin-Hinweis bis zum Wechsel; als neues Passwort abgelehnt.
+  // Auch nach einer früheren Umstellung (Hash + Platzhalter) erkennt der Start es wieder.
+  {
+    const dir = ordner('standard-pw', { 'data/settings.json': SETTINGS({ adminKey: 'formsam-admin' }) });
+    let s = await starte(dir);
+    const hinw = async (pw, ip) => ((await s.req('GET', '/api/admin/data', null, admin(pw, ip))).json?.hinweise || []).filter((h) => /Standard-Passwort/.test(h));
+    pruefe('Standard-Passwort „formsam-admin“ nach dem Update: Warnung im Protokoll und Admin-Hinweis', /ACHTUNG: Das Admin-Passwort ist noch ein früher bekanntes Standard-Passwort/.test(s.log) && (await hinw('formsam-admin', '192.0.2.30')).length === 1, s.log.slice(-300));
+    await s.stop();
+    s = await starte(dir);
+    pruefe('Standard-Passwort: nach dem Neustart (schon als Hash) weiter erkannt', (await hinw('formsam-admin', '192.0.2.31')).length === 1);
+    const neu = await s.req('POST', '/api/admin/settings', { adminKey: 'ovju-admin' }, admin('formsam-admin', '192.0.2.32'));
+    const neu2 = await s.req('POST', '/api/admin/settings', { adminKey: 'eigenes-passwort-1' }, admin('formsam-admin', '192.0.2.33'));
+    pruefe('Standard-Passwort als neues abgelehnt (400), eigenes angenommen → Hinweis weg', neu.status === 400 && neu2.status === 200 && (await hinw('eigenes-passwort-1', '192.0.2.34')).length === 0, [neu.status, neu2.status]);
+    await s.stop();
+  }
+
+  // Grenzen, die wenige Adressen nicht für alle ausschöpfen dürfen (frische Instanz)
+  {
+    const dir = ordner('grenzen', { 'data/settings.json': SETTINGS() });
+    const s = await starte(dir);
+    // Passwortprüfungen fair verteilt: 4 Adressen × 30 gleichzeitige RICHTIGE Anmeldungen; derweil meldet sich eine Kundin von einer
+    // anderen Adresse an und der Admin mit (noch nicht gemerktem) Passwort — beide kommen durch (früher 503 bzw. 429)
+    for (let i = 0; i < 3; i++) await s.req('POST', '/api/auth/register', { name: 'Lisa Last', email: `last${i}@example.invalid`, password: 'last-passwort' }, von(`10.20.0.${i + 1}`));
+    await s.req('POST', '/api/auth/register', { name: 'Kim Kundin', email: 'kim@example.invalid', password: 'kim-passwort' }, von('10.20.1.1'));
+    const angriff = parallel(s, 120, (i) => ({ method: 'POST', pfad: '/api/auth/login', headers: von(`10.21.0.${(i % 4) + 1}`), body: { email: `last${i % 3}@example.invalid`, password: 'last-passwort' } }));
+    await sleep(60);
+    const [kim, adm] = await Promise.all([
+      s.req('POST', '/api/auth/login', { email: 'kim@example.invalid', password: 'kim-passwort' }, von('10.20.1.1')),
+      s.req('GET', '/api/admin/data', null, admin('test-admin-123', '192.0.2.40')),
+    ]);
+    const az = zaehle((await angriff).map((x) => x.st));
+    pruefe('scrypt fair: 4 Adressen × 30 gleichzeitige richtige Anmeldungen — Kundin von anderer Adresse 200, Admin 200', kim.status === 200 && adm.status === 200, { kim: kim.status, admin: adm.status, angriff: az });
+    pruefe('scrypt fair: die Anmeldungen der 4 Adressen warten beim eigenen Anschluss statt die Warteschlange zu füllen (kein 503)', !az[503] && az[200] === 120, az);
+    await parallel(s, 120, (i) => ({ method: 'POST', pfad: '/api/auth/login', headers: von(`10.21.0.${(i % 4) + 1}`), body: { email: `last${i % 3}@example.invalid`, password: 'last-passwort' } }));
+    const dritte = await s.req('POST', '/api/auth/login', { email: 'last0@example.invalid', password: 'last-passwort' }, von('10.21.0.1'));
+    pruefe('Anmeldung: nach 60 gelungenen je Adresse in 15 Minuten → 429 „Sehr viele Anmeldungen“', dritte.status === 429 && /Sehr viele Anmeldungen/.test(dritte.json?.error || ''), dritte.json);
+
+    // Registrierung: Die Grenze insgesamt (30/Stunde) deckelt nur Willkommensmails — darüber entsteht das Konto trotzdem
+    const reg = [];
+    for (let i = 0; i < 35; i++) reg.push((await s.req('POST', '/api/auth/register', { name: 'Gina Grenze', email: `grenze${i}@example.invalid`, password: 'grenze-passwort' }, von(`10.22.${Math.floor(i / 5)}.1`))).json);
+    await sleep(300);
+    const willkommen = (await mails(s, 'test-admin-123')).filter((m) => m.kind === 'willkommen').length;
+    pruefe('Registrierung über der Grenze insgesamt: alle Konten angelegt, 30 Willkommensmails (4 vorher + 26), danach ohneMail', reg.every((x) => x?.ok) && willkommen === 30 && reg.filter((x) => x.ohneMail).length === 9 && reg.slice(0, 26).every((x) => !x.ohneMail), { willkommen, ohne: reg.filter((x) => x?.ohneMail).length });
+    const spaet = reg.at(-1);
+    const vr = await s.req('POST', '/api/auth/verify-resend', {}, { 'x-auth': spaet?.token, ...von('10.22.6.1') });
+    await sleep(300);
+    pruefe('Registrierung ohne Willkommensmail: Bestätigungslink lässt sich im Konto anfordern', vr.status === 200 && (await mails(s, 'test-admin-123')).some((m) => m.kind === 'email-bestaetigung' && m.to === 'grenze34@example.invalid'), vr.json);
+    const meld = await s.req('POST', '/api/auth/register', { name: 'Gina Grenze', email: 'grenze0@example.invalid', password: 'grenze-passwort' }, von('10.22.9.1'));
+    pruefe('Registrierung: bestehende Adresse weiter 400 (keine irreführende „dein Anschluss“-Meldung)', meld.status === 400, meld.json);
+
+    // Voller Bremsen-Speicher (20 000 Zähler je Art) sperrt keine neuen Adressen: 20 050 Adressen fordern je einmal „Passwort vergessen“
+    // an; danach bekommt eine neue Adresse für ein echtes Konto ihre Mail, eine vorher gesperrte Adresse bleibt gesperrt
+    for (let i = 0; i < 10; i++) await s.req('POST', '/api/auth/forgot', { email: `niemand${i}@example.invalid` }, von('192.0.2.77'));
+    for (let runde = 0; runde < 41; runde++) {
+      await parallel(s, 500, (i) => { const n = runde * 500 + i; return { method: 'POST', pfad: '/api/auth/forgot', headers: von(`100.${64 + (n >> 16)}.${(n >> 8) & 255}.${n & 255}`), body: { email: 'flut@example.invalid' } }; });
+    }
+    await s.req('POST', '/api/auth/forgot', { email: 'kim@example.invalid' }, von('192.0.2.77'));
+    await s.req('POST', '/api/auth/forgot', { email: 'last1@example.invalid' }, von('198.51.100.201'));
+    await sleep(400);
+    const resets = (await mails(s, 'test-admin-123')).filter((m) => m.kind === 'passwort-reset').map((m) => m.to);
+    pruefe('Bremsen-Speicher voll (20 500 Adressen): neue Adresse bekommt die Reset-Mail, gesperrte Adresse bleibt gesperrt', resets.includes('last1@example.invalid') && !resets.includes('kim@example.invalid') && !/Speicher voll/.test(s.log), { resets, log: s.log.match(/.*Speicher voll.*/)?.[0] });
     await s.stop();
   }
 } catch (err) {
