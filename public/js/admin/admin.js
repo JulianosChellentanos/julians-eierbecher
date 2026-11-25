@@ -559,7 +559,7 @@ function renderDrawer() {
   const tel = cu.phone ? `<br><a href="tel:${esc(cu.phone)}">${esc(cu.phone)}</a>` : '';
   $('#drawer-body').innerHTML = `${widerrufCard(o)}
     <div class="sect">
-      <h3>Status <span class="right">${fmtDT(o.createdAt)}${o.invoiceNo ? ` · <a href="${esc(docUrl(o, 'rechnung.html'))}" target="_blank">🧾 ${esc(o.invoiceNo)}</a>` : ''}${o.storno?.nr ? ` · <a href="${esc(docUrl(o, 'storno.html'))}" target="_blank" title="Stornorechnung">↩ ${esc(o.storno.nr)}</a>` : ''}</span></h3>
+      <h3>Status <span class="right">${fmtDT(o.createdAt)}${o.invoiceNo ? ` · <a href="${esc(docUrl(o, 'rechnung.html'))}" target="_blank">🧾 ${esc(o.invoiceNo)}</a> <a href="${esc(docUrl(o, 'rechnung.pdf'))}" target="_blank" title="Rechnung als PDF">PDF</a>` : ''}${o.storno?.nr ? ` · <a href="${esc(docUrl(o, 'storno.html'))}" target="_blank" title="Stornorechnung">↩ ${esc(o.storno.nr)}</a> <a href="${esc(docUrl(o, 'storno.pdf'))}" target="_blank" title="Stornorechnung als PDF">PDF</a>` : ''}</span></h3>
       ${kasseAbgebrochen(o) ? `<p class="hint">${Date.now() - Date.parse(o.createdAt) > 30 * 60e3 ? '⚠️ Kasse abgebrochen: Die Bestellung wurde angelegt, aber nie abgeschlossen — keine Rechnung, keine Bestätigungsmail an die Kundschaft. Am besten stornieren (ein eingelöstes Guthaben wird dabei wieder frei).' : '⏳ Die Kundschaft ist gerade in der Kasse — die Druckdateien werden hochgeladen.'}</p>` : ''}
       <div class="stepper">${stepper}</div>
       <div class="row" style="margin-top:10px">
@@ -836,7 +836,7 @@ function reklaCard(o) {
     ['Angelegt', fmtDT(r.createdAt) + (r.resolvedAt ? ` · ${r.status === 'abgelehnt' ? 'abgelehnt' : 'erledigt'} ${fmtDT(r.resolvedAt)}` : '')],
     r.art === 'ueberweisung' ? ['IBAN', r.iban ? `<code title="nur die letzten 4 Zeichen sichtbar">${esc(maskIban(r.iban))}</code>` : (open ? '<input id="rk-iban" placeholder="IBAN des Kunden — nötig zum Erledigen" autocomplete="off" style="min-width:260px">' : '—')] : null,
     r.gutscheinCode ? ['Gutschein-Code', `<span class="rk-code"><code>${esc(r.gutscheinCode)}</code><button class="ghost mini" data-copy="${esc(r.gutscheinCode)}">📋 Kopieren</button></span>`] : null,
-    r.gutschriftNo ? ['Gutschrift', `<a href="${esc(docUrl(o, 'gutschrift.html'))}" target="_blank">🧾 ${esc(r.gutschriftNo)}</a>`] : null,
+    r.gutschriftNo ? ['Gutschrift', `<a href="${esc(docUrl(o, 'gutschrift.html'))}" target="_blank">🧾 ${esc(r.gutschriftNo)}</a> <a href="${esc(docUrl(o, 'gutschrift.pdf'))}" target="_blank" title="Gutschrift als PDF">PDF</a>`] : null,
     r.refundId ? ['PayPal-Erstattung', `<code>${esc(r.refundId)}</code>`] : null,
     r.note && r.status !== 'abgelehnt' ? ['Notiz', esc(r.note)] : null,
   ].filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');

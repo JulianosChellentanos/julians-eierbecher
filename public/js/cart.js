@@ -552,6 +552,8 @@ async function submitOrder(payment, paypalOrderId = null) {
     $('#checkout-modal').close();
     $('#confirm-id').textContent = r.orderId;
     $('#confirm-invoice').href = done.invoiceUrl;
+    const pdfLink = $('#confirm-invoice-pdf');   // PDF-Fassung der Rechnung (fehlt sie in der Antwort, bleibt der Link verborgen)
+    if (pdfLink) { pdfLink.hidden = !done.invoicePdfUrl; pdfLink.href = done.invoicePdfUrl || '#'; }
     // Lieferfrist wie in Bestellbestätigung, Rechnung und AGB § 7 — der Satz zum Fristbeginn kommt vom Server (/api/pricing → shop.fristBeginn)
     const { lieferzeit } = shopInfo();
     const frist = pricing()?.shop?.fristBeginn?.[payment === 'paypal' ? 'paypal' : 'vorkasse']
