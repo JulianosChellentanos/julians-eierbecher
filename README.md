@@ -274,7 +274,7 @@ npm run check   # erzeugt eine Referenz-Vase als STL und validiert sie
 node tools/check-stl.mjs orders/<ID>/<datei>.stl   # Bestellung prüfen
 node tools/mail-test.mjs --smoke                   # Mail-Versand und alle Vorlagen
 node tools/test-referenzpreis.mjs                  # Streichpreis = niedrigster Preis der letzten 30 Tage
-node tools/test-eingaben.mjs                       # Eingaben, 400/404/405/413, Kopfzeilen, Dateirechte (eigene Instanz, Port 4506–4509)
+node tools/test-eingaben.mjs                       # Eingaben, 400/404/405/413, Kopfzeilen, Dateirechte (eigene Instanz, Port 4545–4549)
 ```
 
 Der Validator prüft: Dateikonsistenz, degenerierte Dreiecke, NaN, Bounding Box,

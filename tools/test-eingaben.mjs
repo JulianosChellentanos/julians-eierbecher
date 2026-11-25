@@ -1,7 +1,7 @@
 // formsam — Prüfung von Eingaben, Auslieferung und Schutz-Kopfzeilen (lib/eingaben.js + server.js):
 //   A) ohne Server: E-Mail-/Namens-/Adress-/Konfigurationsprüfung, ReDoS-Schlimmstfälle (je < 5 ms), Abgleich der Tabellen mit
 //      public/js/geometry.js und den Reglern in public/index.html
-//   B) eigene Server-Instanz (Port 4506–4509, Daten unter tmp-tests/test-eingaben-<pid>, Mail aus, wird danach gelöscht):
+//   B) eigene Server-Instanz (Port 4545–4549 bzw. TEST_PORT — außerhalb der Prüf-Sandboxen 4491–4539, Daten unter tmp-tests/test-eingaben-<pid>, Mail aus, wird danach gelöscht):
 //      400/404/405/413 statt 500 oder Verbindungsabbruch, Schutz-Kopfzeilen, 404-Seite, Pfadprüfung, Konto-, Design- und
 //      Kassenprüfung, Vorschaubilder, Dateirechte, eine vollständige Vorkasse-Bestellung
 // Aufruf: node tools/test-eingaben.mjs   → Exit 0 = alles bestanden, 1 = Fehler
@@ -123,8 +123,8 @@ check(gleich(Object.keys(G.TEXT_STYLES), KONFIG.stil), 'Gravur-Stile');
 // ---------------------------------------------------------------------------
 const frei = (port) => new Promise((resolve) => { const s = net.createServer(); s.once('error', () => resolve(false)); s.listen(port, '127.0.0.1', () => s.close(() => resolve(true))); });
 let PORT = 0;
-for (const p of [4506, 4507, 4508, 4509]) if (await frei(p)) { PORT = p; break; }
-if (!PORT) { console.log('✗ kein freier Port 4506–4509'); process.exit(1); }
+for (const p of process.env.TEST_PORT ? [+process.env.TEST_PORT] : [4545, 4546, 4547, 4548, 4549]) if (await frei(p)) { PORT = p; break; }
+if (!PORT) { console.log('✗ kein freier Port (4545–4549 bzw. TEST_PORT)'); process.exit(1); }
 const DIR = path.join(ROOT, 'tmp-tests', `test-eingaben-${process.pid}`);
 rmSync(DIR, { recursive: true, force: true });
 mkdirSync(DIR, { recursive: true });
