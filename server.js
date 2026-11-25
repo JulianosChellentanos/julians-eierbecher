@@ -479,8 +479,26 @@ function speicherKette(file, stand) {
 }
 const speicherFehler = (was) => (err) => console.error(`${was} konnte nicht gespeichert werden:`, err?.message || err);
 
-// --- Passwörter (Kundenkonten, Admin): crypto.scrypt asynchron — blockiert den Shop nicht wie scryptSync
-const scryptAsync = (pw, salt, len) => new Promise((ok, fail) => crypto.scrypt(String(pw), salt, len, (err, key) => (err ? fail(err) : ok(key))));
+// --- Passwörter (Kundenkonten, Admin): crypto.scrypt asynchron — blockiert den Shop nicht wie scryptSync. Höchstens SCRYPT_PARALLEL
+//   Rechnungen gleichzeitig: scrypt läuft im libuv-Threadpool (4 Plätze), den auch jeder Dateizugriff braucht — ein Schub
+//   Rateversuche darf Seiten, Skripte und Druckdateien nicht ausbremsen. Prüfungen (pruefung = true: Anmeldung, Admin-Passwort)
+//   scheitern sofort mit code 'ueberlast' (Anmeldung → 503, Admin → 429), wenn schon SCRYPT_WARTEND_MAX warten — die Warteschlange
+//   wächst nicht unbegrenzt. Neue Passwörter (Registrierung, Reset, Wechsel; vorher gebremst) warten immer.
+const SCRYPT_PARALLEL = 2, SCRYPT_WARTEND_MAX = 100;
+const UEBERLAST = { ok: false, error: 'Gerade ist sehr viel los – bitte versuch es in einer Minute noch einmal.' };
+let scryptLaeuft = 0;
+const scryptWarten = [];
+function scryptAsync(pw, salt, len, pruefung = false) {
+  if (pruefung && scryptLaeuft >= SCRYPT_PARALLEL && scryptWarten.length >= SCRYPT_WARTEND_MAX) return Promise.reject(Object.assign(new Error('scrypt ausgelastet'), { code: 'ueberlast' }));
+  return new Promise((ok, fail) => {
+    const los = () => {
+      scryptLaeuft++;
+      const fertig = (err, key) => { scryptLaeuft--; scryptWarten.shift()?.(); if (err) fail(err); else ok(key); };
+      try { crypto.scrypt(String(pw), salt, len, fertig); } catch (err) { fertig(err); }
+    };
+    if (scryptLaeuft < SCRYPT_PARALLEL) los(); else scryptWarten.push(los);
+  });
+}
 /** Admin-Passwort → 'scrypt$salt$hash' (32 Bytes, wie das Wartungskennwort); synchron nur beim Start und in tools/admin-passwort.mjs */
 function pwHashSync(pw) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -494,7 +512,7 @@ const pwHashGueltig = (h) => /^scrypt\$[0-9a-f]{16,64}\$[0-9a-f]{64}$/.test(Stri
 async function pwHashStimmt(pw, h) {
   if (!pwHashGueltig(h) || typeof pw !== 'string') return false;
   const [, salt, hex] = h.split('$');
-  const a = await scryptAsync(pw, salt, 32), b = Buffer.from(hex, 'hex');
+  const a = await scryptAsync(pw, salt, 32, true), b = Buffer.from(hex, 'hex');
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
@@ -768,13 +786,13 @@ function publicList(l) {
 const saveSessions = speicherKette(SESS_FILE, () => JSON.stringify(sessions));
 // Kundenpasswörter: scrypt (64 Bytes, Salz je Konto), asynchron. Neue Passwörter: Text mit 8–200 Zeichen (bestehende kürzere
 // gelten weiter). Bei unbekannter Adresse rechnet die Anmeldung einen Schein-Hash — die Antwortzeit verrät nicht, ob es das Konto gibt.
-const hashPw = async (pw, salt) => (await scryptAsync(pw, salt, 64)).toString('hex');
+const hashPw = async (pw, salt, pruefung = false) => (await scryptAsync(pw, salt, 64, pruefung)).toString('hex');
 const PW_MIN = 8, PW_MAX = 200;
 const pwRegel = (pw) => (typeof pw === 'string' && pw.length >= PW_MIN && pw.length <= PW_MAX ? null : `Passwort: ${PW_MIN} bis ${PW_MAX} Zeichen`);
 const SCHEIN_SALZ = crypto.randomBytes(16).toString('hex');
 async function passwortStimmt(u, pw) {
   const text = typeof pw === 'string' && pw.length <= 1024 ? pw : '';
-  const h = await hashPw(text, u?.salt || SCHEIN_SALZ);
+  const h = await hashPw(text, u?.salt || SCHEIN_SALZ, true);
   if (!u || !text || !/^[0-9a-f]{128}$/.test(String(u.hash || ''))) return false;
   return crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(h, 'hex'));
 }
@@ -924,6 +942,28 @@ function forgotLimited(key, max = 3, windowMs = 15 * 60 * 1000) {
 function rateLimitReached(key, max, windowMs = 15 * 60 * 1000) {
   const now = Date.now();
   return (forgotHits.get(key)?.hits || []).filter((t) => now - t < windowMs).length >= max;
+}
+/**
+ * Fehlversuch vorab belegen (Passwortprüfungen): zählt sofort, noch bevor die Prüfung (scrypt) fertig ist — sonst kämen parallel
+ * abgeschickte Rateversuche alle an der Bremse vorbei, weil keiner fertig ist, wenn der nächste nachsieht. → Zeitpunkt des Eintrags
+ * (für bremseFrei, wenn das Passwort stimmt) oder 0, wenn die Grenze schon erreicht ist (dann wird nichts belegt).
+ */
+function bremsePlatz(key, max, windowMs = 15 * 60 * 1000) {
+  return forgotLimited(key, max, windowMs) ? 0 : (forgotHits.get(key)?.hits.at(-1) || 0);
+}
+function bremseFrei(key, t) {
+  const hits = forgotHits.get(key)?.hits;
+  const i = t && hits ? hits.lastIndexOf(t) : -1;
+  if (i >= 0) hits.splice(i, 1);
+}
+/** Anmeldeversuch (Login, Passwort ändern, Konto löschen) in beiden Bremsen belegen — je IP + Konto und je IP → { frei() } oder null */
+function anmeldePlatz(ip, mail) {
+  const kk = `login:${ip}|${mail}`, ki = `login-ip:${ip}`;
+  const a = bremsePlatz(kk, LOGIN_FEHL_KONTO);
+  if (!a) return null;
+  const b = bremsePlatz(ki, LOGIN_FEHL_IP);
+  if (!b) { bremseFrei(kk, a); return null; }
+  return { frei: () => { bremseFrei(kk, a); bremseFrei(ki, b); } };
 }
 /**
  * Adresse für Bremsen: IPv4 (auch IPv4-mapped ::ffff:a.b.c.d) unverändert, IPv6 auf das /64-Netz gekürzt („2001:db8:1:2::/64“) —
@@ -1499,43 +1539,54 @@ function belegPraefixAusPatch(key, raw, label) {
 // ---------------------------------------------------------------------------
 // Admin-Anmeldung: Passwort im Kopf x-admin-key, geprüft gegen settings.adminKeyHash (scrypt) — einmal je Anfrage ganz oben im
 // Request-Handler (adminAnmeldung); isAdmin(req) liest danach nur das Ergebnis. Ein richtig geprüftes Passwort merkt sich der
-// Server als SHA-256 für ADMIN_CACHE_MS, damit nicht jede Admin-Anfrage scrypt rechnet. Fehlversuche je IP (IPv6: /64) bremsen:
-// nach ADMIN_FEHL_IP in 15 Minuten 429 — auch mit richtigem Passwort von dieser IP, sonst ginge das Raten weiter. Gesamtbremse:
-// liegen insgesamt ADMIN_FEHL_GESAMT Fehlversuche im Fenster (verteilter Angriff), hat jede IP nur noch einen Fehlversuch frei —
-// wer sich nicht vertippt, kommt immer durch, der Inhaber sperrt sich also nicht selbst aus.
+// Server als SHA-256 bis ADMIN_CACHE_MS nach der letzten Anfrage, damit nicht jede Admin-Anfrage scrypt rechnet. Fehlversuche je IP (IPv6: /64) bremsen:
+// nach ADMIN_FEHL_IP in 15 Minuten 429 — auch mit richtigem Passwort von dieser IP, sonst ginge das Raten weiter. Gezählt wird
+// jede Prüfung schon beim Start (bremsePlatz) und bei richtigem Passwort wieder freigegeben: parallel abgeschickte Versuche zählen
+// so sofort, aus einer IP laufen nie mehr als ADMIN_FEHL_IP Prüfungen. Gesamtbremse: liegen insgesamt ADMIN_FEHL_GESAMT Fehlversuche
+// im Fenster (verteilter Angriff, mindestens 10 Netze), hat jede IP nur noch einen Fehlversuch frei — wer sich nicht vertippt,
+// kommt immer durch. Ist scrypt ausgelastet (scryptAsync), gibt es 429 ohne Zählung.
 // ---------------------------------------------------------------------------
 const ADMIN_FEHL_IP = 10;
 const ADMIN_FEHL_GESAMT = 100;
 const ADMIN_CACHE_MS = 5 * 60e3;
 const adminCache = new Map();        // SHA-256(Passwort) → gültig bis (ms); leer nach jedem Passwortwechsel
-const adminPruefungen = new Map();   // SHA-256(Passwort) → laufende scrypt-Prüfung (parallele Anfragen rechnen nur einmal)
+const adminPruefungen = new Map();   // IP|SHA-256(Passwort) → laufende Prüfung (gleichzeitige Anfragen eines Tabs rechnen nur einmal)
 const adminAnfragen = new WeakSet(); // Anfragen mit geprüftem Admin-Passwort
 /** → 'ok' | 'falsch' | 'gebremst' | 'ohne' (kein Kopf) */
 async function adminAnmeldung(req) {
   const k = req.headers['x-admin-key'];
   if (typeof k !== 'string' || !k) return 'ohne';
   // Bremse vor dem Cache: sonst käme ein gesperrter Rater mit dem richtigen (gerade gemerkten) Passwort doch durch
-  const ip = clientIp(req);
+  const ip = clientIp(req), kIp = `admin-fehl:${ip}`;
   const breit = rateLimitReached('admin-fehl', ADMIN_FEHL_GESAMT);
-  if (rateLimitReached(`admin-fehl:${ip}`, breit ? 1 : ADMIN_FEHL_IP)) return 'gebremst';
+  if (rateLimitReached(kIp, breit ? 1 : ADMIN_FEHL_IP)) return 'gebremst';
   const h = sha256(k), now = Date.now();
-  if (adminCache.get(h) > now) { adminAnfragen.add(req); return 'ok'; }
-  let pruefung = adminPruefungen.get(h);
+  if (adminCache.get(h) > now) { adminCache.set(h, now + ADMIN_CACHE_MS); adminAnfragen.add(req); return 'ok'; }   // gleitend: 5 min nach der letzten Anfrage
+  const schluessel = `${ip}|${h}`;
+  let pruefung = adminPruefungen.get(schluessel);
   if (!pruefung) {
-    pruefung = k.length <= 200 ? pwHashStimmt(k, settings.adminKeyHash).catch(() => false) : Promise.resolve(false);
-    adminPruefungen.set(h, pruefung);
-    pruefung.finally(() => adminPruefungen.delete(h));
+    const tIp = bremsePlatz(kIp, breit ? 1 : ADMIN_FEHL_IP);
+    if (!tIp) return 'gebremst';
+    const tAlle = bremsePlatz('admin-fehl', ADMIN_FEHL_GESAMT);
+    pruefung = (k.length <= 200 ? pwHashStimmt(k, settings.adminKeyHash) : Promise.resolve(false))
+      .catch((err) => (err?.code === 'ueberlast' ? null : false))
+      .then((stimmt) => {
+        if (stimmt !== false) { bremseFrei(kIp, tIp); bremseFrei('admin-fehl', tAlle); }   // richtig oder nicht geprüft → kein Fehlversuch
+        else if (rateLimitReached(kIp, ADMIN_FEHL_IP) && !forgotLimited(`admin-warn:${ip}`, 1)) {
+          console.warn(`🔐 Admin: ${ADMIN_FEHL_IP} falsche Passwörter von ${ip} – Anmeldung von dort 15 Minuten gesperrt`);
+        }
+        return stimmt;
+      });
+    adminPruefungen.set(schluessel, pruefung);
+    pruefung.finally(() => adminPruefungen.delete(schluessel));
   }
-  if (await pruefung) {
+  const stimmt = await pruefung;
+  if (stimmt === null) return 'gebremst';
+  if (stimmt) {
     if (adminCache.size > 20) adminCache.clear();
     adminCache.set(h, now + ADMIN_CACHE_MS);
     adminAnfragen.add(req);
     return 'ok';
-  }
-  forgotLimited('admin-fehl', ADMIN_FEHL_GESAMT);
-  forgotLimited(`admin-fehl:${ip}`, ADMIN_FEHL_IP);
-  if (rateLimitReached(`admin-fehl:${ip}`, ADMIN_FEHL_IP)) {
-    console.warn(`🔐 Admin: ${ADMIN_FEHL_IP} falsche Passwörter von ${ip} – Anmeldung von dort 15 Minuten gesperrt`);
   }
   return 'falsch';
 }
@@ -2980,14 +3031,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/auth/login') {
       const { email, password } = JSON.parse((await readBody(req)).toString('utf8'));
       const mail = String(email || '').trim().toLowerCase().slice(0, 254);
-      const ip = clientIp(req);
-      if (rateLimitReached(`login:${ip}|${mail}`, LOGIN_FEHL_KONTO) || rateLimitReached(`login-ip:${ip}`, LOGIN_FEHL_IP)) return send(res, 429, LOGIN_GEBREMST);
+      const platz = anmeldePlatz(clientIp(req), mail);
+      if (!platz) return send(res, 429, LOGIN_GEBREMST);
       const u = users.find((x) => x.email === mail);
-      if (!(await passwortStimmt(u, password))) {
-        forgotLimited(`login:${ip}|${mail}`, LOGIN_FEHL_KONTO);
-        forgotLimited(`login-ip:${ip}`, LOGIN_FEHL_IP);
-        return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
+      let stimmt;
+      try { stimmt = await passwortStimmt(u, password); } catch (err) {
+        platz.frei();
+        if (err?.code === 'ueberlast') return send(res, 503, UEBERLAST);
+        throw err;
       }
+      if (!stimmt) return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
+      platz.frei();
       return send(res, 200, { ok: true, token: createSession(u.id), user: publicUser(u) });
     }
     if (req.method === 'POST' && p === '/api/auth/logout') {
@@ -3120,14 +3174,17 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, { ok: true, beendet: n });
       }
       let body; try { body = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')); } catch { body = {}; }
-      const ip = clientIp(req);
-      if (rateLimitReached(`login:${ip}|${u.email}`, LOGIN_FEHL_KONTO) || rateLimitReached(`login-ip:${ip}`, LOGIN_FEHL_IP)) return send(res, 429, LOGIN_GEBREMST);
+      const platz = anmeldePlatz(clientIp(req), u.email);
+      if (!platz) return send(res, 429, LOGIN_GEBREMST);
       const altes = p === '/api/auth/password' ? body?.altesPasswort : body?.passwort;
-      if (!(await passwortStimmt(u, altes))) {
-        forgotLimited(`login:${ip}|${u.email}`, LOGIN_FEHL_KONTO);
-        forgotLimited(`login-ip:${ip}`, LOGIN_FEHL_IP);
-        return send(res, 400, { ok: false, error: p === '/api/auth/password' ? 'Das bisherige Passwort stimmt nicht.' : 'Das Passwort stimmt nicht.' });
+      let stimmt;
+      try { stimmt = await passwortStimmt(u, altes); } catch (err) {
+        platz.frei();
+        if (err?.code === 'ueberlast') return send(res, 503, UEBERLAST);
+        throw err;
       }
+      if (!stimmt) return send(res, 400, { ok: false, error: p === '/api/auth/password' ? 'Das bisherige Passwort stimmt nicht.' : 'Das Passwort stimmt nicht.' });
+      platz.frei();
       if (p === '/api/auth/delete') {
         await kontoLoeschen(u, 'auf Wunsch im Konto');
         return send(res, 200, { ok: true });

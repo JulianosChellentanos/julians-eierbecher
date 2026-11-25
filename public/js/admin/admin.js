@@ -87,8 +87,9 @@ async function openDruckzettel(orderId) {
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', 'x-admin-key': KEY(), ...(opts.headers || {}) } });
-  if (r.status === 401) { showLogin(); throw new Error('auth'); }
-  if (r.status === 429 && /^\/api\/admin\//.test(path)) { showLogin(); throw new Error('gebremst'); }   // zu viele falsche Passwörter
+  // Abgewiesenes Passwort nicht behalten — sonst ginge es bei jedem Neuladen wieder raus und zählte jedes Mal als Fehlversuch
+  if (r.status === 401) { setKey(''); showLogin(); throw new Error('auth'); }
+  if (r.status === 429 && /^\/api\/admin\//.test(path)) { setKey(''); showLogin(); throw new Error('gebremst'); }   // zu viele falsche Passwörter
   // JSON-Antworten unverändert durchreichen (auch 404 „Bestellung unbekannt“); nur ein 404 ohne JSON heißt „Endpoint fehlt noch“
   const j = await r.json().catch(() => null);
   if (j && typeof j === 'object') return j;
@@ -100,6 +101,7 @@ async function login() {
   setKey($('#pw').value);
   $('#login-err').textContent = '';
   try { await load(); } catch (e) {
+    if (e?.message === 'auth' || e?.message === 'gebremst') setKey('');   // gespeichert bleibt nur ein angenommenes Passwort
     $('#login-err').textContent = e?.message === 'gebremst' ? 'Zu viele falsche Versuche – bitte in 15 Minuten noch einmal.' : 'Falsches Passwort';
   }
 }
@@ -1082,7 +1084,7 @@ function renderCustomers() {
 /** Datenauskunft zu einem Kundenkonto als JSON-Datei (Konto, Anmeldungen, Bestellungen, Widerrufe, Mails) */
 async function userExport(id) {
   const r = await fetch(`/api/admin/user-export?id=${encodeURIComponent(id)}`, { headers: { 'x-admin-key': KEY() } });
-  if (r.status === 401) return showLogin();
+  if (r.status === 401) { setKey(''); return showLogin(); }
   if (!r.ok) return toast((await r.json().catch(() => null))?.error || `Export fehlgeschlagen (${r.status})`, 'err');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(await r.blob());
