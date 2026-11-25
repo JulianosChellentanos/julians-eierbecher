@@ -3,7 +3,7 @@
 import http from 'node:http';
 import { createGzip, gzipSync, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
-import { mkdir, writeFile, readdir, readFile, rm, rename, open, statfs } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile, rm, rename, open, stat, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
@@ -2687,23 +2687,29 @@ async function listOrders() {
 // ---------------------------------------------------------------------------
 // Abgebrochene Kassen aufräumen (Datensparsamkeit — ohne Abschluss gibt es keinen Vertrag): Bestellungen, die nach
 // KASSE_AUFRAEUMEN_TAGE noch immer ohne Abschluss, Rechnung und Zahlung sind, werden samt Ordner (Adresse, Modelldateien) gelöscht.
+// Ihre Druckdateien (bis 190 MB je Position) schon nach KASSE_DATEIEN_STUNDEN — bei weniger als SPEICHER_KNAPP freiem Speicher nach
+// einer Stunde (dann stößt auch ein Upload den Lauf an, höchstens alle 10 Minuten): Wer die Platte mit nie abgeschlossenen Kassen
+// füllen will, hält sie so nicht lange belegt. Eine echte Kasse lädt hoch und schließt gleich danach ab.
 // Nie angefasst wird, was eine Rechnung/Gutschrift/Storno, eine Zahlung (auch PayPal), einen Status über „neu“, eine Reklamation,
 // einen Widerruf, eine Notiz oder Sendungsnummer, eine Admin-Änderung oder eine verschickte Mail hat — und keine Bestellung von
-// vor der Rechnungsnummer (die Kasse schreibt seit jeher invoiceNo: null und filesComplete: false). Lauf beim Start und täglich.
+// vor der Rechnungsnummer (die Kasse schreibt seit jeher invoiceNo: null und filesComplete: false). Lauf beim Start und stündlich.
 // ---------------------------------------------------------------------------
 const KASSE_AUFRAEUMEN_TAGE = 14;
-function kasseAbgebrochen(o, id, now = Date.now()) {
+const KASSE_DATEIEN_STUNDEN = 48;
+/** Nie abgeschlossene, unberührte Kasse, die mindestens alterMs alt ist */
+function kasseAbgebrochen(o, id, now = Date.now(), alterMs = KASSE_AUFRAEUMEN_TAGE * TAG_MS) {
   const at = Date.parse(o?.createdAt);
-  return !!o && typeof o === 'object' && o.orderId === id && Number.isFinite(at) && now - at >= KASSE_AUFRAEUMEN_TAGE * TAG_MS
+  return !!o && typeof o === 'object' && o.orderId === id && Number.isFinite(at) && now - at >= alterMs
     && o.invoiceNo === null && o.filesComplete === false && !o.completedAt
     && o.status === 'neu' && (o.paymentStatus ?? 'offen') === 'offen' && o.payment !== 'paypal' && !o.paypalOrderId && !o.paidAt
     && !o.storno && !o.reklamation && !(Array.isArray(o.widerrufe) && o.widerrufe.length)
     && !String(o.adminNote || '').trim() && !String(o.trackingNo || '').trim()
     && !Object.keys(o.mailsSent || {}).length && !(o.history || []).some((h) => h?.by === 'admin');
 }
-async function abgebrocheneKassenAufraeumen(now = Date.now()) {
+async function abgebrocheneKassenAufraeumen(now = Date.now(), knapp = false) {
   if (!existsSync(ORDERS)) return 0;
-  await speicherFrei();   // Messwert für den Admin-Hinweis (täglich)
+  const frei = await speicherFrei();   // auch Messwert für den Admin-Hinweis
+  const dateienNach = knapp || (frei !== null && frei < SPEICHER_KNAPP) ? STUNDE_MS : KASSE_DATEIEN_STUNDEN * STUNDE_MS;
   let n = 0;
   for (const d of await readdir(ORDERS, { withFileTypes: true })) {
     if (!d.isDirectory() || !ORDER_ID_RE.test(d.name)) continue;
@@ -2712,16 +2718,45 @@ async function abgebrocheneKassenAufraeumen(now = Date.now()) {
     try {
       let o;
       try { o = JSON.parse(await readFile(path.join(dir, 'order.json'), 'utf8')); } catch { continue; }   // unlesbar → nie anfassen
-      if (!kasseAbgebrochen(o, d.name, now)) continue;
-      if ((await readdir(dir)).some((f) => /^(rechnung|gutschrift|storno)\.html$/.test(f))) continue;
-      await rm(dir, { recursive: true, force: true });
-      untrackCouponUse(d.name);
-      n++;
-      console.log(`🧹 Abgebrochene Kasse ${d.name} vom ${dateDE(o.createdAt)} gelöscht (nie abgeschlossen, keine Rechnung, keine Zahlung)`);
+      if (!kasseAbgebrochen(o, d.name, now, dateienNach)) continue;
+      const dateien = await readdir(dir);
+      if (dateien.some((f) => /^(rechnung|gutschrift|storno)\.html$/.test(f))) continue;
+      if (kasseAbgebrochen(o, d.name, now)) {
+        await rm(dir, { recursive: true, force: true });
+        untrackCouponUse(d.name);
+        n++;
+        console.log(`🧹 Abgebrochene Kasse ${d.name} vom ${dateDE(o.createdAt)} gelöscht (nie abgeschlossen, keine Rechnung, keine Zahlung)`);
+        continue;
+      }
+      // Nur die Druckdateien (und liegengebliebene Temp-Dateien; ein laufender Upload schreibt seine gerade noch → jünger als 20 min)
+      let bytes = 0, k = 0;
+      for (const f of dateien) {
+        if (!/^modell-\d+-[a-z]+\.(stl|3mf)$|\.tmp$/.test(f)) continue;
+        const st = await stat(path.join(dir, f)).catch(() => null);
+        if (!st || (f.endsWith('.tmp') && Date.now() - st.mtimeMs < 20 * 60e3)) continue;
+        await rm(path.join(dir, f), { force: true });
+        bytes += st.size; k++;
+      }
+      if (k) console.log(`🧹 Druckdateien der nie abgeschlossenen Kasse ${d.name} gelöscht (${k} Datei(en), ${Math.round(bytes / 1e6)} MB) – die Bestellung selbst bleibt bis zum ${KASSE_AUFRAEUMEN_TAGE}. Tag`);
     } catch (err) { console.error(`Aufräumen ${d.name} fehlgeschlagen:`, err?.message || err); }
     finally { release(); }
   }
   return n;
+}
+let aufraeumenLauf = null, aufraeumenKnappZuletzt = 0;
+/** Ein Lauf zur Zeit (Start, stündlich, knapper Speicher teilen sich einen laufenden) */
+function kassenAufraeumen(knapp = false) {
+  aufraeumenLauf ||= abgebrocheneKassenAufraeumen(Date.now(), knapp).catch((err) => console.error('Aufräumen abgebrochener Kassen fehlgeschlagen:', err?.message || err))
+    .finally(() => { aufraeumenLauf = null; });
+  return aufraeumenLauf;
+}
+/** Upload bei knappem Speicher: vorher aufräumen (höchstens alle 10 Minuten ein neuer Lauf) */
+function kassenAufraeumenKnapp() {
+  if (aufraeumenLauf) return aufraeumenLauf;
+  if (Date.now() - aufraeumenKnappZuletzt < 10 * 60e3) return Promise.resolve();
+  aufraeumenKnappZuletzt = Date.now();
+  console.warn('💾 Weniger als 5 GB frei – Druckdateien nie abgeschlossener Kassen (älter als 1 Stunde) werden jetzt gelöscht');
+  return kassenAufraeumen(true);
 }
 
 async function handleCheckout(req, res) {
@@ -2822,20 +2857,27 @@ async function handleCheckout(req, res) {
 // ---------------------------------------------------------------------------
 const MIN_FREI = 1024 ** 3;   // 1 GB muss frei bleiben (Bestellungen, Einstellungen, Mailserver auf derselben Platte)
 const UPLOAD_ZEIT_MS = 15 * 60e3;   // ganze Anfrage (server.requestTimeout): 126 MB brauchen bei 1,2 Mbit/s Upload knapp 15 Minuten
-const uploadMengen = new Map();   // IP → [{ t, n }] (Bytes je Upload, Fenster 1 Stunde)
-let speicherZuletzt = null;   // freie Bytes bei der letzten Messung (Upload, Start, täglich) — Hinweis im Admin unter 2 GB
+const SPEICHER_KNAPP = 5 * 1024 ** 3;   // darunter räumt ein Upload vorher Druckdateien nie abgeschlossener Kassen auf (siehe unten)
+const uploadMengen = new Map();   // IP → [{ t, n }] (Bytes je Upload, Fenster 1 Stunde; laufende Uploads zählen ab dem Start mit)
+let speicherZuletzt = null;   // freie Bytes bei der letzten Messung (Upload, Start, stündlich) — Hinweis im Admin unter 2 GB
 async function speicherFrei() {
   try { const st = await statfs(ORDERS); speicherZuletzt = st.bavail * st.bsize; } catch (err) { console.error('Freier Speicher nicht ermittelbar:', err?.message || err); return null; }
   return speicherZuletzt;
 }
-function uploadMenge(ip, n = 0) {
+/** Bytes der IP in der letzten Stunde (mit eintrag: diesen Upload dazunehmen — sein n wächst beim Lesen mit) */
+function uploadMenge(ip, eintrag = null) {
   const now = Date.now();
   const liste = (uploadMengen.get(ip) || []).filter((e) => now - e.t < STUNDE_MS);
-  if (n) liste.push({ t: now, n });
+  if (eintrag) liste.push(eintrag);
   uploadMengen.delete(ip);
   if (liste.length) uploadMengen.set(ip, liste);
   while (uploadMengen.size > FORGOT_MAX_KEYS) uploadMengen.delete(uploadMengen.keys().next().value);
   return liste.reduce((s, e) => s + e.n, 0);
+}
+/** Abgebrochener oder abgelehnter Upload: belegt nichts auf der Platte → zählt nicht */
+function uploadFrei(ip, eintrag) {
+  const liste = uploadMengen.get(ip) || [];
+  if (liste.includes(eintrag)) liste.splice(liste.indexOf(eintrag), 1);
 }
 /**
  * Inhalt einer Druckdatei prüfen → null (in Ordnung) oder Fehlertext. STL binär: 80 Bytes Kopf + Dreieckszahl n + 50·n Bytes;
@@ -2877,10 +2919,15 @@ async function handleStlUpload(req, res, id, idx, url) {
   if (!(i >= 0 && i < order.lines.length)) return ablehnen(400, { ok: false, error: 'Ungültiger Index' });
   const laenge = Number(req.headers['content-length']);
   if (laenge > MAX_STL) return ablehnen(413, { ok: false, error: 'Die Druckdatei ist zu groß.' });
+  // Bremse je IP: die angekündigte Größe zählt sofort (gleichzeitige Uploads sehen einander), ohne Content-Length wächst der Anteil
+  // beim Lesen mit; ein abgebrochener oder abgelehnter Upload gibt seinen Anteil wieder frei
   const ip = clientIp(req);
-  if (uploadMenge(ip) + (laenge || 0) > UPLOAD_IP_BYTES) return ablehnen(429, GEBREMST());
-  const frei = await speicherFrei();
+  const anteil = { t: Date.now(), n: laenge || 0 };
+  if (uploadMenge(ip, anteil) > UPLOAD_IP_BYTES) { uploadFrei(ip, anteil); return ablehnen(429, GEBREMST()); }
+  let frei = await speicherFrei();
+  if (frei !== null && frei - (laenge || 0) < SPEICHER_KNAPP) { await kassenAufraeumenKnapp(); frei = await speicherFrei(); }
   if (frei !== null && frei - (laenge || 0) < MIN_FREI) {
+    uploadFrei(ip, anteil);
     console.error(`💾 Upload ${id}/${i} abgelehnt: weniger als 1 GB frei (${Math.round(frei / 1e6)} MB)`);
     return ablehnen(507, { ok: false, error: 'Der Speicher des Shops ist gerade voll – bitte versuch es später noch einmal oder schreib mir eine E-Mail.' });
   }
@@ -2892,6 +2939,7 @@ async function handleStlUpload(req, res, id, idx, url) {
   const abbrechen = (code, body) => {
     if (fertig) return;
     fertig = true;
+    uploadFrei(ip, anteil);
     req.unpipe(out);
     out.once('close', () => rm(tmp, { force: true }).catch(() => {}));   // erst nach dem Schließen: kein Schreibvorgang legt sie neu an
     out.destroy();
@@ -2899,7 +2947,8 @@ async function handleStlUpload(req, res, id, idx, url) {
   };
   req.on('data', (c) => {
     size += c.length;
-    if (size > MAX_STL) abbrechen(413, { ok: false, error: 'Die Druckdatei ist zu groß.' });
+    if (size > MAX_STL) return abbrechen(413, { ok: false, error: 'Die Druckdatei ist zu groß.' });
+    if (size > anteil.n) { anteil.n = size; if (uploadMenge(ip) > UPLOAD_IP_BYTES) abbrechen(429, GEBREMST()); }
   });
   req.on('close', () => { if (!req.complete) abbrechen(); });
   req.on('error', () => abbrechen());
@@ -2907,9 +2956,10 @@ async function handleStlUpload(req, res, id, idx, url) {
   out.on('close', async () => {
     if (fertig) return;
     fertig = true;
-    uploadMenge(ip, size);
+    anteil.n = size;
     const fehler = await modellPruefen(tmp, path.extname(file).toLowerCase());
     if (fehler) {
+      uploadFrei(ip, anteil);
       await rm(tmp, { force: true }).catch(() => {});
       return send(res, 400, { ok: false, error: `Druckdatei abgelehnt: ${fehler}.` });
     }
@@ -2917,10 +2967,12 @@ async function handleStlUpload(req, res, id, idx, url) {
     let jetzt = null;
     try { jetzt = await readOrder(id); } catch { jetzt = null; }
     if (!jetzt || jetzt.completedAt || jetzt.filesComplete || jetzt.status === 'storniert') {
+      uploadFrei(ip, anteil);
       await rm(tmp, { force: true }).catch(() => {});
       return send(res, 409, { ok: false, error: 'Die Bestellung ist abgeschlossen – ihre Druckdateien lassen sich nicht mehr ändern.' });
     }
     try { await rename(tmp, file); } catch (err) {
+      uploadFrei(ip, anteil);
       await rm(tmp, { force: true }).catch(() => {});
       return send(res, 500, { ok: false, error: 'Die Druckdatei konnte nicht gespeichert werden – bitte versuch es noch einmal.' });
     }
@@ -4122,10 +4174,9 @@ process.on('uncaughtException', (err) => console.error('Unbehandelte Ausnahme:',
 server.requestTimeout = UPLOAD_ZEIT_MS;   // große Druckdateien über langsame Leitungen (sonst bricht Node nach 5 Minuten ab)
 loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummern konnten nicht gelesen werden:', err?.message || err)).then(() => server.listen(PORT, HOST, () => {
   console.log(`formsam Shop läuft → http://${HOST}:${PORT}  (Admin: /admin)`);
-  // Abgebrochene Kassen aufräumen: gleich nach dem Start und dann täglich
-  const aufraeumen = () => abgebrocheneKassenAufraeumen().catch((err) => console.error('Aufräumen abgebrochener Kassen fehlgeschlagen:', err?.message || err));
-  setTimeout(aufraeumen, 5000).unref();
-  setInterval(aufraeumen, TAG_MS).unref();
+  // Abgebrochene Kassen aufräumen: gleich nach dem Start und dann stündlich (Druckdateien nach 48 h, Bestellung nach 14 Tagen)
+  setTimeout(() => kassenAufraeumen(), 5000).unref();
+  setInterval(() => kassenAufraeumen(), STUNDE_MS).unref();
   // Rechtsseiten früh laden, damit ein fehlendes/fehlerhaftes lib/legal.js gleich im Log steht (die Routen versuchen es erneut)
   legalModule().then((m) => {
     if (!m) return;
