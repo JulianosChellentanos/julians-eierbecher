@@ -526,8 +526,13 @@ async function submitOrder(payment, paypalOrderId = null) {
     }
     prog.textContent = 'Erstelle Rechnung …';
     const done = await (await fetch(`/api/order/${r.orderId}/complete`, { method: 'POST', headers: orderKey })).json();
-    // Abschluss abgelehnt (z. B. Guthaben inzwischen eingelöst): diese Bestellung ist erledigt — der nächste Versuch beginnt neu
-    if (!done.ok) { offeneKasse = null; throw new Error(done.error || 'Die Bestellung konnte nicht abgeschlossen werden.'); }
+    // Abschluss abgelehnt (z. B. Guthaben inzwischen eingelöst, Gutschein mit Höchstzahl vergeben): diese Bestellung ist erledigt —
+    // der nächste Versuch beginnt neu; den Gutschein neu prüfen, damit die Kasse den aktuellen Stand zeigt
+    if (!done.ok) {
+      offeneKasse = null;
+      if (['guthaben', 'gutschein'].includes(done.code) && $('#co-coupon').value.trim()) await applyCoupon().catch(() => {});
+      throw new Error(done.error || 'Die Bestellung konnte nicht abgeschlossen werden.');
+    }
     offeneKasse = null;
 
     cart = [];

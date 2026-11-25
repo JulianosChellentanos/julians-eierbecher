@@ -1197,8 +1197,9 @@ function priceItem(item, aktionen = aktiveAktionen()) {
  * Gutschein und Guthaben, damit ein Gutschein eine Bestellung nie teurer macht. Ein Rabatt-Gutschein mindert nur den Warenwert
  * (off ≤ subtotal); ein Guthaben ist ein Zahlungsmittel und deckt auch den Versand (off ≤ subtotal + shipping).
  * total = subtotal + shipping − coupon.off (≥ 0; 0 = nichts zu zahlen). Spiegel im Client: cart.js totals()/checkoutTotals().
+ * email = Kundin der Kasse (Höchstzahl eines Gutscheins: ihre eigenen Reservierungen zählen nicht, siehe couponEinloesungen).
  */
-function computeTotals(items, couponCode) {
+function computeTotals(items, couponCode, { email = null } = {}) {
   const aks = aktiveAktionen();
   const lines = items.map((it) => ({ ...it, ...priceItem(it, aks) }));
   const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
@@ -1227,9 +1228,9 @@ function computeTotals(items, couponCode) {
     // Mindestbestellwert nicht (mehr) erreicht — z. B. Menge im Warenkorb verringert: mit Meldung statt still ohne Gutschein
     // abrechnen (die Kasse zeigt sie, der Checkout lehnt mit 400 ab). Guthaben gilt ohne Mindestbestellwert (AGB § 14).
     // Optionale Grenzen normaler Codes: gueltigBis (Datum, deutsche Zeit, einschließlich) und maxEinloesungen (Bestellungen, die
-    // den Code fest eingelöst oder gerade in der Kasse reserviert haben — gezählt wie beim Guthaben über couponUse)
+    // den Code fest eingelöst oder gerade in der Kasse einer anderen Kundin reserviert haben — couponEinloesungen; email = Kasse)
     if (c && !isGuthaben(c) && c.gueltigBis && heuteBerlin() > c.gueltigBis) couponError = `Gutschein „${c.code}“ ist abgelaufen (gültig bis ${dateDE(`${c.gueltigBis}T12:00:00Z`)}).`;
-    else if (c && !isGuthaben(c) && c.maxEinloesungen > 0 && couponEinloesungen(c) >= c.maxEinloesungen) couponError = `Gutschein „${c.code}“ ist bereits vergeben – er war ${c.maxEinloesungen === 1 ? 'nur einmal' : `nur ${c.maxEinloesungen}-mal`} einlösbar.`;
+    else if (c && !isGuthaben(c) && c.maxEinloesungen > 0 && couponEinloesungen(c, { email }) >= c.maxEinloesungen) couponError = `Gutschein „${c.code}“ ist bereits vergeben – er war ${c.maxEinloesungen === 1 ? 'nur einmal' : `nur ${c.maxEinloesungen}-mal`} einlösbar.`;
     else if (c && !isGuthaben(c) && subtotal < (c.minOrder || 0)) couponError = `Gutschein „${c.code}“ gilt erst ab einem Bestellwert von ${money(c.minOrder)}.`;
     else if (c) {
       // Guthaben-Gutschein (Gutschrift): höchstens der noch offene Restwert
@@ -1338,6 +1339,30 @@ function belegNrFreigeben(prefixKey, nextKey, nr, grund) {
   settings.belegLuecken = [...(Array.isArray(settings.belegLuecken) ? settings.belegLuecken : []), luecke].slice(-50);
   console.error(`⚠️  Lücke im Nummernkreis: ${nr} nicht vergeben – ${grund}`);
   saveSettings().catch((err) => console.error('Einstellungen konnten nicht gespeichert werden:', err?.message || err));
+}
+/**
+ * Gerade gezogene Rechnungsnummer festhalten (handleComplete) — Nummernkreis ohne Widersprüche: 1. mit Rechnungsdatum und
+ * Steuerstatus an der Bestellung speichern (scheitert das, geht die Nummer zurück bzw. die Lücke wird protokolliert,
+ * belegNrFreigeben); 2. Zähler speichern (ein Fehler dort schadet nicht mehr: die Nummer steht an der Bestellung und wird nach
+ * einem Neustart übersprungen); danach schreibt handleComplete rechnung.html mit genau dieser Nummer. Ein erneuter Aufruf nach
+ * einem Fehler setzt mit derselben Nummer fort. Gutschrift und Stornorechnung richten sich später nach order.steuer.
+ * Nichts zu zahlen (Gutschein/Guthaben deckt alles): bezahlt erst jetzt, mit dem Abschluss — eine nie abgeschlossene 0-€-Kasse
+ * bleibt „offen“ (nicht in der Druckwarteschlange, wird wie jede abgebrochene Kasse aufgeräumt).
+ */
+async function rechnungFesthalten(order) {
+  const nr = order.invoiceNo, at = new Date().toISOString();
+  order.invoiceAt = at;
+  order.steuer = steuerJetzt();
+  if (typeof order.total === 'number' && order.total <= 0 && order.paymentStatus !== 'bezahlt') {
+    order.paymentStatus = 'bezahlt';
+    order.paidAt = at;
+    addHistory(order, order.status, 'Nichts zu zahlen – Betrag durch Gutschein/Guthaben beglichen', 'system');
+  }
+  try { await writeOrder(order); } catch (err) {
+    belegNrFreigeben('invoicePrefix', 'nextInvoice', nr, `Rechnung zu ${order.orderId}: Bestellung nicht speicherbar (${err?.message || err})`);
+    throw err;
+  }
+  await saveSettings().catch((err) => console.error(`Zähler nach Rechnung ${nr} nicht gespeichert (Nummer steht an der Bestellung):`, err?.message || err));
 }
 /** Alle ausgestellten Belegnummern (Rechnung, Gutschrift, Storno) — beim Start aus den Bestellungen, danach bei jedem Schreiben */
 const belegeVergeben = new Set();
@@ -1536,6 +1561,7 @@ function trackCouponUse(order) {
     // bezahlt zählt nur mit echtem Betrag (PayPal) — eine Bestellung über 0 € (Guthaben deckt alles) hält es bis zum Abschluss nur fest
     fest: !!order.completedAt || !!order.invoiceNo || (order.paymentStatus === 'bezahlt' && Number(order.total) > 0),
     at: Date.parse(order.createdAt) || Date.now(),
+    email: String(order.customer?.email || '').trim().toLowerCase() || null,   // Kundin (maxEinloesungen: eigene Reservierungen zählen nicht)
   });
 }
 /** Einlösung aus couponUse entfernen (z. B. die Reservierung einer PayPal-Kasse, sobald die Bestellung sie übernimmt) */
@@ -1581,11 +1607,19 @@ function couponRest(c, { ohne = null } = {}) {
   }
   return Math.max(0, Math.round(((Number(c?.value) || 0) - used) * 100) / 100);
 }
-/** Zählende Einlösungen eines Codes (fest oder in der Reservierungszeit) — für maxEinloesungen normaler Gutscheine */
-function couponEinloesungen(c, { ohne = null } = {}) {
-  const now = Date.now();
+/**
+ * Zählende Einlösungen eines Codes für maxEinloesungen normaler Gutscheine: feste (abgeschlossen bzw. per PayPal bezahlt) und
+ * Reservierungen offener Kassen anderer Kundinnen, jünger als GUTHABEN_RESERVIERUNG_MS. Reservierungen derselben E-Mail-Adresse
+ * zählen nicht — eine eigene gescheiterte Kasse (Upload abgebrochen, Seite neu geladen, Adresse geändert) sperrte sonst 2 Stunden;
+ * dass dieselbe Kundin den Code so nicht doppelt bekommt, prüft handleComplete beim Abschluss. email = null (Vorschau /api/quote,
+ * Kundin noch unbekannt): nur feste. ohne = orderId, die nicht mitzählt (Nachprüfung beim Abschluss).
+ */
+function couponEinloesungen(c, { ohne = null, email = null } = {}) {
+  const now = Date.now(), mail = String(email || '').trim().toLowerCase();
   let n = 0;
-  for (const [id, e] of couponUse.get(String(c?.code || '').trim().toUpperCase()) || []) if (id !== ohne && (e.fest || now - e.at < GUTHABEN_RESERVIERUNG_MS)) n++;
+  for (const [id, e] of couponUse.get(String(c?.code || '').trim().toUpperCase()) || []) {
+    if (id !== ohne && (e.fest || (mail && e.email !== mail && now - e.at < GUTHABEN_RESERVIERUNG_MS))) n++;
+  }
   return n;
 }
 /** Heutiges Datum in deutscher Zeit als „JJJJ-MM-TT“ (Vergleich mit gueltigBis eines Gutscheins) */
@@ -2494,7 +2528,7 @@ function pruefeKasse(data, { garantie = null } = {}) {
   if (data.beschaffenheit !== true) {
     return { status: 400, error: 'Bitte bestätige die Vereinbarung zu Wasser und Standfestigkeit (Häkchen in der Kasse) – fehlt das Häkchen, lade die Seite bitte neu.', customer };
   }
-  const totals = computeTotals(items, data.couponCode);
+  const totals = computeTotals(items, data.couponCode, { email: customer.email });
   // Gutschein, der (inzwischen) nicht mehr gilt — laufende Aktion, Mindestbestellwert unterschritten, aufgebraucht: lieber abbrechen
   // als still ohne Gutschein abrechnen — der Kunde sieht die Meldung in der Kasse und kann den Code entfernen
   if (data.couponCode && totals.couponError) return { status: 400, error: totals.couponError, customer };
@@ -2780,7 +2814,7 @@ async function handleCheckout(req, res) {
   const orderId = newOrderId();
   const createdAt = new Date().toISOString();
   if (paypalCap) untrackCouponUse(`paypal:${ppId}`);   // Reservierung aus /api/paypal/create geht auf die Bestellung über
-  if (totals.coupon) trackCouponUse({ orderId, coupon: totals.coupon, status: 'neu', createdAt, paymentStatus: paypalCap ? 'bezahlt' : 'offen' });
+  if (totals.coupon) trackCouponUse({ orderId, coupon: totals.coupon, status: 'neu', createdAt, paymentStatus: paypalCap ? 'bezahlt' : 'offen', customer });
   if (paypalCap) { paypalCap.usedBy = orderId; paypalPending.delete(ppId); await saveCaptures(); }
   await mkdir(path.join(ORDERS, orderId), { recursive: true });
   const account = userFromReq(req);
@@ -2819,12 +2853,8 @@ async function handleCheckout(req, res) {
     invoiceNo: null, filesComplete: false,
     trackingNo: '', adminNote: '',
   };
-  // Nichts zu zahlen (Gutschein/Guthaben deckt alles): gilt sofort als bezahlt — keine Überweisung über 0,00 €, der Druck kann starten
-  if (!paypalCap && order.total <= 0) {
-    order.paymentStatus = 'bezahlt';
-    order.paidAt = createdAt;
-    order.history = [{ at: createdAt, status: 'neu', note: 'Bestellung eingegangen', by: 'system' }, { at: createdAt, status: 'neu', note: 'Nichts zu zahlen – Betrag durch Gutschein/Guthaben beglichen', by: 'system' }];
-  }
+  // Nichts zu zahlen (Gutschein/Guthaben deckt alles): bezahlt erst mit dem Abschluss (rechnungFesthalten) — bis dahin ist es
+  // eine offene Kasse wie jede andere (nicht in der Druckwarteschlange, eine abgebrochene wird aufgeräumt)
   await writeOrder(order);
   // accessKey: Upload und Abschluss schicken ihn als x-order-key mit (Links auf Rechnung/Modelle tragen ihn als ?k=)
   send(res, 200, { ok: true, orderId, accessKey: order.accessKey, itemCount: order.lines.length, total: order.total });
@@ -2869,21 +2899,18 @@ async function handleComplete(req, res, id, url) {
       await writeOrder(order);
       return send(res, 409, { ok: false, code: 'guthaben', error: `Dein Guthaben „${gc.code}“ wurde inzwischen eingelöst – bitte starte die Kasse neu.` });
     }
+    // Gutschein mit Höchstzahl (maxEinloesungen): beim Abschluss nachprüfen — die Reservierung gilt nur 2 Stunden, und eigene
+    // parallele Kassen zählen beim Anlegen nicht mit (couponEinloesungen); ist er inzwischen vergeben, wie beim Guthaben abbrechen
+    if (gc && !isGuthaben(gc) && gc.maxEinloesungen > 0 && !order.invoiceNo
+      && couponEinloesungen(gc, { ohne: order.orderId, email: order.customer?.email }) >= gc.maxEinloesungen) {
+      setOrderStatus(order, 'storniert', `Kasse abgebrochen: Gutschein „${gc.code}“ ist inzwischen vergeben (höchstens ${gc.maxEinloesungen}-mal einlösbar)`, 'system');
+      await writeOrder(order);
+      return send(res, 409, { ok: false, code: 'gutschein', error: `Der Gutschein „${gc.code}“ ist inzwischen vergeben – bitte starte die Kasse neu.` });
+    }
     if (order.status === 'storniert') return send(res, 409, { ok: false, error: 'Diese Bestellung wurde storniert – bitte starte die Kasse neu.' });
-    // Nummernkreis ohne Widersprüche: 1. Nummer ziehen und mit Rechnungsdatum und Steuerstatus an der Bestellung speichern —
-    // scheitert das, geht die Nummer zurück (bzw. die Lücke wird protokolliert, belegNrFreigeben); 2. Zähler speichern (ein Fehler
-    // dort schadet nicht mehr: die Nummer steht an der Bestellung und wird nach einem Neustart übersprungen); 3. rechnung.html mit
-    // genau dieser Nummer; 4. Abschluss. Ein erneuter Aufruf nach einem Fehler setzt mit derselben Nummer fort.
     if (!order.invoiceNo) {
-      const nr = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
-      order.invoiceNo = nr;
-      order.invoiceAt = new Date().toISOString();
-      order.steuer = steuerJetzt();   // Gutschrift und Stornorechnung richten sich später danach (nicht nach der Einstellung am Ausstellungstag)
-      try { await writeOrder(order); } catch (err) {
-        belegNrFreigeben('invoicePrefix', 'nextInvoice', nr, `Rechnung zu ${id}: Bestellung nicht speicherbar (${err?.message || err})`);
-        throw err;
-      }
-      await saveSettings().catch((err) => console.error(`Zähler nach Rechnung ${nr} nicht gespeichert (Nummer steht an der Bestellung):`, err?.message || err));
+      order.invoiceNo = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
+      await rechnungFesthalten(order);
     } else if (!order.steuer) steuerDerRechnung(order);
     order.filesComplete = order.lines.every((l) => existsSync(path.join(ORDERS, id, l.stlFile)));
     // Eine ausgestellte Rechnung wird nie neu geschrieben (GoBD) — ältere Bestellungen ohne completedAt behalten ihre Datei
@@ -3294,7 +3321,7 @@ const server = http.createServer(async (req, res) => {
       paypalPendingAufraeumen();
       const at = new Date().toISOString();
       paypalPending.set(String(j.id), { hash: kasseHash(k.items, data.couponCode), totals: t, beschaffenheitAt: at, at: Date.now() });
-      if (t.coupon?.guthaben || couponByCode(t.coupon?.code)?.maxEinloesungen) trackCouponUse({ orderId: `paypal:${j.id}`, coupon: t.coupon, status: 'neu', createdAt: at });
+      if (t.coupon?.guthaben || couponByCode(t.coupon?.code)?.maxEinloesungen) trackCouponUse({ orderId: `paypal:${j.id}`, coupon: t.coupon, status: 'neu', createdAt: at, customer: k.customer });
       return send(res, 200, { ok: true, id: j.id });
     }
     const mCap = p.match(/^\/api\/paypal\/capture\/([A-Z0-9]+)$/i);

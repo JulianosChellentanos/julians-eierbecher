@@ -54,15 +54,19 @@ const beleg = (id, f) => { const p = path.join(ORDERS, id, f); return existsSync
 const status = (orderId, st, extra = {}) => admin('POST', '/api/admin/order-update', { orderId, status: st, notify: false, ...extra });
 const rekla = (body) => admin('POST', '/api/admin/reklamation', { notify: false, ...body });
 /** Vollständige Vorkasse-Bestellung: Angebot → Kasse (expectedTotal, kasseStand 2) → Modelle → Abschluss */
-async function bestelle(items, couponCode = null, { abschliessen = true, extra = {} } = {}) {
+async function bestelle(items, couponCode = null, { abschliessen = true, extra = {}, kunde = {} } = {}) {
   const q = await quote(items, couponCode);
-  const co = await req('POST', '/api/checkout', { customer: KUNDE, items, payment: 'vorkasse', couponCode, beschaffenheit: true, mitSchluessel: true, kasseStand: 2, expectedTotal: q.total, ...extra });
+  const co = await req('POST', '/api/checkout', { customer: { ...KUNDE, ...kunde }, items, payment: 'vorkasse', couponCode, beschaffenheit: true, mitSchluessel: true, kasseStand: 2, expectedTotal: q.total, ...extra });
   if (!co.json?.ok) return { fehler: co, quote: q };
   const { orderId, accessKey } = co.json;
   if (!abschliessen) return { orderId, accessKey, total: co.json.total };
-  for (let i = 0; i < items.length; i++) await req('PUT', `/api/order/${orderId}/stl/${i}`, stl(), { 'x-order-key': accessKey });
+  return { orderId, accessKey, total: co.json.total, ...(await abschluss(orderId, accessKey, items.length)) };
+}
+/** Modelle hochladen und die Kasse abschließen (auch für eine vorher nur angelegte Kasse) */
+async function abschluss(orderId, accessKey, n = 1) {
+  for (let i = 0; i < n; i++) await req('PUT', `/api/order/${orderId}/stl/${i}`, stl(), { 'x-order-key': accessKey });
   const c = await req('POST', `/api/order/${orderId}/complete`, {}, { 'x-order-key': accessKey });
-  return { orderId, accessKey, total: co.json.total, invoiceNo: c.json?.invoiceNo, complete: c };
+  return { invoiceNo: c.json?.invoiceNo, complete: c };
 }
 /** Guthaben über eine erledigte Reklamation („Gutschein“) erzeugen → Code */
 async function guthaben(betrag, menge = 3) {
@@ -103,6 +107,7 @@ try {
     { code: 'G100', type: 'percent', value: 100, minOrder: 0, active: true, mitAktion: true },
     { code: 'ALT', type: 'percent', value: 5, minOrder: 0, active: true, mitAktion: false, gueltigBis: '2020-01-31' },
     { code: 'EINMAL', type: 'fixed', value: 2, minOrder: 0, active: true, mitAktion: false, maxEinloesungen: 1 },
+    { code: 'EINS', type: 'fixed', value: 3, minOrder: 0, active: true, mitAktion: false, maxEinloesungen: 1 },
   ];
   check((await setze({ coupons: coupons0 })).status === 200, 'Gutscheine (inkl. „gültig bis“ und Höchstzahl) speichern → 200');
 
@@ -148,9 +153,12 @@ try {
   await setze({ aktionen: [] });
 
   console.log('3) Null-Betrag, Rechnung, Design-Code');
-  const z = await bestelle([V(2, {}, { code: 'abc-def' })], 'G100');
+  const zOffen = await bestelle([V(2, {}, { code: 'abc-def' })], 'G100', { abschliessen: false });
+  const ozo = lies(zOffen.orderId);
+  check(zOffen.total === 0 && ozo.paymentStatus === 'offen' && !ozo.paidAt, '0-€-Kasse vor dem Abschluss: noch offen (nicht in der Druckwarteschlange, wird wie jede abgebrochene Kasse aufgeräumt)', [ozo.paymentStatus, ozo.paidAt]);
+  const z = { orderId: zOffen.orderId, total: zOffen.total, ...(await abschluss(zOffen.orderId, zOffen.accessKey)) };
   const oz = lies(z.orderId), rz = beleg(z.orderId, 'rechnung.html');
-  check(z.total === 0 && oz.paymentStatus === 'bezahlt' && !!oz.paidAt, '100-%-Gutschein bei 44,82 (versandfrei): 0 € → gilt als bezahlt', [z.total, oz.paymentStatus]);
+  check(z.total === 0 && oz.paymentStatus === 'bezahlt' && oz.paidAt === oz.invoiceAt && oz.history.some((h) => /Nichts zu zahlen/.test(h.note || '')), '100-%-Gutschein bei 44,82 (versandfrei): mit dem Abschluss bezahlt („Nichts zu zahlen“)', [z.total, oz.paymentStatus, oz.paidAt, oz.invoiceAt]);
   check(/Nichts zu zahlen/.test(rz) && !/überweise/.test(rz), 'Rechnung: „Nichts zu zahlen“ statt Überweisungsaufforderung', rz.match(/Gesamtbetrag.{0,160}/)?.[0]);
   check(oz.lines[0].code === 'ABCDEF', 'Design-Code der Zeile gespeichert (Normalform)', oz.lines[0].code);
   check(oz.steuer?.kleinunternehmer === true && oz.invoiceAt && oz.completedAt === oz.invoiceAt, 'Steuerstatus und Rechnungsdatum an der Bestellung', [oz.steuer, oz.invoiceAt, oz.completedAt]);
@@ -170,6 +178,16 @@ try {
   const e1 = await bestelle([V(1)], 'EINMAL');
   check(!e1.fehler && lies(e1.orderId).coupon?.code === 'EINMAL', 'Code mit Höchstzahl 1: erste Einlösung klappt');
   check(/bereits vergeben/.test((await quote([V(1)], 'EINMAL')).couponError || ''), 'zweite Einlösung → „bereits vergeben“');
+  // eigene abgebrochene Kasse sperrt nicht, fremde Reservierung schon; doppelt bekommt ihn niemand (Nachprüfung beim Abschluss)
+  const h1 = await bestelle([V(1)], 'EINS', { abschliessen: false });
+  const h2 = await bestelle([V(1)], 'EINS', { abschliessen: false, kunde: { email: 'KUNDE@example.test', street: 'Andere Straße 3' } });
+  check(!h1.fehler && !h2.fehler, 'Höchstzahl 1: zweite Kasse derselben Kundin (erste abgebrochen) → angelegt', h2.fehler?.json);
+  const h3 = await bestelle([V(1)], 'EINS', { abschliessen: false, kunde: { email: 'andere@example.test' } });
+  check(h3.fehler?.status === 400 && /bereits vergeben/.test(h3.fehler.json?.error || ''), 'andere Kundin während der Reservierung → 400 „bereits vergeben“', h3.fehler?.json);
+  const c2 = await abschluss(h2.orderId, h2.accessKey);
+  check(c2.complete.status === 200 && c2.invoiceNo, 'zweite Kasse abschließen → Rechnung', c2.complete.json);
+  const c1 = await abschluss(h1.orderId, h1.accessKey);
+  check(c1.complete.status === 409 && c1.complete.json?.code === 'gutschein' && lies(h1.orderId).status === 'storniert' && !lies(h1.orderId).invoiceNo, 'erste Kasse danach abschließen → 409, storniert, keine Rechnung', c1.complete.json);
 
   console.log('5) Storno aufheben, Reklamationsgrenzen');
   const g60 = await guthaben(60);
