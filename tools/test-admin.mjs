@@ -5,7 +5,8 @@
 //                                        PayPal aus — es geht nichts hinaus) und räumt danach auf
 //
 // Geprüft: Reihenfolge der Bestellliste (createdAt, auch mit Altbestand „OV-…“), veraltete Tabs (Stand bei order-update/order-status,
-// Druckstatus „vorher“, Einstellungen mit baseRev → 409; ohne Angabe wie bisher, aber nie ein Status-Rückschritt), Kompression
+// Druckstatus „vorher“, Einstellungen mit baseRev → 409; ohne Angabe wie bisher, aber nie ein Status-Rückschritt — auch kein
+// Nachdruck aus „gedruckt“ ohne „vorher“), Kompression
 // (gzip 9 / Brotli 11 aus dem Speicher, q-Werte, Vary, ETag je Fassung, If-None-Match mit W/ und Listen, HEAD), JSON-LD der
 // Startseite (Organization, WebSite, FAQPage; kein Product/Offer; Anschrift nur ohne Platzhalter). Exit 0 = alles bestanden.
 import { spawn } from 'node:child_process';
@@ -138,6 +139,14 @@ try {
   r = await admin('POST', '/api/admin/line-print', { orderId: b, idx: 0, status: 'druckt', vorher: 'offen' });
   check(r.status === 409 && r.json.code === 'stand' && (await bestellung(b)).lines[0].print.status === 'fertig', 'Druck „Start“ aus veraltetem Tab (vorher offen, ist fertig) → 409, Position bleibt fertig', r.json);
   check((await admin('POST', '/api/admin/line-print', { orderId: b, idx: 0, status: 'fertig', vorher: 'fertig' })).status === 200, 'Druckstatus mit passendem „vorher“ → 200');
+  check((await bestellung(b)).status === 'gedruckt', 'alle Positionen fertig → Bestellung „gedruckt“');
+  r = await admin('POST', '/api/admin/line-print', { orderId: b, idx: 0, status: 'offen' });
+  let ob = await bestellung(b);
+  check(r.status === 409 && r.json.code === 'status' && ob.status === 'gedruckt' && ob.lines[0].print.status === 'fertig', 'alter Tab ohne „vorher“: Position zurücksetzen aus „gedruckt“ → 409, Bestellung bleibt „gedruckt“', r.json);
+  r = await admin('POST', '/api/admin/line-print', { orderId: b, idx: 0, status: 'druckt' });
+  check(r.status === 409 && (await bestellung(b)).status === 'gedruckt', 'alter Tab ohne „vorher“: Druck starten aus „gedruckt“ → 409');
+  r = await admin('POST', '/api/admin/line-print', { orderId: b, idx: 0, status: 'offen', vorher: 'fertig' });
+  check(r.status === 200 && r.json.order.status === 'im-druck', 'Nachdruck mit „vorher“ (aktueller Tab) → 200, Bestellung „im Druck“', r.json?.order?.status);
   // Fehlklick „bezahlt“ zurücknehmen (auch alter Tab): nur aus „Bezahlt“, mit Zahlung offen, ohne laufenden Druck
   const c = ids[2];
   await upd({ orderId: c, paymentStatus: 'bezahlt', status: 'bezahlt' });

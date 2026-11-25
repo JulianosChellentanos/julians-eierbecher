@@ -4802,6 +4802,8 @@ const server = http.createServer(async (req, res) => {
         const prev = line.print || { status: 'offen' };
         // vorher = Druckstatus der Position, wie ihn der Tab zeigt — ein veralteter Tab setzt eine fertige Position nicht zurück in den Druck
         if (vorher !== undefined && (prev.status || 'offen') !== vorher) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', order });
+        // Tab von vor dem Update (ohne vorher): kein Nachdruck aus „Gedruckt“ — der stufte die Bestellung auf „Im Druck“ zurück
+        if (vorher === undefined && order.status === 'gedruckt' && status !== 'fertig') return send(res, 409, { ok: false, code: 'status', error: 'Die Bestellung steht inzwischen auf „Gedruckt“ – bitte neu laden.', order });
         const now = new Date().toISOString();
         const print = { status };
         if (status === 'druckt') { print.startedAt = prev.status === 'druckt' && prev.startedAt ? prev.startedAt : now; }
