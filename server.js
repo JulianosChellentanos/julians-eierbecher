@@ -13,6 +13,8 @@ import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
   widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung, passwortGeaendert, ZAHLUNGSFRIST_TAGE } from './lib/mail-templates.js';
 import { isEmail, emailLokalFehler, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
+// Preisregel der Kasse (reine Rechnung ohne DOM) — der Server nimmt sie für den 30-Tage-Bezugspreis der Belege (aktionsBezug)
+import * as preisRegel from './public/js/pricing.js';
 import { chmodSync } from 'node:fs';   // Dateirechte der Bestandsordner (unten bei process.umask)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -612,8 +614,9 @@ async function pwHashStimmt(pw, h) {
 // Eintrag übernimmt ALLE aktiven Aktionen, auch abgelaufene (und abgelaufene pausierte — ob sie liefen, weiß der Server
 // nicht; im Zweifel zählt der niedrigere Preis), damit frühere Aktionen im 30-Tage-Fenster mitzählen.
 // Aufbewahrt wird alles der letzten 90 Tage + der letzte Eintrag davor (und was die Fenster laufender Aktionen brauchen).
-// Gerechnet wird nur im Client (pricing.js → referenzpreis(), eine Implementierung); /api/pricing liefert unter
-// preisHistorie kompakt die Einträge, die die 30-Tage-Fenster der gerade laufenden Aktionen schneiden.
+// Gerechnet wird nur in pricing.js (referenzpreis(), eine Implementierung): im Browser aus /api/pricing, das unter preisHistorie
+// kompakt die Einträge liefert, die die 30-Tage-Fenster der gerade laufenden Aktionen schneiden — und beim Bestellen im Server
+// mit demselben Modul und demselben Stand (aktionsBezug), damit Rechnung und Mails die Zahlen der Kasse nennen.
 // Individuelle Gutscheine und Mengenrabatte sind keine Preisermäßigung im Sinne von § 11 — der Mengenrabatt zählt nur beim
 // Zeilen-Streichpreis mit (der Vergleich muss dieselbe Menge zum damaligen Preis nehmen).
 // ---------------------------------------------------------------------------
@@ -1754,6 +1757,54 @@ function computeTotals(items, couponCode, { email = null } = {}) {
   }
   const total = Math.max(0, Math.round((subtotal + shipping - (coupon?.off || 0)) * 100) / 100);
   return { lines, subtotal, coupon, couponError, shipping, total, aktion, aktionen };
+}
+/**
+ * § 11 PAngV auf Rechnung und in Mails wie in der Kasse: Die Kasse nennt je Aktionszeile den niedrigsten Preis der letzten 30 Tage
+ * (Streichpreis), die Prozentangabe dazu und je Aktion die Ersparnis gegenüber diesem Bezugspreis — gerechnet von public/js/pricing.js
+ * aus /api/pricing (Preis-Historie). Beim Bestellen rechnet der Server mit genau diesem Modul und demselben Stand nach und hält das
+ * Ergebnis an der Bestellung fest (maßgeblich für Belege und Mails):
+ *   lines[].aktionRef = { preis, prozent, ersparnis } (Zeilen-Bezugspreis, Prozent, Ersparnis) | null (Aktionspreis ohne gültigen
+ *   Bezugspreis — dann nur „Aktionspreis“, ohne Prozent und Ersparnis); nur an Zeilen mit Aktion.
+ *   aktionen[].ersparnisRef (Σ der Zeilen) und aktionen[].prozentOk (Prozentzahl der Aktion stimmt für ihren ganzen Geltungsbereich).
+ * Weicht der Zeilenpreis des Moduls vom Server-Preis ab (darf nicht vorkommen), gilt für die Zeile kein Bezugspreis. Ändert totals.
+ */
+function aktionsBezug(totals) {
+  if (!totals?.lines?.some((l) => l.aktionProzent > 0)) return totals;
+  const laufende = aktiveAktionen();
+  const pr = settings.pricing;
+  // dieselben Felder wie /api/pricing und /api/colors (nur, was die Preisregel liest)
+  preisRegel.setPricing({
+    currency: pr.currency,
+    products: {
+      eierbecher: { single: pr.eierbecher.single, untersetzer: pr.eierbecher.untersetzer, discounts: pr.eierbecher.discounts },
+      vase: { single: pr.vase.single, discounts: pr.vase.discounts },
+    },
+    shipping: pr.shipping, gravur: pr.gravur, muster: pr.muster || {}, farbschrift: pr.farbschrift || 0, volumen: pr.volumen,
+    normalHeight: NORMAL_HEIGHT, produkte: { vase: true, eierbecher: produktAktiv('eierbecher') },
+    aktionen: laufende.map(publicAktion), aktion: publicAktion(laufende[0] || null),
+    serverNow: new Date().toISOString(), preisHistorie: preisHistorieFuer(laufende),
+  });
+  preisRegel.setColors((settings.colors || []).filter((c) => c.active).map(({ id, name, hex, finish, aufpreis }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis) })));
+  const je = new Map();   // Aktions-ID → Σ Ersparnis gegenüber dem Bezugspreis
+  for (const l of totals.lines) {
+    if (!(l.aktionProzent > 0)) continue;
+    let ref = null;
+    try {
+      const lp = preisRegel.linePrice({ product: l.product, qty: l.qty, saucer: l.saucer, config: l.config, color: l.color, colorName: l.colorName });
+      if (Math.abs(lp.line - l.line) < 0.005 && String(lp.aktionId ?? '') === String(l.aktionId ?? '')) {
+        if (lp.lineRef != null && lp.refProzent >= 1) ref = { preis: lp.lineRef, prozent: lp.refProzent, ersparnis: lp.ersparnisRef };
+      } else console.warn(`⚠️  Bezugspreis: Kasse ${lp.line} ≠ Server ${l.line} (${l.product}/${l.config?.pattern}) – Beleg ohne Bezugspreis`);
+    } catch (err) { console.warn('⚠️  Bezugspreis nicht berechenbar:', err?.message || err); }
+    l.aktionRef = ref;
+    if (ref && l.aktionId) je.set(l.aktionId, Math.round(((je.get(l.aktionId) || 0) + ref.ersparnis) * 100) / 100);
+  }
+  const aktiv = preisRegel.aktionenActive();
+  for (const a of totals.aktionen || []) {
+    const ak = aktiv.find((x) => String(x.id) === String(a.id));
+    a.ersparnisRef = je.get(a.id) || 0;
+    a.prozentOk = !!ak && preisRegel.aktionProzentGueltig(ak);
+  }
+  return totals;
 }
 function money(v) {
   return v.toLocaleString('de-DE', { style: 'currency', currency: settings.pricing.currency });
@@ -3175,7 +3226,8 @@ function pruefeKasse(data, { garantie = null } = {}) {
     const veraltet = !(Number(data.kasseStand) >= 2);
     return { status: 409, code: 'preis', total: totals.total, customer, error: veraltet ? 'Die Kasse ist nicht mehr aktuell – bitte lade die Seite neu und prüf den Betrag.' : `Der Preis hat sich gerade geändert: Gesamt jetzt ${money(totals.total)}. Bitte prüf die Kasse und bestätige noch einmal.` };
   }
-  return { customer, items, totals };
+  // Bezugspreise wie in der Kasse festhalten (Rechnung/Mails) — bei PayPal schon hier in /api/paypal/create, die Garantie behält sie
+  return { customer, items, totals: aktionsBezug(totals) };
 }
 /**
  * Automatische Erstattung einer eingezogenen PayPal-Zahlung, zu der die Kasse keine Bestellung anlegen konnte.
@@ -3639,6 +3691,8 @@ async function handleCheckout(req, res) {
       // Aktion: uvp = Normalpreis (Preis vor der Aktion, Feldname historisch), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
       // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
       uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName ?? null, aktionId: l.aktionId ?? null,
+      // Bezugspreis wie in der Kasse (aktionsBezug) — Rechnung und Mails nennen Prozent/Ersparnis nur damit
+      ...(l.aktionProzent > 0 && l.aktionRef !== undefined ? { aktionRef: l.aktionRef } : {}),
       // Farbschrift: Name der Schriftfarbe zum Bestellzeitpunkt (Rechnung, Mails, Admin — nicht die interne Kennung)
       ...(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe' ? { textColorName: colorByRef(l.config.textColor, null)?.name || null } : {}),
       // Farbschrift (zweites Filament) kommt als 3MF mit zwei Teilen, sonst STL
