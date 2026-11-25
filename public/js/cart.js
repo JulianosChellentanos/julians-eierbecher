@@ -753,20 +753,29 @@ export async function initCart() {
   // Nur der Knopf „Zahlungspflichtig bestellen“ bestellt. Enter/„Los“ in einem Feld der Kasse schickt das Formular nicht ab
   // (implizites Absenden — der Browser „klickt“ dabei den Standardknopf, auch einen versteckten): im Gutscheinfeld löst Enter den
   // Gutschein ein, sonst geht es ins nächste Feld. Enter/Leertaste auf einem fokussierten Knopf bleiben normal bedienbar.
-  let enterImFeld = 0;
+  let enterImFeld = 0, knopfBedient = 0;
+  const knopf = $('#co-submit');
+  // Bestellknopf selbst bedient (Maus, Finger, Enter/Leertaste auf dem Knopf) — ein implizites Absenden berührt ihn nicht
+  knopf.addEventListener('pointerdown', () => { knopfBedient = Date.now(); });
+  knopf.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') knopfBedient = Date.now(); });
   $('#checkout-form').addEventListener('keydown', (e) => {
     const t = e.target;
-    if (e.key !== 'Enter' || e.isComposing || !(t instanceof HTMLInputElement) || ['submit', 'button', 'reset', 'image'].includes(t.type)) return;
-    e.preventDefault();
+    if (e.key !== 'Enter' || !(t instanceof HTMLInputElement) || ['submit', 'button', 'reset', 'image'].includes(t.type)) return;
     enterImFeld = Date.now();
+    if (e.isComposing) return;   // Enter übernimmt nur die Eingabe der Tastatur (Wortvorschlag, IME)
+    e.preventDefault();
     if (t.id === 'co-coupon') { kassenMeldung(''); applyCoupon(); } else if (t.type !== 'checkbox' && t.type !== 'radio') naechstesFeld(t);
   });
   $('#checkout-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    // Sicherung: ein Absenden direkt nach Enter in einem Feld zählt nicht (falls ein Browser trotzdem implizit absendet), ebenso
-    // jedes Absenden bei gewählter Zahlart PayPal — dort bestellt nur der PayPal-Knopf, nie entsteht eine Vorkasse-Bestellung
-    if (Date.now() - enterImFeld < 1000 || $('#pay-paypal')?.checked) return;
-    if (e.submitter && e.submitter !== $('#co-submit')) return;
+    // Jedes Absenden bei gewählter Zahlart PayPal zählt nicht — dort bestellt nur der PayPal-Knopf, nie entsteht eine Vorkasse-Bestellung
+    if ($('#pay-paypal')?.checked) return;
+    if (e.submitter && e.submitter !== knopf) return;
+    // Sicherung, falls ein Browser nach Enter in einem Feld trotzdem implizit absendet: das zählt nicht, außer der Knopf selbst wurde
+    // gerade bedient (ein echter Klick kurz nach Enter bestellt also) — und statt stillem Nichtstun steht da, was zu tun ist
+    const direkt = Date.now() - knopfBedient < 3000;
+    knopfBedient = 0;
+    if (!direkt && Date.now() - enterImFeld < 1000) return kassenMeldung('Zum Bestellen tipp bitte auf „Zahlungspflichtig bestellen“.');
     bestellen();
   });
   // Abgemeldet (Konto-Dialog, abgelaufene Anmeldung): was die Kasse aus dem Konto vorbefüllt hat bzw. was den Kontodaten gleicht,
