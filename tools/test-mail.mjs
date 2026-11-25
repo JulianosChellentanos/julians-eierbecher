@@ -132,6 +132,10 @@ function vorlagen() {
     hallo('Mia Müller') === 'Hallo Mia,' && hallo('') === 'Hallo!' && hallo('Gewinn-Info:http://boese.example/x') === 'Hallo!',
   'Anrede: Titel/Anreden übersprungen („Dr. Anna Schmidt“ → „Hallo Anna,“), nur Nachname → wie eingegeben, Link → „Hallo!“',
   ['Dr. Anna Schmidt', 'Frau Erika Müller', 'Familie Meier', 'Herr Müller', 'Gewinn-Info:http://x'].map(hallo));
+  const grade = { 'Phil Collins': 'Phil', 'Nat King': 'Nat', 'Med Ali': 'Med', 'Herr Phil Collins': 'Phil', 'Dr. Phil Meier': 'Phil', 'Dr. med. Eva Ott': 'Eva', 'Dr. med Eva Ott': 'Eva',
+    'Dr. rer. nat. Hans Meier': 'Hans', 'Prof. Dr. phil. Anna Berg': 'Anna', 'Fr. Dr.med. Eva Ott': 'Eva' };
+  check(Object.entries(grade).every(([n, v]) => hallo(n) === `Hallo ${v},`), 'Anrede: „Phil“, „Nat“, „Med“ als Vornamen bleiben; „Dr. phil./med./rer. nat.“ zählen als Titel',
+    Object.keys(grade).map((n) => `${n} → ${hallo(n)}`).filter((x, i) => !x.endsWith(`Hallo ${Object.values(grade)[i]},`)));
   check(!/Dr\.|Anna/.test(T.welcome({ user: { name: 'Dr. Anna Schmidt' }, settings: SET, baseUrl: BASE }).subject), 'Willkommen: kein Name im Betreff');
   // Bestätigung: Annahme (AGB § 3), Frist (AGB § 8), Steuerhinweis, Konto-Link, nbsp
   const b = T.orderConfirmation({ order: ORDER(), settings: SET, baseUrl: BASE });
@@ -169,10 +173,15 @@ function vorlagen() {
   check(/bereits vollständig zurückbekommen/.test(s2.text) && !/erstatte ich dir zurück/.test(s2.text), 'Storno nach voller Gutschrift: nichts weiter zu erstatten');
   const s3 = T.orderStatus({ order: { ...so, payment: 'paypal' }, status: 'storniert', settings: SET, baseUrl: BASE, storno: { gutschrift: 0, guthaben: { code: 'GS-AAAA-BBBB', off: 5 } } });
   check(/über PayPal zurück: 44,82 €/.test(nb(s3.text)) && /Guthaben „GS-AAAA-BBBB“ über 5,00 € steht dir wieder zur Verfügung/.test(nb(s3.text)), 'Storno PayPal ohne Gutschrift: voller Betrag, freigegebenes Guthaben genannt');
-  // Zahlungserinnerung
-  const ze = T.zahlungserinnerung({ order: ORDER({ userId: null }), settings: SET, baseUrl: BASE, heute: new Date('2026-11-25T10:00:00Z') });
-  check(/Erinnerung/.test(ze.subject) && /DE00 1111 2222 3333 4444 55/.test(ze.text) && /Verwendungszweck: FS-261125-ABC123/.test(ze.text) && /bis spätestens Mittwoch, 2\. Dezember 2026/.test(ze.text) &&
-    /storniere ich die Bestellung \(AGB § 8\)/.test(nb(ze.text)) && /44,82 €/.test(nb(ze.text)) && /Viele Grüße/.test(ze.text), 'Zahlungserinnerung: Betrag, Bankverbindung, Verwendungszweck, Nachfrist 7 Tage, Folge nach AGB § 8', ze.text.slice(0, 500));
+  // Zahlungserinnerung: 7 Tage Nachfrist ab heute, aber nie vor dem Ende der Zahlungsfrist (AGB § 8: 14 Tage nach Vertragsschluss)
+  const ze = T.zahlungserinnerung({ order: ORDER({ userId: null }), settings: SET, baseUrl: BASE, heute: new Date('2026-12-20T10:00:00Z') });
+  check(/Erinnerung/.test(ze.subject) && /DE00 1111 2222 3333 4444 55/.test(ze.text) && /Verwendungszweck: FS-261125-ABC123/.test(ze.text) && /bis spätestens Sonntag, 27\. Dezember 2026/.test(ze.text) &&
+    /storniere ich die Bestellung \(AGB § 8\)/.test(nb(ze.text)) && /44,82 €/.test(nb(ze.text)) && /Viele Grüße/.test(ze.text), 'Zahlungserinnerung nach Ablauf der Zahlungsfrist: Betrag, Bankverbindung, Verwendungszweck, Nachfrist 7 Tage, Folge nach AGB § 8', ze.text.slice(0, 500));
+  const zf = T.zahlungserinnerung({ order: ORDER({ userId: null }), settings: SET, baseUrl: BASE, heute: new Date('2026-11-25T10:00:00Z') });
+  const zc = T.zahlungserinnerung({ order: ORDER({ userId: null, completedAt: '2026-11-26T08:00:00Z' }), settings: SET, baseUrl: BASE, heute: new Date('2026-12-05T10:00:00Z') });
+  check(/bis spätestens Mittwoch, 9\. Dezember 2026/.test(zf.text) && !/2\. Dezember/.test(zf.text + zf.html) && /bis spätestens Samstag, 12\. Dezember 2026/.test(zc.text),
+    'Zahlungserinnerung vor Ablauf der 14 Tage: nennt das Ende der Zahlungsfrist (9.12.), sonst 7 Tage ab heute (12.12.)', [zf.text.match(/bis spätestens[^:]*/)?.[0], zc.text.match(/bis spätestens[^:]*/)?.[0]]);
+  check(T.zahlungsfristBis({ createdAt: '2026-11-25T09:00:00Z', completedAt: '2026-11-26T08:00:00Z' }).toISOString() === '2026-12-10T08:00:00.000Z', 'Zahlungsfrist ab Vertragsschluss (Bestätigung = completedAt), sonst ab Bestelldatum');
   check(!/OVJU/i.test(Object.values({ b, sk, sg, rk, s1, ze }).map((m) => m.text + m.html + m.subject).join('')), 'Marke: kein „OVJU“');
 }
 
@@ -334,6 +343,42 @@ async function mailerTests() {
   const dN = plain.delivered().find((m) => m.subject === 'Nach Neustart');
   check(dN && dN.attachments[0] === 'formsam-AGB.html' && Date.now() >= due, 'Neustart: zum Termin zugestellt, mit dem gespeicherten Anhang');
   m2.stop();
+  // 90-Tage-Grenze im laufenden Betrieb (hier 400 ms, Prüfung alle 100 ms): Inhalt einer gescheiterten Mail verschwindet ohne Neustart
+  const dir90 = path.join(TMP, 'outbox-90');
+  rmSync(dir90, { recursive: true, force: true });
+  const m90 = createMailer({ dataDir: dir90, getSettings: () => ({ mail: cfg({ port: 1 }), company: {} }), log: () => {}, timeouts: T0, aufbewahrenMs: 400, pflegeMs: 100 });
+  const f90 = await m90.send(msg({ subject: 'Bleibt 90 Tage', kind: 'freitext', key: null }));
+  const datei90 = path.join(dir90, 'mail-outbox', `${f90.id}.json`);
+  const da = existsSync(datei90);
+  await sleep(800);
+  const e90 = (await m90.list()).find((e) => e.id === f90.id);
+  check(!f90.ok && da && !existsSync(datei90) && e90?.status === 'fehler' && e90.resendable === false, 'Aufbewahrung: Inhalt gescheiterter Mails wird auch ohne Neustart nach Ablauf gelöscht, der Protokolleintrag bleibt', { da, e90 });
+  m90.stop();
+  // Altbestand (Version 1): wartender Eintrag — der alte Code schrieb „→“ schon beim Einreihen → onFinal mit vermerkt (einmalig)
+  const dirAlt = path.join(TMP, 'outbox-alt');
+  rmSync(dirAlt, { recursive: true, force: true }); mkdirSync(dirAlt, { recursive: true });
+  const altMsg = (s, to = 'kunde@example.com') => ({ to, subject: s, text: 'alt', html: '', replyTo: '', attachments: [] });
+  writeFileSync(path.join(dirAlt, 'mail-outbox.json'), JSON.stringify({ version: 1, entries: [
+    { id: 'altv1a', to: 'kunde@example.com', subject: 'Alt wartet', kind: 'status:bezahlt', ref: 'FS-7', status: 'wartet', error: '421', createdAt: new Date().toISOString(), attempts: 1, nextAt: new Date().toISOString(), msg: altMsg('Alt wartet') },
+    { id: 'altv1b', to: 'kunde@example.com', subject: 'Alt gesendet', kind: 'status:bezahlt', ref: 'FS-8', status: 'gesendet', createdAt: new Date().toISOString(), attempts: 1 },
+    { id: 'altv1c', to: 'weg@example.com', subject: 'Alt scheitert', kind: 'status:bezahlt', ref: 'FS-9', status: 'wartet', error: '421', createdAt: new Date().toISOString(), attempts: 1, nextAt: new Date().toISOString(), msg: altMsg('Alt scheitert', 'weg@example.com') },
+  ] }));
+  plain.rcptReject = /weg@/;
+  const finAlt = [];
+  const mAlt = createMailer({ dataDir: dirAlt, getSettings: () => live, log: () => {}, timeouts: T0, onFinal: async (e) => { finAlt.push(e); }, rebuildable: () => true,
+    rebuild: async (e) => ({ to: e.to, subject: e.subject, text: 'neu', html: '' }) });
+  await mAlt.resume();
+  await mAlt.whenIdle();
+  const fa = finAlt.find((f) => f.id === 'altv1a');
+  check(fa?.status === 'gesendet' && fa.vermerkt === true && !JSON.parse(readFileSync(path.join(dirAlt, 'mail-outbox.json'), 'utf8')).entries.some((e) => e.vermerkt),
+    'Altbestand: übernommene wartende Mail meldet „vermerkt“ (keine zweite „→“-Zeile), danach ist die Markierung weg', fa);
+  const fc = finAlt.find((f) => f.id === 'altv1c');
+  plain.rcptReject = null;
+  await mAlt.resend('altv1c');
+  const fc2 = finAlt.filter((f) => f.id === 'altv1c').at(-1);
+  check(fc?.status === 'fehler' && fc.vermerkt === true && fc2 !== fc && fc2.status === 'gesendet' && fc2.vermerkt === false,
+    'Altbestand gescheitert, später per „Erneut“ zugestellt: diese Zustellung wird normal vermerkt (Markierung gilt nur für den ersten Endstand)', finAlt.map((f) => [f.id, f.status, f.vermerkt]));
+  mAlt.stop();
   // Testmail: anderer Zugang + leeres Passwortfeld → keine Anmeldung mit dem gespeicherten Passwort
   const cap = await fakeSmtp();
   live.mail = cfg({ pass: 'gespeichert' });
@@ -395,13 +440,14 @@ async function shopTests() {
   const log = async () => (await admin('GET', '/api/admin/mail-log')).json?.entries || [];
   const warte = async (fn, ms = 4000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await sleep(100); } return false; };
   const delivered = () => smtp.delivered();
-  async function bestellung({ name = 'Erika Muster', email = 'kunde@formsam.example', qty = 1, auth = '' } = {}) {
+  async function bestellung({ name = 'Erika Muster', email = 'kunde@formsam.example', qty = 1, auth = '', abschliessen = true } = {}) {
     const items = [{ product: 'vase', qty, saucer: false, config: { ...VASE }, color: 'elfenbein', colorName: 'Elfenbein', code: null }];
     const quote = await req('POST', '/api/quote', { items, couponCode: null });
     const co = await req('POST', '/api/checkout', { customer: { name, email, street: 'Weg 1', zip: '12345', city: 'Ort', note: '' }, items, payment: 'vorkasse', paypalOrderId: null, couponCode: null,
       beschaffenheit: true, mitSchluessel: true, expectedTotal: quote.json?.total }, auth ? { 'x-auth': auth } : {});
     if (!co.json?.ok) throw new Error(`Kasse: ${co.status} ${co.text.slice(0, 200)}`);
     const { orderId, accessKey, itemCount } = co.json;
+    if (!abschliessen) return { orderId, accessKey, total: co.json.total };
     for (let i = 0; i < itemCount; i++) await req('PUT', `/api/order/${orderId}/stl/${i}`, miniStl(), { 'x-order-key': accessKey });
     const c = await req('POST', `/api/order/${orderId}/complete`, {}, { 'x-order-key': accessKey });
     if (c.status !== 200) throw new Error(`Abschluss: ${c.status} ${c.text.slice(0, 200)}`);
@@ -508,13 +554,27 @@ async function shopTests() {
     const want = (Math.round((s.total - 10) * 100) / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
     check(sm && nb(sm.text).includes(`erstatte ich dir zurück: ${nb(want)}`) && nb(belegBetrag || '') === nb(want) && /Gutschrift GS-/.test(sm.text) && /IBAN …3000/.test(sm.text),
       `Storno nach Teil-Gutschrift: Mail nennt ${nb(want)} wie die Stornorechnung, die Gutschrift und die bekannte IBAN`, sm?.text.match(/storniert\..*$/m)?.[0]);
-    // Zahlungserinnerung: einmal am Tag, nur offen
+    // Zahlungserinnerung: einmal am Tag (auch bei Doppelklick), nur offen und nur nach abgeschlossener Kasse
     const z = await bestellung({ name: 'Zora Zahlt', email: 'zora@formsam.example' });
+    const zr = await Promise.all([1, 2].map(() => admin('POST', '/api/admin/mail-send', { orderId: z.orderId, kind: 'zahlungserinnerung' })));
+    const zms = () => delivered().filter((m) => m.subject.includes(z.orderId) && /Erinnerung/.test(m.subject));
+    check(zr.filter((x) => x.json?.ok).length === 1 && zr.filter((x) => x.status === 409 && /eine je Tag/.test(x.json?.error)).length === 1 && zms().length === 1,
+      'Zahlungserinnerung: zwei gleichzeitige Anfragen (Doppelklick) → genau eine Mail, die andere 409', zr.map((x) => [x.status, x.json?.error]));
+    const zm = zms()[0];
+    const zo = order(z.orderId);
+    const fristBis = new Date(Date.parse(zo.completedAt) + 14 * 864e5).toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    check(zm && /DE02 1203 0000 0000 2020 51/.test(zm.text) && zm.text.includes(`bis spätestens ${fristBis}`) && zo.mailsSent?.zahlungserinnerung && mailHist(z.orderId).filter((n) => /Erinnerung/.test(n)).length === 1,
+      `Zahlungserinnerung direkt nach der Bestellung: Frist = Ende der Zahlungsfrist (${fristBis}), vermerkt`, zm?.text.match(/bis spätestens[^:]*/)?.[0]);
     r = await admin('POST', '/api/admin/mail-send', { orderId: z.orderId, kind: 'zahlungserinnerung' });
-    const zm = delivered().find((m) => m.subject.includes(z.orderId) && /Erinnerung/.test(m.subject));
-    check(r.json?.ok && zm && /DE02 1203 0000 0000 2020 51/.test(zm.text) && /bis spätestens/.test(zm.text) && order(z.orderId).mailsSent?.zahlungserinnerung, 'Zahlungserinnerung: gesendet (Bankverbindung, Nachfrist), vermerkt', r.json);
-    r = await admin('POST', '/api/admin/mail-send', { orderId: z.orderId, kind: 'zahlungserinnerung' });
-    check(r.status === 409 && /eine je Tag/.test(r.json?.error), 'Zahlungserinnerung: zweite am selben Tag → 409', r.json);
+    check(r.status === 409 && /eine je Tag/.test(r.json?.error), 'Zahlungserinnerung: weitere am selben Tag → 409', r.json);
+    const ez = (await log()).find((e) => e.orderId === z.orderId && e.kind === 'zahlungserinnerung' && e.status === 'gesendet');
+    r = await admin('POST', '/api/admin/mail-resend', { id: ez.id });
+    check(!r.json?.ok && /eine je Tag/.test(r.json?.error) && zms().length === 1, '„Erneut“ auf die zugestellte Erinnerung am selben Tag → abgelehnt (eine je Tag)', r.json);
+    const za = await bestellung({ name: 'Anton Abbruch', email: 'abbruch@formsam.example', abschliessen: false });
+    const zaSend = await admin('POST', '/api/admin/mail-send', { orderId: za.orderId, kind: 'zahlungserinnerung' });
+    const zaPrev = await admin('POST', '/api/admin/mail-preview', { orderId: za.orderId, kind: 'zahlungserinnerung' });
+    check(zaSend.status === 400 && zaPrev.status === 400 && /nie abgeschlossen/.test(zaSend.json?.error) && !delivered().some((m) => m.subject.includes(za.orderId)),
+      'Zahlungserinnerung für nie abgeschlossene Kasse → 400, keine Mail', zaSend.json);
     await admin('POST', '/api/admin/order-update', { orderId: z.orderId, paymentStatus: 'bezahlt', status: 'bezahlt' });
     r = await admin('POST', '/api/admin/mail-preview', { orderId: z.orderId, kind: 'zahlungserinnerung' });
     check(r.status === 400, 'Zahlungserinnerung nach Zahlung → 400');
@@ -542,6 +602,24 @@ async function shopTests() {
     await warte(() => mailHist(w.orderId).length >= 1);
     const wm = delivered().find((m) => m.subject.includes(w.orderId) && m.rcpts[0] === 'wartet@formsam.example');
     check(r.json?.ok && wm?.attachments.length === 2 && mailHist(w.orderId).some((n) => /→ wartet@/.test(n)), '„Jetzt senden“ nach Neustart: zugestellt mit Rechtstexten, Historie nachgezogen', r.json);
+    // Update von einer alten Outbox (Version 1): Der alte Code schrieb „E-Mail … →“ schon beim Einreihen; die wartende Mail wird
+    // nach dem Update zugestellt → genau eine solche Zeile in der Historie
+    await stop();
+    const obFile = path.join(dir, 'data', 'mail-outbox.json');
+    const ob = JSON.parse(readFileSync(obFile, 'utf8'));
+    const jetzt = new Date().toISOString(), altSubj = `Alt: Druck startet ${b.orderId}`;
+    ob.version = 1;
+    ob.entries.push({ id: 'altwartet1', to: 'tipp@formsam.example', subject: altSubj, kind: 'status:im-druck', ref: b.orderId, status: 'wartet', error: '421 Wartung', createdAt: jetzt, attempts: 1, nextAt: jetzt,
+      msg: { to: 'tipp@formsam.example', subject: altSubj, text: 'alt', html: '', replyTo: '', attachments: [] } });
+    writeFileSync(obFile, JSON.stringify(ob));
+    const ob2 = order(b.orderId);
+    ob2.history.push({ at: jetzt, status: ob2.status, by: 'mail', note: `E-Mail „${altSubj}“ → tipp@formsam.example` });
+    writeFileSync(path.join(dir, 'orders', b.orderId, 'order.json'), JSON.stringify(ob2, null, 2));
+    await start();
+    await warte(() => delivered().some((m) => m.subject === altSubj));
+    await sleep(300);
+    const altZeilen = mailHist(b.orderId).filter((n) => n.includes(altSubj));
+    check(delivered().some((m) => m.subject === altSubj) && altZeilen.length === 1, 'Update: übernommene wartende Mail zugestellt, „E-Mail … →“ steht nur einmal in der Historie', altZeilen);
   } finally {
     await stop();
     await smtp.close();
