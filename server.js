@@ -449,6 +449,8 @@ function loadSettings() {
   // Gutschrift-Nummernkreis (Reklamationen)
   if (typeof settings.creditPrefix !== 'string') settings.creditPrefix = DEFAULT_SETTINGS.creditPrefix;
   settings.nextCredit = Math.max(1, Math.round(Number(settings.nextCredit)) || 1);
+  // Stand der Einstellungen (rev): zählt jedes Speichern im Admin — ein veralteter Admin-Tab bekommt 409, statt still zu überschreiben
+  settings.rev = Math.max(0, Math.round(Number(settings.rev)) || 0);
   // Migration Produktschalter: fehlt in älteren settings.json → Eierbecher aus (siehe DEFAULT_SETTINGS.produkte)
   settings.produkte = sanitizeProdukte(settings.produkte);
   // Migration: Finishes (matt/glanz/metall) + bekannte Silk-/Glossy-PLA-Farben
@@ -2114,6 +2116,40 @@ function setOrderStatus(order, status, note, by = 'admin') {
   return true;
 }
 const orderIsPaid = (o) => o.status === 'bezahlt' || (o.status === 'neu' && o.paymentStatus === 'bezahlt');
+// ---------------------------------------------------------------------------
+// Admin aus veralteten Tabs (Handy und Rechner gleichzeitig): Jede Bestelländerung des Admins schickt den Stand mit, auf dem sie
+// beruht (stand = Status, Zahlung, Sendungsnummer, Versender, Notiz, wie sie der Tab geladen hat). Weicht er ab → 409 „Inzwischen
+// geändert – bitte neu laden“ samt aktuellem Stand. Ohne stand (Tab von vor diesem Update) wird wie bisher angenommen; den
+// Statuswechsel prüft der Server aber immer (statusWechselFehler) — so setzt auch ein alter Tab keinen Status mehr zurück.
+// Hintergrund-Schreibvorgänge (Mail-Vermerke, Aufräumen) gehören nicht zum Stand und lösen daher keinen Konflikt aus.
+// ---------------------------------------------------------------------------
+const STATUS_FLOW = ['neu', 'bezahlt', 'im-druck', 'gedruckt', 'versendet', 'abgeschlossen'];
+const STAND_FELDER = {
+  status: (v) => String(v || 'neu'), paymentStatus: (v) => (v === 'bezahlt' ? 'bezahlt' : 'offen'),
+  trackingNo: (v) => String(v ?? ''), carrier: (v) => String(v ?? ''), adminNote: (v) => String(v ?? ''),
+};
+/** Stimmt der mitgeschickte Stand (nur die enthaltenen Felder) mit der Bestellung überein? Kein Stand = alter Tab → ja */
+function standPasst(order, stand) {
+  if (stand === undefined || stand === null) return true;
+  return Object.entries(STAND_FELDER).every(([k, norm]) => !(k in stand) || norm(stand[k]) === norm(order[k]));
+}
+const standUngueltig = (stand) => stand !== undefined && stand !== null && (typeof stand !== 'object' || Array.isArray(stand));
+/**
+ * Statuswechsel durch den Admin erlaubt? null = ja, sonst Meldung (409). Erlaubt: vorwärts (auch übersprungen, z. B. Versand direkt
+ * nach „Bezahlt“), Stornieren, „Storno aufheben“ (nur → Neu, Sperre siehe stornoAufhebenSperre) und das Zurücknehmen einer
+ * versehentlich verbuchten Zahlung (Bezahlt → Neu zusammen mit Zahlung „offen“, solange kein Druck läuft). Rückschritte sonst nie.
+ */
+function statusWechselFehler(order, nach, { zahlungOffen = false } = {}) {
+  const von = order.status || 'neu';
+  if (von === nach || nach === 'storniert') return null;
+  if (von === 'storniert') return nach === 'neu' ? null : 'Die Bestellung ist storniert – erst „Storno aufheben“ (zurück auf „Neu“), bitte neu laden.';
+  if (STATUS_FLOW.indexOf(nach) > STATUS_FLOW.indexOf(von)) return null;
+  if (von === 'bezahlt' && nach === 'neu' && zahlungOffen) {
+    return (order.lines || []).some((l) => l.print?.status && l.print.status !== 'offen')
+      ? 'Zurück auf „Neu“ geht nur, solange noch keine Position im Druck ist – bitte neu laden.' : null;
+  }
+  return `„${STATUS_LABELS[nach] || nach}“ geht nicht mehr: Die Bestellung steht inzwischen auf „${STATUS_LABELS[von] || von}“ – bitte neu laden.`;
+}
 // Atomar (Temp-Datei + rename): ein paralleles listOrders()/readOrder() sieht nie eine halb geschriebene Datei
 async function writeOrder(order) {
   // writeFileAtomic räumt die Temp-Datei auf, wenn Schreiben oder Umbenennen scheitert
@@ -2432,9 +2468,10 @@ function druckzettelHTML(order) {
     const finish = { matt: 'matt', glanz: 'glänzend', metall: 'metallic' }[body?.finish || c.colorFinish] || '';
     const hasText = !!String(c.text || '').trim();
     const txtCol = c.textStyle === 'farbe' ? colorByRef(c.textColor, l.textColorName) : null;
-    const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` · Verlauf ${FLOW_LABELS[c.flow] || 'Spirale'} ${c.twist}` : '';
+    const dez = (v) => String(v ?? '').replace('.', ',');   // Zahlen wie im Admin: „0,9 mm“ (der Druckzettel ist kein Beleg)
+    const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` · Verlauf ${FLOW_LABELS[c.flow] || 'Spirale'} ${dez(c.twist)}` : '';
     const gravur = hasText
-      ? `<b>„${esc(c.text)}“</b><br>${esc(TEXT_STYLE_LABELS[c.textStyle] || c.textStyle || 'Gestanzt')} · Schrift ${esc(FONT_LABELS[c.font] || c.font || 'Modern')} · ${esc(c.textSize ?? '')} mm`
+      ? `<b>„${esc(c.text)}“</b><br>${esc(TEXT_STYLE_LABELS[c.textStyle] || c.textStyle || 'Gestanzt')} · Schrift ${esc(FONT_LABELS[c.font] || c.font || 'Modern')} · ${esc(dez(c.textSize))} mm`
         + (c.textStyle === 'farbe' ? `<br><span class="sw" style="background:${esc(safeHex(txtCol?.hex || '#000'))}"></span> Schriftfarbe ${esc(txtCol?.name || l.textColorName || c.textColor || '?')} (2. Filament)` : '')
       : '<span class="muted">keine</span>';
     const file = l.stlFile ? `${esc(l.stlFile)}${/\.3mf$/i.test(l.stlFile) ? ' <small>(3MF, 2 Filamente)</small>' : ''}` : '—';
@@ -2444,7 +2481,7 @@ function druckzettelHTML(order) {
       <td class="c big">${l.qty}×</td>
       <td><b>${l.product === 'vase' ? 'Vase' : 'Eierbecher'} „${esc(PRESET_LABELS[c.preset] || c.preset || '')}“</b>${l.saucer ? '<br>+ Untersetzer' : ''}
         <br><small>Pos. ${i + 1}${l.code ? ` · Code ${esc(l.code)}` : ''}</small></td>
-      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}</td>
+      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(dez(c.depth))} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}</td>
       <td><span class="sw" style="background:${esc(bodyHex)}"></span> ${esc(bodyName)}${finish ? `<br><small>${finish}</small>` : ''}</td>
       <td>${gravur}</td>
       <td class="file">${file}</td>
@@ -3484,7 +3521,10 @@ async function listOrders() {
       bestellungenDefekt.add(d);
     }
   }
-  return orders;
+  // Neueste zuerst nach Bestellzeit (createdAt), nicht nach Ordnernamen — sonst stünde der Altbestand „OV-…“ vor allen „FS-…“ und
+  // die Bestellungen eines Tages lägen nach ihrem Zufallsteil durcheinander; ohne lesbare Zeit ans Ende, dann nach Nummer
+  const zeit = (o) => { const t = Date.parse(o?.createdAt); return Number.isFinite(t) ? t : 0; };
+  return orders.sort((a, b) => zeit(b) - zeit(a) || String(b.orderId || '').localeCompare(String(a.orderId || '')));
 }
 
 // ---------------------------------------------------------------------------
@@ -4418,6 +4458,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/admin/settings') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const patch = await readJson(req);
+      // baseRev = Stand der Einstellungen, auf dem der Tab beruht (fehlt bei Tabs von vor diesem Update → wie bisher angenommen)
+      const baseRev = patch.baseRev ?? undefined;
+      if (baseRev !== undefined && !Number.isInteger(baseRev)) return send(res, 400, { ok: false, error: 'Ungültiger Stand (baseRev)' });
+      const veraltet = () => baseRev !== undefined && baseRev !== settings.rev;
+      if (veraltet()) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', rev: settings.rev });
       // Admin-Passwort: Text mit 8–200 Zeichen (leer würde den Admin für alle öffnen, Nicht-Strings sperren aus) — gespeichert wird nur
       // der scrypt-Hash (übernommen erst, wenn der ganze Patch geprüft ist); danach gilt der Speicher-Cache nicht mehr
       let adminHashNeu = null;
@@ -4507,6 +4552,8 @@ const server = http.createServer(async (req, res) => {
         if (neu.aktiv && !neu.hash) return send(res, 400, { ok: false, error: 'Wartungsmodus: bitte zuerst ein Zugangskennwort setzen' });
         wartungNeu = neu;
       }
+      // Noch einmal unmittelbar vor der Übernahme (zwischendurch lief die Passwort-Prüfung): ein gleichzeitig gespeicherter Tab gewinnt
+      if (veraltet()) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', rev: settings.rev });
       // Ab hier nur noch Übernahme geprüfter Werte (Gutscheine: mergeCoupons + gutscheineAus)
       if (pricingNeu) settings.pricing = pricingNeu;
       if (colorsNeu) settings.colors = colorsNeu;
@@ -4536,6 +4583,7 @@ const server = http.createServer(async (req, res) => {
       // E-Mail: nur bekannte Felder (geprüft in mailAus); ohne Patch bleibt der gespeicherte Stand
       if (mailNeu) settings.mail = mailNeu;
       else settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
+      settings.rev = (settings.rev || 0) + 1;
       await saveSettings();
       // Wartungsmodus gerade eingeschaltet oder neues Kennwort: der Admin sperrt sich nicht selbst aus — Freigabe-Cookie gleich mit
       if (wartungNeu && wartungAktiv()) res.setHeader('Set-Cookie', wartungCookie(req));
@@ -4543,8 +4591,9 @@ const server = http.createServer(async (req, res) => {
       await notePreisHistorie().catch((err) => console.error('Preis-Historie konnte nicht gespeichert werden:', err?.message || err));
       // hinweis: nicht übernommene Angaben (z. B. Präfix aus einem Tab von vor dem Jahreswechsel) — der Admin zeigt ihn an
       const hinweis = [invoicePrefix.hinweis, creditPrefix.hinweis].filter(Boolean).join(' ');
-      // coupons: gespeicherter Stand (inkl. Guthaben-Codes, die der Tab noch nicht kannte) — der Admin übernimmt ihn
-      return send(res, 200, { ok: true, coupons: settings.coupons, couponRest: guthabenRest(), ...(hinweis ? { hinweis } : {}) });
+      // coupons: gespeicherter Stand (inkl. Guthaben-Codes, die der Tab noch nicht kannte) — der Admin übernimmt ihn;
+      // settings/rev: gespeicherter, geprüfter Stand (z. B. ein negativer Aufpreis als 0) — der Admin füllt die Felder daraus neu
+      return send(res, 200, { ok: true, coupons: settings.coupons, couponRest: guthabenRest(), rev: settings.rev, settings: adminSettingsView(), ...(hinweis ? { hinweis } : {}) });
     }
     if (req.method === 'POST' && p === '/api/admin/order-update') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
@@ -4554,11 +4603,16 @@ const server = http.createServer(async (req, res) => {
       if (status !== undefined && !STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
       if (paymentStatus !== undefined && !['offen', 'bezahlt'].includes(paymentStatus)) return send(res, 400, { ok: false, error: 'Ungültiger Zahlungsstatus' });
       if (carrier !== undefined && !CARRIERS.includes(carrier)) return send(res, 400, { ok: false, error: 'Unbekannter Versender' });
+      if (standUngueltig(body.stand)) return send(res, 400, { ok: false, error: 'Ungültiger Stand' });
       let order, prevStatus;
       const release = await lockOrder(orderId);
       try {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
+        // Veralteter Tab: Stand weicht ab bzw. der Statuswechsel ginge rückwärts → 409 mit dem aktuellen Stand (der Admin lädt ihn)
+        if (!standPasst(order, body.stand)) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', order });
+        const wechselFehler = status !== undefined ? statusWechselFehler(order, status, { zahlungOffen: paymentStatus === 'offen' }) : null;
+        if (wechselFehler) return send(res, 409, { ok: false, code: 'status', error: wechselFehler, order });
         // Storno aufheben nur ohne Stornorechnung und mit noch verfügbarem Guthaben (stornoAufhebenSperre)
         if (status !== undefined && status !== 'storniert' && order.status === 'storniert') {
           const sperre = stornoAufhebenSperre(order);
@@ -4604,9 +4658,10 @@ const server = http.createServer(async (req, res) => {
     // Druckstatus je Position — mit Automatik für den Bestellstatus (im-druck / gedruckt)
     if (req.method === 'POST' && p === '/api/admin/line-print') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, idx, status, note } = await readJson(req);
+      const { orderId, idx, status, note, vorher } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!PRINT_STATES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Druckstatus' });
+      if (vorher !== undefined && !PRINT_STATES.includes(vorher)) return send(res, 400, { ok: false, error: 'Ungültiger Druckstatus (vorher)' });
       let order, prevStatus, wasPrinted;
       const release = await lockOrder(orderId);
       try {
@@ -4615,6 +4670,8 @@ const server = http.createServer(async (req, res) => {
         if (!(i >= 0 && i < order.lines.length)) return send(res, 400, { ok: false, error: 'Ungültige Position' });
         const line = order.lines[i];
         const prev = line.print || { status: 'offen' };
+        // vorher = Druckstatus der Position, wie ihn der Tab zeigt — ein veralteter Tab setzt eine fertige Position nicht zurück in den Druck
+        if (vorher !== undefined && (prev.status || 'offen') !== vorher) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', order });
         const now = new Date().toISOString();
         const print = { status };
         if (status === 'druckt') { print.startedAt = prev.status === 'druckt' && prev.startedAt ? prev.startedAt : now; }
@@ -4886,14 +4943,19 @@ const server = http.createServer(async (req, res) => {
     // Kompatibel: alter Kurz-Endpoint (nur Status)
     if (req.method === 'POST' && p === '/api/admin/order-status') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, status } = await readJson(req);
+      const { orderId, status, stand } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
+      if (standUngueltig(stand)) return send(res, 400, { ok: false, error: 'Ungültiger Stand' });
       let order, prevStatus;
       const release = await lockOrder(orderId);
       try {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
+        // wie order-update: veralteter Stand bzw. Rückschritt → 409
+        if (!standPasst(order, stand)) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', order });
+        const wechselFehler = statusWechselFehler(order, status);
+        if (wechselFehler) return send(res, 409, { ok: false, code: 'status', error: wechselFehler, order });
         const sperre = status !== 'storniert' && order.status === 'storniert' ? stornoAufhebenSperre(order) : null;
         if (sperre) return send(res, 409, { ok: false, code: 'storno', error: sperre });
         setOrderStatus(order, status, null, 'admin');
