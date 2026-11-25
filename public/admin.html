@@ -467,6 +467,7 @@
       <section id="pane-dash" class="pane" hidden>
         <div class="pane-head"><div><h1>Übersicht</h1><p id="subline"></p></div><div class="muted" id="dash-date"></div></div>
         <div class="pflicht" id="dash-pflicht" role="status" hidden></div>
+        <div class="pflicht" id="dash-mail" role="status" hidden></div>
         <div class="dash-ak" id="dash-aktion" onclick="show('aktionen')" title="Zum Bereich Aktionen" hidden></div>
         <div class="kpis" id="kpis"></div>
         <div class="card"><h2>📋 Heute zu tun</h2><div class="todo" id="todo"></div></div>
@@ -701,7 +702,7 @@
             <label>Absender-Adresse <small>muss zum SMTP-Konto gehören</small><input id="m-from" placeholder="hallo@formsam.de"></label>
             <label>Absender-Name<input id="m-fromname" placeholder="formsam"></label>
             <label>Antwort-Adresse (Reply-To)<input id="m-replyto" placeholder="optional"></label>
-            <label>Admin-Adresse (Kopien an mich)<input id="m-adminto" placeholder="ich@example.de"></label>
+            <label>Admin-Adresse (Kopien an mich) <small>mehrere mit Komma trennen</small><input id="m-adminto" placeholder="ich@example.de"></label>
             <label>Öffentliche Shop-Adresse <small>für Links und Logo in E-Mails</small><input id="m-publicurl" placeholder="https://formsam.de"></label>
           </div>
           <p class="muted" style="margin-top:10px">Absender-Adresse: Gmail schreibt fremde Absender auf die Konto-Adresse um (außer verifizierte „Senden als“-Aliase); Strato, IONOS, GMX und WEB.DE lehnen Absender ab, die nicht zum Postfach gehören. Eigene Domain: SPF-Eintrag des Providers setzen und DKIM aktivieren, sonst landen Mails im Spam.</p>
@@ -716,10 +717,11 @@
             <input type="email" id="m-testto" placeholder="Empfänger, z. B. deine eigene Adresse" style="flex:1;min-width:220px">
             <button class="ghost" onclick="mailTest(this)">Testmail senden</button>
           </div>
-          <p class="muted" style="margin-top:8px">Nutzt die oben eingetragenen (auch ungespeicherten) Zugangsdaten und zeigt das SMTP-Protokoll.</p>
+          <p class="muted" style="margin-top:8px">Nutzt die oben eingetragenen (auch ungespeicherten) Zugangsdaten und zeigt das SMTP-Protokoll. Das gespeicherte Passwort gilt nur für den gespeicherten Server — nach einem Wechsel von Host, Port oder Benutzer bitte das Passwort eintragen.</p>
         </div>
         <div class="card">
           <h2>📜 Versandprotokoll <button class="ghost mini right" onclick="loadMailLog()">Aktualisieren</button></h2>
+          <p class="muted" style="margin:-4px 0 10px">Nicht zugestellte Mails versucht der Shop automatisch erneut (nach 1 min, 10 min, 1 h, 6 h und 24 h). Den Inhalt zugestellter Mails bewahrt er nicht auf — „Erneut“ erzeugt sie dann aus der Bestellung neu.</p>
           <div class="tbl-wrap"><table id="mail-log" class="cards"></table></div>
         </div>
       </section>
