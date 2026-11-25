@@ -3,7 +3,7 @@
 import http from 'node:http';
 import { createGzip, gzipSync, constants as zc } from 'node:zlib';
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
-import { mkdir, writeFile, readdir, readFile, rm, rename } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile, rm, rename, open, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
@@ -22,7 +22,9 @@ const PORT = process.env.PORT || 4488;
 const HOST = process.env.HOST || '0.0.0.0';
 const SERVER_STARTED = new Date().toISOString();
 const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
-const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
+// pro Modell-Datei: größte bestellbare Konfiguration 126,5 MB (gehämmert, 220 mm, Breite 115 %, Tiefe 1,6, Wulstrand, Gravur 12 mm
+// „Anna & Tom“ in Marcellus — gemessen mit buildModel wie im Browser) + 50 % Reserve; nginx: client_max_body_size 200m
+const MAX_STL = 190 * 1000 * 1000;
 
 // ---------------------------------------------------------------------------
 // Hooks — werden im Abschnitt „E-Mail-Versand“ (unten) mit den Mail-Aktionen befüllt.
@@ -320,6 +322,9 @@ function settingsHinweise() {
   }
   if (historieDefekt) out.push(`Preis-Historie war beim Start unlesbar (gesichert als ${historieDefekt}) – die Streichpreise der nächsten 30 Tage (niedrigster Preis vor einer Aktion) bitte prüfen.`);
   if (historieGesperrt) out.push('Preis-Historie (data/preis-historie.json) ist nicht lesbar und wird nicht fortgeschrieben – bitte Datei prüfen und den Shop neu starten.');
+  if (speicherZuletzt !== null && speicherZuletzt < 2 * MIN_FREI) out.push(`Speicher fast voll: nur noch ${(speicherZuletzt / 1e9).toFixed(1).replace('.', ',')} GB frei – unter 1 GB nimmt die Kasse keine Druckdateien mehr an.`);
+  if (Object.keys(designs).length > 50_000 || Object.keys(lists).length > 10_000) out.push(`Ungewöhnlich viele Design-Codes (${Object.keys(designs).length}) bzw. Listen (${Object.keys(lists).length}) – bitte data/designs.json und data/lists.json prüfen (Missbrauch?).`);
+  if (bestellungenDefekt.size) out.push(`Bestellung ${[...bestellungenDefekt].join(', ')}: order.json ist beschädigt und fehlt in der Liste – bitte aus der Sicherung (/var/backups/formsam) zurückholen.`);
   let legal = null;
   try { legal = typeof legalMod?.legalWarnings === 'function' ? legalMod.legalWarnings(settings) : null; } catch { legal = null; }
   if (Array.isArray(legal)) out.push(...legal.map(String));
@@ -2548,6 +2553,46 @@ async function listOrders() {
   return orders;
 }
 
+// ---------------------------------------------------------------------------
+// Abgebrochene Kassen aufräumen (Datensparsamkeit — ohne Abschluss gibt es keinen Vertrag): Bestellungen, die nach
+// KASSE_AUFRAEUMEN_TAGE noch immer ohne Abschluss, Rechnung und Zahlung sind, werden samt Ordner (Adresse, Modelldateien) gelöscht.
+// Nie angefasst wird, was eine Rechnung/Gutschrift/Storno, eine Zahlung (auch PayPal), einen Status über „neu“, eine Reklamation,
+// einen Widerruf, eine Notiz oder Sendungsnummer, eine Admin-Änderung oder eine verschickte Mail hat — und keine Bestellung von
+// vor der Rechnungsnummer (die Kasse schreibt seit jeher invoiceNo: null und filesComplete: false). Lauf beim Start und täglich.
+// ---------------------------------------------------------------------------
+const KASSE_AUFRAEUMEN_TAGE = 14;
+function kasseAbgebrochen(o, id, now = Date.now()) {
+  const at = Date.parse(o?.createdAt);
+  return !!o && typeof o === 'object' && o.orderId === id && Number.isFinite(at) && now - at >= KASSE_AUFRAEUMEN_TAGE * TAG_MS
+    && o.invoiceNo === null && o.filesComplete === false && !o.completedAt
+    && o.status === 'neu' && (o.paymentStatus ?? 'offen') === 'offen' && o.payment !== 'paypal' && !o.paypalOrderId && !o.paidAt
+    && !o.storno && !o.reklamation && !(Array.isArray(o.widerrufe) && o.widerrufe.length)
+    && !String(o.adminNote || '').trim() && !String(o.trackingNo || '').trim()
+    && !Object.keys(o.mailsSent || {}).length && !(o.history || []).some((h) => h?.by === 'admin');
+}
+async function abgebrocheneKassenAufraeumen(now = Date.now()) {
+  if (!existsSync(ORDERS)) return 0;
+  await speicherFrei();   // Messwert für den Admin-Hinweis (täglich)
+  let n = 0;
+  for (const d of await readdir(ORDERS, { withFileTypes: true })) {
+    if (!d.isDirectory() || !ORDER_ID_RE.test(d.name)) continue;
+    const dir = path.join(ORDERS, d.name);
+    const release = await lockOrder(d.name);
+    try {
+      let o;
+      try { o = JSON.parse(await readFile(path.join(dir, 'order.json'), 'utf8')); } catch { continue; }   // unlesbar → nie anfassen
+      if (!kasseAbgebrochen(o, d.name, now)) continue;
+      if ((await readdir(dir)).some((f) => /^(rechnung|gutschrift|storno)\.html$/.test(f))) continue;
+      await rm(dir, { recursive: true, force: true });
+      untrackCouponUse(d.name);
+      n++;
+      console.log(`🧹 Abgebrochene Kasse ${d.name} vom ${dateDE(o.createdAt)} gelöscht (nie abgeschlossen, keine Rechnung, keine Zahlung)`);
+    } catch (err) { console.error(`Aufräumen ${d.name} fehlgeschlagen:`, err?.message || err); }
+    finally { release(); }
+  }
+  return n;
+}
+
 async function handleCheckout(req, res) {
   let data;
   try { data = JSON.parse((await readBody(req)).toString('utf8')); } catch { data = null; }
@@ -2638,21 +2683,117 @@ async function handleCheckout(req, res) {
   send(res, 200, { ok: true, orderId, accessKey: order.accessKey, itemCount: order.lines.length, total: order.total });
 }
 
+// ---------------------------------------------------------------------------
+// Modelldateien der Kasse (PUT /api/order/<ID>/stl/<i>): Der Upload landet in einer Temp-Datei und ersetzt die Druckdatei erst,
+// wenn er vollständig angekommen ist und inhaltlich passt (modellPruefen) — ein Abbruch hinterlässt weder Teildatei noch offenen
+// Dateideskriptor. Abgelehnt werden: abgeschlossene/stornierte Bestellungen (409, die Datei ist ab dem Abschluss unveränderlich),
+// mehr als MAX_STL (413), weniger als MIN_FREI freier Speicher (507), mehr als UPLOAD_IP_BYTES je IP und Stunde (429).
+// ---------------------------------------------------------------------------
+const MIN_FREI = 1024 ** 3;   // 1 GB muss frei bleiben (Bestellungen, Einstellungen, Mailserver auf derselben Platte)
+const UPLOAD_ZEIT_MS = 15 * 60e3;   // ganze Anfrage (server.requestTimeout): 126 MB brauchen bei 1,2 Mbit/s Upload knapp 15 Minuten
+const uploadMengen = new Map();   // IP → [{ t, n }] (Bytes je Upload, Fenster 1 Stunde)
+let speicherZuletzt = null;   // freie Bytes bei der letzten Messung (Upload, Start, täglich) — Hinweis im Admin unter 2 GB
+async function speicherFrei() {
+  try { const st = await statfs(ORDERS); speicherZuletzt = st.bavail * st.bsize; } catch (err) { console.error('Freier Speicher nicht ermittelbar:', err?.message || err); return null; }
+  return speicherZuletzt;
+}
+function uploadMenge(ip, n = 0) {
+  const now = Date.now();
+  const liste = (uploadMengen.get(ip) || []).filter((e) => now - e.t < STUNDE_MS);
+  if (n) liste.push({ t: now, n });
+  uploadMengen.delete(ip);
+  if (liste.length) uploadMengen.set(ip, liste);
+  while (uploadMengen.size > FORGOT_MAX_KEYS) uploadMengen.delete(uploadMengen.keys().next().value);
+  return liste.reduce((s, e) => s + e.n, 0);
+}
+/**
+ * Inhalt einer Druckdatei prüfen → null (in Ordnung) oder Fehlertext. STL binär: 80 Bytes Kopf + Dreieckszahl n + 50·n Bytes;
+ * STL als Text: beginnt mit „solid“ und endet mit „endsolid“; 3MF: ZIP (Signatur am Anfang, Endsatz in den letzten 64 KB).
+ */
+async function modellPruefen(file, ext) {
+  let fh;
+  try { fh = await open(file, 'r'); } catch { return 'Datei fehlt'; }
+  try {
+    const { size } = await fh.stat();
+    if (size < 84) return 'Datei leer oder zu klein';
+    const lies = async (pos, len) => { const b = Buffer.alloc(len); await fh.read(b, 0, len, pos); return b; };
+    const kopf = await lies(0, 84), ende = await lies(Math.max(0, size - 65_557), Math.min(size, 65_557));
+    if (ext === '.3mf') {
+      if (kopf.readUInt32LE(0) !== 0x04034b50) return 'keine 3MF-Datei';
+      return ende.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) >= 0 ? null : '3MF-Datei unvollständig';
+    }
+    const n = kopf.readUInt32LE(80);
+    if (n > 0 && 84 + 50 * n === size) return null;
+    if (/^\s*solid\b/i.test(kopf.toString('latin1'))) return /endsolid[^\n]*\s*$/i.test(ende.subarray(-1024).toString('latin1')) ? null : 'STL-Datei unvollständig';
+    return 'keine gültige STL-Datei';
+  } catch (err) {
+    return `Datei nicht lesbar (${err.code || err.message})`;
+  } finally { await fh.close().catch(() => {}); }
+}
+let uploadSeq = 0;
 // Upload und Abschluss nur mit Schlüssel (x-order-key) — sonst 404 wie bei einer unbekannten Bestellung (siehe orderZugriff)
 async function handleStlUpload(req, res, id, idx, url) {
   let order = null;
   try { order = await readOrder(id); } catch { order = null; }
   const z = orderZugriff(req, url, order, kasseOffen);
-  if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
-  if (order.filesComplete) return send(res, 400, { ok: false, error: 'Bestellung abgeschlossen' });
+  // Antwort vor dem Lesen des Körpers: Verbindung danach schließen, statt den Rest (bis 190 MB) anzunehmen
+  const ablehnen = (code, body) => { res.setHeader('Connection', 'close'); return send(res, code, body); };
+  if (z !== 'ok') return z === 'gesperrt' ? ablehnen(429, TOO_MANY) : ablehnen(404, { ok: false, error: 'Bestellung unbekannt' });
+  if (order.completedAt || order.filesComplete || order.status === 'storniert') {
+    return ablehnen(409, { ok: false, error: 'Die Bestellung ist abgeschlossen – ihre Druckdateien lassen sich nicht mehr ändern.' });
+  }
   const i = parseInt(idx, 10);
-  if (!(i >= 0 && i < order.lines.length)) return send(res, 400, { ok: false, error: 'Ungültiger Index' });
+  if (!(i >= 0 && i < order.lines.length)) return ablehnen(400, { ok: false, error: 'Ungültiger Index' });
+  const laenge = Number(req.headers['content-length']);
+  if (laenge > MAX_STL) return ablehnen(413, { ok: false, error: 'Die Druckdatei ist zu groß.' });
+  const ip = clientIp(req);
+  if (uploadMenge(ip) + (laenge || 0) > UPLOAD_IP_BYTES) return ablehnen(429, GEBREMST());
+  const frei = await speicherFrei();
+  if (frei !== null && frei - (laenge || 0) < MIN_FREI) {
+    console.error(`💾 Upload ${id}/${i} abgelehnt: weniger als 1 GB frei (${Math.round(frei / 1e6)} MB)`);
+    return ablehnen(507, { ok: false, error: 'Der Speicher des Shops ist gerade voll – bitte versuch es später noch einmal oder schreib mir eine E-Mail.' });
+  }
   const file = path.join(ORDERS, id, order.lines[i].stlFile);
-  const out = createWriteStream(file);
-  let size = 0, aborted = false;
+  const tmp = `${file}.upload-${process.pid}-${(++uploadSeq).toString(36)}.tmp`;
+  const out = createWriteStream(tmp, { flags: 'wx' });
+  let size = 0, fertig = false;
+  // Abbruch (Verbindung weg, zu groß, Schreibfehler): Temp-Datei schließen und löschen; Antwort nur, solange die Verbindung steht
+  const abbrechen = (code, body) => {
+    if (fertig) return;
+    fertig = true;
+    req.unpipe(out);
+    out.once('close', () => rm(tmp, { force: true }).catch(() => {}));   // erst nach dem Schließen: kein Schreibvorgang legt sie neu an
+    out.destroy();
+    if (code) { ablehnen(code, body); req.resume(); }
+  };
   req.on('data', (c) => {
     size += c.length;
-    if (size > MAX_STL && !aborted) { aborted = true; out.destroy(); req.destroy(); send(res, 413, { ok: false, error: 'Datei zu groß' }); }
+    if (size > MAX_STL) abbrechen(413, { ok: false, error: 'Die Druckdatei ist zu groß.' });
+  });
+  req.on('close', () => { if (!req.complete) abbrechen(); });
+  req.on('error', () => abbrechen());
+  out.on('error', (err) => abbrechen(err?.code === 'ENOSPC' ? 507 : 500, { ok: false, error: 'Die Druckdatei konnte nicht gespeichert werden – bitte versuch es noch einmal.' }));
+  out.on('close', async () => {
+    if (fertig) return;
+    fertig = true;
+    uploadMenge(ip, size);
+    const fehler = await modellPruefen(tmp, path.extname(file).toLowerCase());
+    if (fehler) {
+      await rm(tmp, { force: true }).catch(() => {});
+      return send(res, 400, { ok: false, error: `Druckdatei abgelehnt: ${fehler}.` });
+    }
+    // Stand nach dem Hochladen: inzwischen abgeschlossen oder storniert → die Datei bleibt, wie sie war
+    let jetzt = null;
+    try { jetzt = await readOrder(id); } catch { jetzt = null; }
+    if (!jetzt || jetzt.completedAt || jetzt.filesComplete || jetzt.status === 'storniert') {
+      await rm(tmp, { force: true }).catch(() => {});
+      return send(res, 409, { ok: false, error: 'Die Bestellung ist abgeschlossen – ihre Druckdateien lassen sich nicht mehr ändern.' });
+    }
+    try { await rename(tmp, file); } catch (err) {
+      await rm(tmp, { force: true }).catch(() => {});
+      return send(res, 500, { ok: false, error: 'Die Druckdatei konnte nicht gespeichert werden – bitte versuch es noch einmal.' });
+    }
+    send(res, 200, { ok: true, bytes: size });
   });
   req.pipe(out);
 }
@@ -2676,7 +2817,13 @@ async function handleComplete(req, res, id, url) {
       return send(res, 409, { ok: false, code: 'guthaben', error: `Dein Guthaben „${gc.code}“ wurde inzwischen eingelöst – bitte starte die Kasse neu.` });
     }
     if (order.status === 'storniert') return send(res, 409, { ok: false, error: 'Diese Bestellung wurde storniert – bitte starte die Kasse neu.' });
+    // Rechnung nur, wenn jede Position eine vollständige, gültige Druckdatei hat (danach sind die Dateien unveränderlich)
     if (!order.invoiceNo) {
+      const fehlen = [];
+      for (const [i, l] of order.lines.entries()) if (!l.stlFile || await modellPruefen(path.join(ORDERS, id, l.stlFile), path.extname(l.stlFile).toLowerCase())) fehlen.push(i + 1);
+      if (fehlen.length) {
+        return send(res, 409, { ok: false, code: 'dateien', error: `Die Druckdatei für ${fehlen.length > 1 ? 'die Positionen' : 'Position'} ${fehlen.join(', ')} fehlt noch oder ist unvollständig – bitte versuch es noch einmal.` });
+      }
       order.invoiceNo = nextBelegNr('invoicePrefix', 'nextInvoice', DEFAULT_SETTINGS.invoicePrefix);
       await saveSettings();
     }
@@ -3767,8 +3914,13 @@ process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ab
 process.on('uncaughtException', (err) => console.error('Unbehandelte Ausnahme:', err));
 // Erst Guthaben-Einlösungen und vergebene Belegnummern aus den Bestellungen lesen, dann Anfragen annehmen — sonst könnte eine
 // Bestellung direkt nach dem Start ein schon verbrauchtes Guthaben einlösen oder eine vergebene Nummer bekommen
+server.requestTimeout = UPLOAD_ZEIT_MS;   // große Druckdateien über langsame Leitungen (sonst bricht Node nach 5 Minuten ab)
 loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummern konnten nicht gelesen werden:', err?.message || err)).then(() => server.listen(PORT, HOST, () => {
   console.log(`formsam Shop läuft → http://${HOST}:${PORT}  (Admin: /admin)`);
+  // Abgebrochene Kassen aufräumen: gleich nach dem Start und dann täglich
+  const aufraeumen = () => abgebrocheneKassenAufraeumen().catch((err) => console.error('Aufräumen abgebrochener Kassen fehlgeschlagen:', err?.message || err));
+  setTimeout(aufraeumen, 5000).unref();
+  setInterval(aufraeumen, TAG_MS).unref();
   // Rechtsseiten früh laden, damit ein fehlendes/fehlerhaftes lib/legal.js gleich im Log steht (die Routen versuchen es erneut)
   legalModule().then((m) => {
     if (!m) return;
