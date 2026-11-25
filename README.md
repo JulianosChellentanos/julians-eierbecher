@@ -45,10 +45,15 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
 - **Bestellnummern** `FS-YYMMDD-XXXXXX`; ältere Bestellungen mit `OV-…` bleiben überall gültig (Konto, Admin, Widerruf)
 - **Rechnungen & Gutschriften**: Firmendaten, § 19 UStG oder USt, fortlaufende Nummern mit **automatischem Jahreswechsel** (steht im Präfix eine Jahreszahl, z. B. `RE-2026-`, stellt der Shop sie beim ersten Beleg im neuen Jahr um und beginnt wieder bei 1). Eine Nummer, die schon auf einem Beleg steht, wird nie ein zweites Mal vergeben (auch nicht nach einem zurückgesetzten Präfix); ein Präfix mit vergangenem Jahr lehnt der Admin ab, ein veralteter Admin-Tab schickt das Präfix nur, wenn es wirklich geändert wurde. Guthaben (Gutschrift-Codes) steht auf der Rechnung als Anrechnung: Gesamtbetrag und USt ohne Abzug, danach „abzüglich Guthaben“ und „Zu zahlen“. Wird eine Bestellung mit Rechnung storniert, entsteht eine **Stornorechnung** (`storno.html`, Nummer aus dem Gutschrift-Kreis). Ausgestellte Belege (`orders/<ID>/rechnung.html`, `gutschrift.html`, `storno.html`) werden **nie neu geschrieben** — alte Rechnungen behalten ihr damaliges Aussehen (GoBD), nur neue Belege erscheinen im formsam-Design
 - **Zugriffsschlüssel für Belege und Modelldateien**: jede neue Bestellung bekommt `order.accessKey` (16 Zufallsbytes, base64url). `orders/<ID>/rechnung.html`, `gutschrift.html` und `*.stl`/`*.3mf` gibt es nur mit `?k=<accessKey>` (Links in Kasse, Mails, Konto, Admin) oder mit dem Admin-Passwort im Header `x-admin-key` — falscher/fehlender Schlüssel → 404, nach 20 Fehlgriffen je IP in 15 Minuten → 429. Upload und Abschluss in der Kasse schicken den Schlüssel als `x-order-key`. Bestellungen von vor dem Schlüssel (ohne `accessKey`) bleiben wie bisher über die Bestellnummer abrufbar. Das Konto zeigt Gastbestellungen mit derselben E-Mail-Adresse erst, wenn die Adresse bestätigt ist (Link aus der Willkommensmail bzw. „Link erneut senden“, gilt nur zusammen mit der Anmeldung in genau diesem Konto; ein Passwort-Reset bestätigt ebenfalls); Beleg-Links und Guthaben-Codes gibt es dort nur für Bestellungen des eigenen Kontos. Ein unvollständiger oder falscher Beleg-Link zeigt eine Hinweisseite statt JSON. Der Schlüssel steht nicht im CSV- und nicht im JSON-Export
-- **E-Mails** (`lib/mailer.js`, `lib/mail-templates.js`, SMTP ohne Dependencies): Bestellbestätigung mit Lieferzeit und „Gedruckt wird erst, wenn du bestellst.“, Willkommen, Passwort, Status-Mails, Reklamation, Widerrufs-Eingang; Kopf mit Logo-Bild von der eigenen Domain (`/img/brand/formsam-mail.png`), Fußzeile mit Anbieter und Links zu Impressum · Datenschutz · AGB · Widerruf. Ohne SMTP landen Mails nur im Protokoll `data/mail-outbox.json`. Test: `node tools/mail-test.mjs --smoke`
+- **E-Mails** (`lib/mailer.js`, `lib/mail-templates.js`, SMTP ohne Dependencies): Bestellbestätigung mit Lieferzeit und „Gedruckt wird erst, wenn du bestellst.“, Annahme des Angebots (AGB § 3), Zahlungsfrist 14 Tage (AGB § 8, Zahl aus `lib/lieferfrist.js`) und § 19- bzw. „inkl. MwSt.“-Hinweis; bei 0 € (Guthaben deckt alles) keine Zahlungsaufforderung. Dazu Willkommen, Passwort, Status-Mails, Reklamation, Widerrufs-Eingang, Zahlungserinnerung; Kopf mit Logo-Bild von der eigenen Domain (`/img/brand/formsam-mail.png`), Fußzeile mit Anbieter und Links zu Impressum · Datenschutz · AGB · Widerruf. Knöpfe „Bestellung im Konto ansehen“ (`/?konto` öffnet das Konto) nur bei Bestellungen aus einem Kundenkonto, Gäste bekommen den Rechnungslink. Die Anrede nimmt den Vornamen ohne Anrede/Titel („Dr. Anna Schmidt“ → „Hallo Anna,“).
+  - **Zustellung:** Automatische Mails gehen in eine Warteschlange und werden bei vorübergehenden Fehlern wiederholt — sofort, nach 1 min, 10 min, 1 h, 6 h und 24 h (gut 31 Stunden); der Stand steht in `data/mail-outbox.json`, nach einem Neustart geht es zum geplanten Termin weiter. Endgültig gescheiterte Mails (5xx, alle Versuche verbraucht) zeigt die Admin-Übersicht als Hinweis (Zähler am Bereich E-Mail), dort „Erneut“ oder „Ausblenden“. An der Bestellung stehen Zustellung bzw. Fehler in der Historie, erst nach dem Endstand („E-Mail „…“ → …“ bzw. „nicht zugestellt“); `order.mailsSent[key]` ist reserviert, solange eine Mail unterwegs ist (je Status nur eine automatische Mail), und fällt bei einem endgültigen Fehler wieder frei.
+  - **Versandprotokoll** (Admin → E-Mail): `data/mail-outbox.json` hält nur Kopfdaten (500 Einträge); den Inhalt nicht zugestellter Mails legt der Shop je Eintrag in `data/mail-outbox/<id>.json` ab (bei ausgeschaltetem Versand ohne Anhänge, höchstens 90 Tage, insgesamt höchstens 50 MB) und löscht ihn nach der Zustellung (so steht es in der Datenschutzerklärung). „Erneut“ geht bei nicht zugestellten Mails aus dem Speicher (wartende: ohne die Wartezeit) und bei zugestellten Bestellmails (Bestätigung, Status, Reklamation, Zahlungserinnerung, Widerruf, Admin-Meldungen), die der Shop dafür aus der Bestellung neu erzeugt — dabei kommen fehlende Anhänge (Rechtstexte) wieder dazu. Passwort-/Bestätigungslinks und Freitext lassen sich nach der Zustellung nicht erneut senden (dort „in der Bestellung“). Ältere Protokolle (Inhalt samt Anhängen in `mail-outbox.json`) übernimmt der Shop beim Start automatisch.
+  - **Kopfzeilen:** automatische Mails mit `Auto-Submitted: auto-generated` (keine Abwesenheitsnotizen zurück), Meldungen an den Shop (neue Bestellung, Widerruf, PayPal) mit Reply-To = Kundin, Absendername als einfacher Text. Domains mit Umlauten gehen als Punycode raus; Umlaute vor dem @ nur über einen Server mit SMTPUTF8, sonst endgültiger Fehler mit klarer Meldung. Admin-Adresse: auch mehrere (Komma), ungültige Einträge fallen weg, bleibt keiner, geht die Meldung an die Firmen-Adresse.
+  - **SMTP-Zugang:** Ein leeres Passwortfeld behält das gespeicherte Passwort nur für denselben Zugang (Host, Port, Benutzer, nicht auf „unverschlüsselt“ heruntergestellt) — Testmail und Speichern verlangen sonst das Passwort neu, damit es nie an einen anderen Server geht. STARTTLS bricht ab, wenn der Server vor dem Handshake noch Klartext nachschiebt. Verwechslungen SSL/TLS ↔ STARTTLS (465/587) melden sich mit einem passenden Hinweis.
+  - Ohne SMTP landen Mails nur im Protokoll. Test: `node tools/mail-test.mjs --smoke` und `node tools/test-mail.mjs`
 - **Admin-Zentrale** (`/admin`, Standard-Passwort bei Neuinstallation `formsam-admin` — bitte sofort ändern!):
-  - Übersicht: Umsatz (gesamt/30 Tage), offene Drucke, Ø Bestellwert, meistbestellte Farben & Produkte, offene Widerrufe, fehlende Pflichtangaben
-  - Bestellungen: Suche & Status-Filter, aufklappbare Details, Sendungsnummer, interne Notizen, E-Mail-Vorlagen (Zahlungserinnerung/Druckstart/Versand), Reklamation mit Gutschrift, CSV-Export
+  - Übersicht: Umsatz (gesamt/30 Tage), offene Drucke, Ø Bestellwert, meistbestellte Farben & Produkte, offene Widerrufe, fehlende Pflichtangaben, nicht zugestellte bzw. wartende E-Mails
+  - Bestellungen: Suche & Status-Filter, aufklappbare Details, Sendungsnummer, interne Notizen, E-Mails (Bestätigung, Status-Mails wie Druckstart/Versand, Freitext, Vorschau) und für offene Vorkasse-Bestellungen „💶 Zahlungserinnerung senden“ (Bankverbindung, Nachfrist 7 Tage, Hinweis auf AGB § 8; höchstens eine am Tag, keine Automatik), Reklamation mit Gutschrift, CSV-Export
   - Druckwarteschlange, Kunden
   - Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
   - Preise & Mengenrabatt-Stufen, Gutscheine (%- oder €-Codes, Mindestbestellwert), Aktionen. Gutschrift-Codes aus Reklamationen (`GS-XXXX-XXXX`) sind **Guthaben**: einlösbar bis der Betrag aufgebraucht ist (Rest bleibt, stornierte Bestellungen geben ihn frei), auch während einer Aktion — die Gutschein-Tabelle zeigt den Restwert
@@ -144,7 +149,7 @@ Kompatibilitätsgründen weiter so — für Kundschaft sind sie unsichtbar.
 server.js                  Node-HTTP-Server (Port 4488, keine Dependencies)
 lib/
   legal.js                 Rechtsseiten (Impressum, Datenschutz, AGB, Widerruf, Versand) aus den Einstellungen
-  mailer.js                SMTP-Versand + Outbox-Protokoll (data/mail-outbox.json)
+  mailer.js                SMTP-Versand, Warteschlange + Outbox-Protokoll (data/mail-outbox.json, Inhalte in data/mail-outbox/)
   mail-templates.js        E-Mail-Vorlagen im formsam-Look
 public/
   index.html               Landing + Konfigurator
@@ -165,6 +170,7 @@ tools/
   check-stl.mjs            STL-Validator (watertight, Volumen, BBox …)
   generate-stl.mjs         STL per CLI erzeugen (Tests/Repro)
   mail-test.mjs            Mail-Versand und Vorlagen testen
+  test-mail.mjs            Wiederholung, Outbox, Vermerke, Vorlagen-Texte — mit eigener Shop-Instanz und Fake-SMTP
   test-referenzpreis.mjs   Unit-Test 30-Tage-Tiefstpreis (§ 11 PAngV) in public/js/pricing.js
 docs/marke.md              Markenleitfaden
 docs/rechtstexte.md        Notiz zu den Rechtstexten (Annahmen, offene Punkte)
@@ -214,6 +220,11 @@ Umgebung `/etc/stalwart/stalwart.env`). Mail-Host ist **mx.formsam.com**.
   dafür ein paar Sekunden an (RocksDB lässt sich nur angehalten konsistent kopieren).
 - **Shop:** SMTP mx.formsam.com:465, Benutzer shop@formsam.com, Antwort und Admin-Kopie an hallo@formsam.com — seit
   20.11.2026 eingeschaltet (DNS und Reverse-DNS bei 1blu gesetzt, Gmail nimmt an).
+- **Rückläufer (Bounces):** Envelope-Absender der Shop-Mails ist shop@formsam.com (ein Konto darf nur mit eigener Adresse
+  senden — bleibt so). Unzustellbarkeitsmeldungen, z. B. bei einem Tippfehler in der Kundenadresse, landen deshalb im
+  Postfach **shop@** und nicht im Shop: Das Versandprotokoll zeigt „gesendet“, sobald Stalwart die Mail angenommen hat.
+  shop@ im Webmail regelmäßig ansehen (oder in Stalwart eine Weiterleitung an hallo@ einrichten). Antworten der Kundschaft
+  gehen über Reply-To an hallo@.
 
 ## Wartungsmodus
 
@@ -246,6 +257,7 @@ npm run setup   # einmalig: three-Symlink für die CLI-Tools
 npm run check   # erzeugt eine Referenz-Vase als STL und validiert sie
 node tools/check-stl.mjs orders/<ID>/<datei>.stl   # Bestellung prüfen
 node tools/mail-test.mjs --smoke                   # Mail-Versand und alle Vorlagen
+node tools/test-mail.mjs                           # Zustellung/Wiederholung, Protokoll, Vermerke, Vorlagen (eigene Instanz)
 node tools/test-referenzpreis.mjs                  # Streichpreis = niedrigster Preis der letzten 30 Tage
 ```
 
