@@ -1,7 +1,7 @@
 // formsam — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal + Rechtsseiten + Widerruf
 // Start: node server.js   →   http://<host>:4488   (Admin: /admin — bei einer Neuinstallation steht ein zufälliges Admin-Passwort einmal im Protokoll)
 import http from 'node:http';
-import { createGzip, gzipSync, constants as zc } from 'node:zlib';
+import * as zlib from 'node:zlib';   // Auslieferung: gzip 9 und (falls vorhanden) Brotli 11 einmal packen, siehe gepackt()
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { mkdir, writeFile, readdir, readFile, rm, rename, open, stat, statfs, link } from 'node:fs/promises';
 import path from 'node:path';
@@ -480,6 +480,8 @@ function loadSettings() {
   // Gutschrift-Nummernkreis (Reklamationen)
   if (typeof settings.creditPrefix !== 'string') settings.creditPrefix = DEFAULT_SETTINGS.creditPrefix;
   settings.nextCredit = Math.max(1, Math.round(Number(settings.nextCredit)) || 1);
+  // Stand der Einstellungen (rev): zählt jedes Speichern im Admin — ein veralteter Admin-Tab bekommt 409, statt still zu überschreiben
+  settings.rev = Math.max(0, Math.round(Number(settings.rev)) || 0);
   // Migration Produktschalter: fehlt in älteren settings.json → Eierbecher aus (siehe DEFAULT_SETTINGS.produkte)
   settings.produkte = sanitizeProdukte(settings.produkte);
   // Migration: Finishes (matt/glanz/metall) + bekannte Silk-/Glossy-PLA-Farben
@@ -2436,6 +2438,40 @@ function kasseOffenSperre(order, status, paymentStatus) {
   if (paymentStatus !== 'bezahlt' && (status === undefined || status === 'neu' || status === 'storniert')) return '';
   return 'Die Kasse dieser Bestellung wurde nie abgeschlossen (keine Rechnung, keine Bestätigung an die Kundschaft) – sie lässt sich nicht als bezahlt buchen oder weiterbearbeiten. Bitte stornieren; für einen echten Auftrag bestellt die Kundschaft neu.';
 }
+// ---------------------------------------------------------------------------
+// Admin aus veralteten Tabs (Handy und Rechner gleichzeitig): Jede Bestelländerung des Admins schickt den Stand mit, auf dem sie
+// beruht (stand = Status, Zahlung, Sendungsnummer, Versender, Notiz, wie sie der Tab geladen hat). Weicht er ab → 409 „Inzwischen
+// geändert – bitte neu laden“ samt aktuellem Stand. Ohne stand (Tab von vor diesem Update) wird wie bisher angenommen; den
+// Statuswechsel prüft der Server aber immer (statusWechselFehler) — so setzt auch ein alter Tab keinen Status mehr zurück.
+// Hintergrund-Schreibvorgänge (Mail-Vermerke, Aufräumen) gehören nicht zum Stand und lösen daher keinen Konflikt aus.
+// ---------------------------------------------------------------------------
+const STATUS_FLOW = ['neu', 'bezahlt', 'im-druck', 'gedruckt', 'versendet', 'abgeschlossen'];
+const STAND_FELDER = {
+  status: (v) => String(v || 'neu'), paymentStatus: (v) => (v === 'bezahlt' ? 'bezahlt' : 'offen'),
+  trackingNo: (v) => String(v ?? ''), carrier: (v) => String(v ?? ''), adminNote: (v) => String(v ?? ''),
+};
+/** Stimmt der mitgeschickte Stand (nur die enthaltenen Felder) mit der Bestellung überein? Kein Stand = alter Tab → ja */
+function standPasst(order, stand) {
+  if (stand === undefined || stand === null) return true;
+  return Object.entries(STAND_FELDER).every(([k, norm]) => !(k in stand) || norm(stand[k]) === norm(order[k]));
+}
+const standUngueltig = (stand) => stand !== undefined && stand !== null && (typeof stand !== 'object' || Array.isArray(stand));
+/**
+ * Statuswechsel durch den Admin erlaubt? null = ja, sonst Meldung (409). Erlaubt: vorwärts (auch übersprungen, z. B. Versand direkt
+ * nach „Bezahlt“), Stornieren, „Storno aufheben“ (nur → Neu, Sperre siehe stornoAufhebenSperre) und das Zurücknehmen einer
+ * versehentlich verbuchten Zahlung (Bezahlt → Neu zusammen mit Zahlung „offen“, solange kein Druck läuft). Rückschritte sonst nie.
+ */
+function statusWechselFehler(order, nach, { zahlungOffen = false } = {}) {
+  const von = order.status || 'neu';
+  if (von === nach || nach === 'storniert') return null;
+  if (von === 'storniert') return nach === 'neu' ? null : 'Die Bestellung ist storniert – erst „Storno aufheben“ (zurück auf „Neu“), bitte neu laden.';
+  if (STATUS_FLOW.indexOf(nach) > STATUS_FLOW.indexOf(von)) return null;
+  if (von === 'bezahlt' && nach === 'neu' && zahlungOffen) {
+    return (order.lines || []).some((l) => l.print?.status && l.print.status !== 'offen')
+      ? 'Zurück auf „Neu“ geht nur, solange noch keine Position im Druck ist – bitte neu laden.' : null;
+  }
+  return `„${STATUS_LABELS[nach] || nach}“ geht nicht mehr: Die Bestellung steht inzwischen auf „${STATUS_LABELS[von] || von}“ – bitte neu laden.`;
+}
 // Atomar (Temp-Datei + rename): ein paralleles listOrders()/readOrder() sieht nie eine halb geschriebene Datei
 async function writeOrder(order) {
   // writeFileAtomic räumt die Temp-Datei auf, wenn Schreiben oder Umbenennen scheitert
@@ -2784,9 +2820,10 @@ function druckzettelHTML(order) {
     const finish = { matt: 'matt', glanz: 'glänzend', metall: 'metallic' }[body?.finish || c.colorFinish] || '';
     const hasText = !!String(c.text || '').trim();
     const txtCol = c.textStyle === 'farbe' ? colorByRef(c.textColor, l.textColorName) : null;
-    const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` · Verlauf ${FLOW_LABELS[c.flow] || 'Spirale'} ${c.twist}` : '';
+    const dez = (v) => String(v ?? '').replace('.', ',');   // Zahlen wie im Admin: „0,9 mm“ (der Druckzettel ist kein Beleg)
+    const flow = (c.twist && c.pattern !== 'glatt' && c.pattern !== 'querwellen') ? ` · Verlauf ${FLOW_LABELS[c.flow] || 'Spirale'} ${dez(c.twist)}` : '';
     const gravur = hasText
-      ? `<b>„${esc(c.text)}“</b><br>${esc(TEXT_STYLE_LABELS[c.textStyle] || c.textStyle || 'Gestanzt')} · Schrift ${esc(FONT_LABELS[c.font] || c.font || 'Modern')} · ${esc(c.textSize ?? '')} mm`
+      ? `<b>„${esc(c.text)}“</b><br>${esc(TEXT_STYLE_LABELS[c.textStyle] || c.textStyle || 'Gestanzt')} · Schrift ${esc(FONT_LABELS[c.font] || c.font || 'Modern')} · ${esc(dez(c.textSize))} mm`
         + (c.textStyle === 'farbe' ? `<br><span class="sw" style="background:${esc(safeHex(txtCol?.hex || '#000'))}"></span> Schriftfarbe ${esc(txtCol?.name || l.textColorName || c.textColor || '?')} (2. Filament)` : '')
       : '<span class="muted">keine</span>';
     const file = l.stlFile ? `${esc(l.stlFile)}${/\.3mf$/i.test(l.stlFile) ? ' <small>(3MF, 2 Filamente)</small>' : ''}` : '—';
@@ -2796,7 +2833,7 @@ function druckzettelHTML(order) {
       <td class="c big">${l.qty}×</td>
       <td><b>${l.product === 'vase' ? 'Vase' : 'Eierbecher'} „${esc(PRESET_LABELS[c.preset] || c.preset || '')}“</b>${l.saucer ? '<br>+ Untersetzer' : ''}
         <br><small>Pos. ${i + 1}${l.code ? ` · Code ${esc(l.code)}` : ''}</small></td>
-      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(c.depth ?? '')} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}${c.pattern === 'skelett' ? '<br><small>Voronoi: Brücken und Stützen im Slicer prüfen</small>' : ''}</td>
+      <td>${esc(PATTERN_LABELS[c.pattern] || c.pattern || '')}${c.pattern && c.pattern !== 'glatt' ? ` · ${esc(dez(c.depth))} mm` : ''}${esc(flow)}${c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${esc(RIM_LABELS[c.rim])}` : ''}<br>Höhe ${esc(c.height)} mm${c.width && c.width !== 1 ? ` · Breite ${Math.round(c.width * 100)} %` : ''}${c.pattern === 'skelett' ? '<br><small>Voronoi: Brücken und Stützen im Slicer prüfen</small>' : ''}</td>
       <td><span class="sw" style="background:${esc(bodyHex)}"></span> ${esc(bodyName)}${finish ? `<br><small>${finish}</small>` : ''}</td>
       <td>${gravur}</td>
       <td class="file">${file}</td>
@@ -3805,24 +3842,154 @@ function sitemapXml() {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
 }
 /**
- * Startseite (public/index.html) mit Canonical und Vorschau-Adressen aus der öffentlichen Adresse. Zwischengespeichert je
- * Dateistand und Adresse; das ETag kommt aus dem Ergebnis (ändert sich also auch, wenn nur die Adresse im Admin wechselt).
+ * Startseite (public/index.html) mit Canonical, Vorschau-Adressen und strukturierten Daten (JSON-LD) aus der öffentlichen Adresse
+ * und den Firmendaten. Zwischengespeichert je Dateistand, Adresse und JSON-LD; das ETag kommt aus dem Ergebnis (ändert sich also
+ * auch, wenn im Admin nur Adresse oder Firmendaten wechseln). Gepackt wird über gepackt() wie die statischen Dateien.
  */
-let startseiteCache = null;   // { key, html, gz, etag }
+let startseiteCache = null;   // { key, dateiKey, roh, html, basis }
 function startseite() {
   const file = path.join(PUBLIC, 'index.html');
   if (!existsSync(file)) return null;
-  const st = statSync(file), base = oeffentlicheAdresse();
-  const key = `${st.mtimeMs}|${st.size}|${base}`;
+  const st = statSync(file), base = oeffentlicheAdresse(), dateiKey = `${st.mtimeMs}|${st.size}`;
+  const roh = startseiteCache?.dateiKey === dateiKey ? startseiteCache.roh : readFileSync(file, 'utf8');
+  const ld = startseiteJsonLd(roh, base);
+  const key = `${dateiKey}|${base}|${ld}`;
   if (startseiteCache?.key === key) return startseiteCache;
   const b = esc(base);
-  const html = readFileSync(file, 'utf8')
+  const html = roh
     .replace(/(<link rel="canonical" href=")[^"]*(")/, `$1${b}/$2`)
     .replace(/(<meta property="og:url" content=")[^"]*(")/, `$1${b}/$2`)
-    .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*?(\/img\/brand\/og\.jpg")/g, `$1${b}$2`);
-  const etag = `"s-${crypto.createHash('sha1').update(html).digest('base64url').slice(0, 20)}"`;
-  startseiteCache = { key, html, gz: gzipSync(html, { level: zc.Z_BEST_SPEED }), etag };
+    .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*?(\/img\/brand\/og\.jpg")/g, `$1${b}$2`)
+    .replace('</head>', () => `  <script type="application/ld+json">${ld}</script>\n</head>`);
+  const basis = `s-${crypto.createHash('sha1').update(html).digest('base64url').slice(0, 20)}`;
+  startseiteCache = { key, dateiKey, roh, html, basis };
   return startseiteCache;
+}
+/**
+ * Strukturierte Daten der Startseite (schema.org, ein @graph): Organization (Name, Adresse des Shops, Logo; E-Mail, Telefon und
+ * Anschrift nur, wenn eingetragen und kein Platzhalter) und WebSite; FAQPage aus content.json nur, solange die Startseite den
+ * FAQ-Bereich zeigt (#faq-list, den app.js aus content.json füllt, vorhanden und nicht versteckt). Bewusst kein Product/Offer:
+ * Die Preise hängen von der Gestaltung ab (Größe, Muster, Gravur, Aktionen) — ein fester Ab-Preis wiche vom Shop ab.
+ */
+function startseiteJsonLd(html, base) {
+  const co = settings.company || {}, t = (v) => String(v ?? '').trim();
+  const org = { '@type': 'Organization', '@id': `${base}/#organisation`, name: t(co.name) || BRAND, url: `${base}/`, logo: `${base}/img/icons/icon-512.png` };
+  if (isEmail(t(co.email))) org.email = t(co.email);
+  if (t(co.phone)) org.telephone = t(co.phone);
+  const platzhalter = /musterstra(ß|ss)e|^0{5}$|musterstadt/i;   // wie PLATZHALTER_RE in lib/legal.js
+  if ([co.street, co.zip, co.city].every((v) => t(v) && !platzhalter.test(t(v)))) {
+    const land = t(co.country);
+    org.address = { '@type': 'PostalAddress', streetAddress: t(co.street), postalCode: t(co.zip), addressLocality: t(co.city),
+      addressCountry: !land || /^(deutschland|germany|de)$/i.test(land) ? 'DE' : land };
+  }
+  const graph = [org, { '@type': 'WebSite', '@id': `${base}/#website`, name: BRAND, url: `${base}/`, inLanguage: 'de-DE', publisher: { '@id': org['@id'] } }];
+  const faq = startseiteFaq(html);
+  if (faq.length) {
+    graph.push({ '@type': 'FAQPage', '@id': `${base}/#faq`, mainEntity: faq.map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })) });
+  }
+  // „<“ maskiert: kein „</script>“ aus Firmendaten oder Texten
+  return JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }).replace(/</g, '\\u003c');
+}
+let faqCache = null;   // { key, liste } — content.json je Dateistand
+/** FAQ aus content.json als Text (Lieferzeit/-gebiet wie im Shop eingesetzt) — leer, wenn die Startseite keinen sichtbaren FAQ-Bereich hat */
+function startseiteFaq(html) {
+  const tags = html.match(/<[a-z]+\b[^>]*\bid="faq(?:-list)?"[^>]*>/gi) || [];
+  if (!tags.some((x) => /id="faq-list"/.test(x)) || tags.some((x) => /\shidden(?=[\s=>/])/i.test(x))) return [];
+  const file = path.join(PUBLIC, 'content.json');
+  let st;
+  try { st = statSync(file); } catch { return []; }
+  const key = `${st.mtimeMs}|${st.size}`;
+  if (faqCache?.key !== key) {
+    let liste = [];
+    try { liste = (JSON.parse(readFileSync(file, 'utf8')).faq || []).filter((f) => f && typeof f.q === 'string' && typeof f.a === 'string'); } catch { liste = []; }
+    faqCache = { key, liste };
+  }
+  const lz = lieferzeitText(settings), lg = String(settings.shop?.liefergebiet || '').trim() || 'Deutschland';
+  const text = (s) => s.replace(/<span data-lieferzeit>[^<]*<\/span>/g, lz).replace(/<span data-liefergebiet>[^<]*<\/span>/g, lg)
+    .replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&shy;/g, '').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ').trim();
+  return faqCache.liste.map((f) => ({ q: text(f.q), a: text(f.a) })).filter((f) => f.q && f.a);
+}
+
+// ---------------------------------------------------------------------------
+// Kompression der Auslieferung: komprimierbare Dateien (HTML, CSS, JS, JSON, SVG, Manifest), die Startseite und die Rechtsseiten
+// werden einmal mit gzip (Stufe 9) und — wenn node:zlib es kann — Brotli (Qualität 11) gepackt und im Speicher gehalten (Schlüssel:
+// Pfad + mtime + Größe bzw. Inhalts-Hash; ein neuer Stand ersetzt den alten). Brotli 11 braucht für three.js gut eine Sekunde und
+// läuft deshalb nacheinander im Hintergrund (Threadpool); bis es fertig ist, geht gzip raus. Ausgeliefert wird je Accept-Encoding
+// (q-Werte zählen, „gzip;q=0“ = nicht erwünscht), mit Content-Length und Vary: Accept-Encoding auch auf der ungepackten Fassung.
+// Jede Fassung hat ihr eigenes ETag (…-gz, …-br); If-None-Match ist tolerant (Liste, W/ — z. B. von einem Proxy —, *).
+// ---------------------------------------------------------------------------
+const KOMPRIMIERBAR = new Set(['.html', '.css', '.js', '.json', '.svg', '.webmanifest']);
+const PACK_MIN = 1024, PACK_MAX = 8 * 1024 * 1024;   // Kleinstdateien lohnen nicht; sehr große Textdateien (gibt es in public/ nicht) ungepackt
+const BROTLI = typeof zlib.brotliCompress === 'function';
+const packeMit = (fn, buf, opts) => new Promise((ok, fail) => fn(buf, opts, (err, out) => (err ? fail(err) : ok(out))));
+const packCache = new Map();   // Name (Dateipfad, „startseite“, „recht:<seite>“) → { key, gz, br, gzP, brP } — gz/br: Buffer, sobald fertig
+let brotliKette = Promise.resolve();
+/** Gepackte Fassungen zu einem Inhalt (laden() → Buffer), je Name nur der aktuelle Stand (key) */
+function gepackt(name, key, laden) {
+  const alt = packCache.get(name);
+  if (alt?.key === key) return alt;
+  const e = { key, gz: null, br: null };
+  const roh = Promise.resolve().then(laden);
+  e.gzP = roh.then((buf) => packeMit(zlib.gzip, buf, { level: zlib.constants.Z_BEST_COMPRESSION })).then((b) => (e.gz = b));
+  if (BROTLI) {
+    e.brP = brotliKette = brotliKette.catch(() => {}).then(() => roh).then((buf) => packeMit(zlib.brotliCompress, buf, {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length },
+    })).then((b) => (e.br = b));
+  }
+  // Fehler (Datei gerade weg, kein Speicher): Eintrag verwerfen — ausgeliefert wird dann ungepackt
+  Promise.allSettled([e.gzP, e.brP].filter(Boolean)).then((r) => { if (r.some((x) => x.status === 'rejected') && packCache.get(name) === e) packCache.delete(name); });
+  packCache.set(name, e);
+  return e;
+}
+/** Accept-Encoding → Gewichte { br, gzip } (q-Werte; „*“ gilt für Ungenanntes; Brotli nur, wenn node:zlib es kann) */
+function kodierungen(req) {
+  const q = {};
+  for (const teil of String(req.headers['accept-encoding'] || '').slice(0, 500).toLowerCase().split(',')) {
+    const [name, ...par] = teil.split(';').map((x) => x.trim());
+    if (!name) continue;
+    const m = par.map((x) => x.match(/^q\s*=\s*([0-9.]+)$/)).find(Boolean);
+    const w = m ? Number(m[1]) : 1;
+    q[name] = Number.isFinite(w) ? w : 0;
+  }
+  const w = (n) => (n in q ? q[n] : '*' in q ? q['*'] : 0);
+  return { br: BROTLI ? w('br') : 0, gzip: Math.max(w('gzip'), q['x-gzip'] || 0) };
+}
+/** Fassung wählen: Brotli, sobald fertig (bei gleichem oder höherem q), sonst gzip; will der Browser nur Brotli, darauf warten → [kodierung, Buffer] */
+async function packWahl(q, e) {
+  if (q.br > 0 && e.br && q.br >= q.gzip) return ['br', e.br];
+  if (q.gzip > 0) return ['gzip', e.gz || await e.gzP];
+  if (q.br > 0 && e.brP) return ['br', e.br || await e.brP];
+  return [null, null];
+}
+const etagFuer = (basis, enc) => `"${basis}${enc === 'br' ? '-br' : enc === 'gzip' ? '-gz' : ''}"`;
+/** If-None-Match (Liste, W/, *): ETag einer noch gültigen Fassung, die der Browser annimmt → für die 304-Antwort, sonst null */
+function etagTreffer(req, basis, q, packbar) {
+  const inm = String(req.headers['if-none-match'] || '').slice(0, 2000);
+  if (!inm) return null;
+  const tokens = inm.split(',').map((x) => x.trim().replace(/^W\//, ''));
+  const fassungen = [null, ...(packbar && q.gzip > 0 ? ['gzip'] : []), ...(packbar && q.br > 0 ? ['br'] : [])];
+  if (tokens.includes('*')) return etagFuer(basis, packbar && q.gzip > 0 ? 'gzip' : null);
+  const f = fassungen.find((x) => tokens.includes(etagFuer(basis, x)));
+  return f === undefined ? null : etagFuer(basis, f);
+}
+/** Text-Antwort (Startseite, Rechtsseiten) gepackt aus dem Speicher; HEAD ohne Inhalt */
+async function sendeGepackt(req, res, code, headers, name, text, { etagBasis = null } = {}) {
+  const buf = Buffer.from(text);
+  const q = kodierungen(req), packbar = buf.length > PACK_MIN;
+  headers = { ...headers, Vary: 'Accept-Encoding' };
+  if (etagBasis) {
+    const treffer = etagTreffer(req, etagBasis, q, packbar);
+    if (treffer) { res.writeHead(304, { ...headers, ETag: treffer }); return res.end(); }
+  }
+  let enc = null, body = buf;
+  if (packbar) {
+    const key = etagBasis || crypto.createHash('sha1').update(buf).digest('base64url');
+    const [k, b] = await packWahl(q, gepackt(name, key, () => buf)).catch(() => [null, null]);
+    if (b) { enc = k; body = b; }
+  }
+  res.writeHead(code, { ...headers, ...(etagBasis ? { ETag: etagFuer(etagBasis, enc) } : {}), ...(enc ? { 'Content-Encoding': enc } : {}), 'Content-Length': body.length });
+  return res.end(req.method === 'HEAD' ? undefined : body);
 }
 
 /**
@@ -3899,7 +4066,10 @@ async function listOrders() {
       bestellungenDefekt.add(d);
     }
   }
-  return orders;
+  // Neueste zuerst nach Bestellzeit (createdAt), nicht nach Ordnernamen — sonst stünde der Altbestand „OV-…“ vor allen „FS-…“ und
+  // die Bestellungen eines Tages lägen nach ihrem Zufallsteil durcheinander; ohne lesbare Zeit ans Ende, dann nach Nummer
+  const zeit = (o) => { const t = Date.parse(o?.createdAt); return Number.isFinite(t) ? t : 0; };
+  return orders.sort((a, b) => zeit(b) - zeit(a) || String(b.orderId || '').localeCompare(String(a.orderId || '')));
 }
 
 // ---------------------------------------------------------------------------
@@ -4923,6 +5093,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/admin/settings') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       const patch = await readJson(req);
+      // baseRev = Stand der Einstellungen, auf dem der Tab beruht (fehlt bei Tabs von vor diesem Update → wie bisher angenommen)
+      const baseRev = patch.baseRev ?? undefined;
+      if (baseRev !== undefined && !Number.isInteger(baseRev)) return send(res, 400, { ok: false, error: 'Ungültiger Stand (baseRev)' });
+      const veraltet = () => baseRev !== undefined && baseRev !== settings.rev;
+      if (veraltet()) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', rev: settings.rev });
       // Admin-Passwort: Text mit 8–200 Zeichen (leer würde den Admin für alle öffnen, Nicht-Strings sperren aus) — gespeichert wird nur
       // der scrypt-Hash (übernommen erst, wenn der ganze Patch geprüft ist); danach gilt der Speicher-Cache nicht mehr
       let adminHashNeu = null;
@@ -5013,6 +5188,8 @@ const server = http.createServer(async (req, res) => {
         if (neu.aktiv && !neu.hash) return send(res, 400, { ok: false, error: 'Wartungsmodus: bitte zuerst ein Zugangskennwort setzen' });
         wartungNeu = neu;
       }
+      // Noch einmal unmittelbar vor der Übernahme (zwischendurch lief die Passwort-Prüfung): ein gleichzeitig gespeicherter Tab gewinnt
+      if (veraltet()) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', rev: settings.rev });
       // Ab hier nur noch Übernahme geprüfter Werte (Gutscheine: mergeCoupons + gutscheineAus)
       if (pricingNeu) settings.pricing = pricingNeu;
       if (colorsNeu) settings.colors = colorsNeu;
@@ -5042,6 +5219,7 @@ const server = http.createServer(async (req, res) => {
       // E-Mail: nur bekannte Felder (geprüft in mailAus); ohne Patch bleibt der gespeicherte Stand
       if (mailNeu) settings.mail = mailNeu;
       else settings.mail = { ...DEFAULT_SETTINGS.mail, ...(settings.mail || {}) };
+      settings.rev = (settings.rev || 0) + 1;
       await saveSettings();
       // Wartungsmodus gerade eingeschaltet oder neues Kennwort: der Admin sperrt sich nicht selbst aus — Freigabe-Cookie gleich mit
       if (wartungNeu && wartungAktiv()) res.setHeader('Set-Cookie', wartungCookie(req));
@@ -5049,8 +5227,9 @@ const server = http.createServer(async (req, res) => {
       await notePreisHistorie().catch((err) => console.error('Preis-Historie konnte nicht gespeichert werden:', err?.message || err));
       // hinweis: nicht übernommene Angaben (z. B. Präfix aus einem Tab von vor dem Jahreswechsel) — der Admin zeigt ihn an
       const hinweis = [invoicePrefix.hinweis, creditPrefix.hinweis].filter(Boolean).join(' ');
-      // coupons: gespeicherter Stand (inkl. Guthaben-Codes, die der Tab noch nicht kannte) — der Admin übernimmt ihn
-      return send(res, 200, { ok: true, coupons: settings.coupons, couponRest: guthabenRest(), ...(hinweis ? { hinweis } : {}) });
+      // coupons: gespeicherter Stand (inkl. Guthaben-Codes, die der Tab noch nicht kannte) — der Admin übernimmt ihn;
+      // settings/rev: gespeicherter, geprüfter Stand (z. B. ein negativer Aufpreis als 0) — der Admin füllt die Felder daraus neu
+      return send(res, 200, { ok: true, coupons: settings.coupons, couponRest: guthabenRest(), rev: settings.rev, settings: adminSettingsView(), ...(hinweis ? { hinweis } : {}) });
     }
     if (req.method === 'POST' && p === '/api/admin/order-update') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
@@ -5060,11 +5239,16 @@ const server = http.createServer(async (req, res) => {
       if (status !== undefined && !STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
       if (paymentStatus !== undefined && !['offen', 'bezahlt'].includes(paymentStatus)) return send(res, 400, { ok: false, error: 'Ungültiger Zahlungsstatus' });
       if (carrier !== undefined && !CARRIERS.includes(carrier)) return send(res, 400, { ok: false, error: 'Unbekannter Versender' });
+      if (standUngueltig(body.stand)) return send(res, 400, { ok: false, error: 'Ungültiger Stand' });
       let order, prevStatus;
       const release = await lockOrder(orderId);
       try {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
+        // Veralteter Tab: Stand weicht ab bzw. der Statuswechsel ginge rückwärts → 409 mit dem aktuellen Stand (der Admin lädt ihn)
+        if (!standPasst(order, body.stand)) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', order });
+        const wechselFehler = status !== undefined ? statusWechselFehler(order, status, { zahlungOffen: paymentStatus === 'offen' }) : null;
+        if (wechselFehler) return send(res, 409, { ok: false, code: 'status', error: wechselFehler, order });
         // Storno aufheben nur ohne Stornorechnung und mit noch verfügbarem Guthaben (stornoAufhebenSperre)
         if (status !== undefined && status !== 'storniert' && order.status === 'storniert') {
           const sperre = stornoAufhebenSperre(order);
@@ -5113,9 +5297,10 @@ const server = http.createServer(async (req, res) => {
     // Druckstatus je Position — mit Automatik für den Bestellstatus (im-druck / gedruckt)
     if (req.method === 'POST' && p === '/api/admin/line-print') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, idx, status, note } = await readJson(req);
+      const { orderId, idx, status, note, vorher } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!PRINT_STATES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Druckstatus' });
+      if (vorher !== undefined && !PRINT_STATES.includes(vorher)) return send(res, 400, { ok: false, error: 'Ungültiger Druckstatus (vorher)' });
       let order, prevStatus, wasPrinted;
       const release = await lockOrder(orderId);
       try {
@@ -5124,6 +5309,10 @@ const server = http.createServer(async (req, res) => {
         if (!(i >= 0 && i < order.lines.length)) return send(res, 400, { ok: false, error: 'Ungültige Position' });
         const line = order.lines[i];
         const prev = line.print || { status: 'offen' };
+        // vorher = Druckstatus der Position, wie ihn der Tab zeigt — ein veralteter Tab setzt eine fertige Position nicht zurück in den Druck
+        if (vorher !== undefined && (prev.status || 'offen') !== vorher) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', order });
+        // Tab von vor dem Update (ohne vorher): kein Nachdruck aus „Gedruckt“ — der stufte die Bestellung auf „Im Druck“ zurück
+        if (vorher === undefined && order.status === 'gedruckt' && status !== 'fertig') return send(res, 409, { ok: false, code: 'status', error: 'Die Bestellung steht inzwischen auf „Gedruckt“ – bitte neu laden.', order });
         const now = new Date().toISOString();
         const print = { status };
         if (status === 'druckt') { print.startedAt = prev.status === 'druckt' && prev.startedAt ? prev.startedAt : now; }
@@ -5395,14 +5584,19 @@ const server = http.createServer(async (req, res) => {
     // Kompatibel: alter Kurz-Endpoint (nur Status)
     if (req.method === 'POST' && p === '/api/admin/order-status') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, status } = await readJson(req);
+      const { orderId, status, stand } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
+      if (standUngueltig(stand)) return send(res, 400, { ok: false, error: 'Ungültiger Stand' });
       let order, prevStatus;
       const release = await lockOrder(orderId);
       try {
         try { order = await readOrder(orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
         prevStatus = order.status;
+        // wie order-update: veralteter Stand bzw. Rückschritt → 409
+        if (!standPasst(order, stand)) return send(res, 409, { ok: false, code: 'stand', error: 'Inzwischen geändert – bitte neu laden', order });
+        const wechselFehler = statusWechselFehler(order, status);
+        if (wechselFehler) return send(res, 409, { ok: false, code: 'status', error: wechselFehler, order });
         const sperre = status !== 'storniert' && order.status === 'storniert' ? stornoAufhebenSperre(order) : null;
         if (sperre) return send(res, 409, { ok: false, code: 'storno', error: sperre });
         const offenSperre = kasseOffenSperre(order, status);
@@ -5541,15 +5735,11 @@ const server = http.createServer(async (req, res) => {
         } catch (err) { console.error(`Rechtsseite /${slug} fehlgeschlagen:`, err?.message || err); }
       }
       const out = code === 200 ? html : code === 503 ? legalFallbackHTML(slug) : 'Nicht gefunden';
-      // gzip wie bei den statischen Dateien (die Seiten sind 40–60 KB, komprimiert etwa ein Viertel)
-      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && Buffer.byteLength(out) > 1024;
-      res.writeHead(code, {
-        'Content-Type': code === 404 ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding',
-        ...(gz ? { 'Content-Encoding': 'gzip' } : {}),
+      // gepackt wie die statischen Dateien (die Seiten sind 40–60 KB; je Inhalt einmal gzip 9/Brotli, siehe sendeGepackt)
+      return sendeGepackt(req, res, code, {
+        'Content-Type': code === 404 ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
         ...(code === 503 ? { 'Retry-After': '300' } : {}),
-      });
-      if (req.method === 'HEAD') return res.end();
-      return res.end(gz ? gzipSync(out, { level: zc.Z_BEST_SPEED }) : out);
+      }, `recht:${slug}`, out);
     }
 
     // --- robots.txt und sitemap.xml aus der öffentlichen Adresse (robots.txt ist auch im Wartungsmodus erreichbar: „Disallow: /“)
@@ -5563,14 +5753,7 @@ const server = http.createServer(async (req, res) => {
     // --- Startseite: Canonical und Vorschau-Adressen aus der öffentlichen Adresse (sonst wie eine statische HTML-Datei)
     if ((p === '/' || p === '/index.html') && (req.method === 'GET' || req.method === 'HEAD')) {
       const sp = startseite();
-      if (sp) {
-        const headers = { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', ETag: sp.etag, Vary: 'Accept-Encoding' };
-        if (req.headers['if-none-match'] === sp.etag) { res.writeHead(304, headers); return res.end(); }
-        const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
-        const body = gz ? sp.gz : Buffer.from(sp.html);
-        res.writeHead(200, { ...headers, ...(gz ? { 'Content-Encoding': 'gzip' } : {}), 'Content-Length': body.length });
-        return res.end(req.method === 'HEAD' ? undefined : body);
-      }
+      if (sp) return sendeGepackt(req, res, 200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' }, 'startseite', sp.html, { etagBasis: sp.basis });
     }
 
     // --- Unbekannte API-Adresse bzw. Methode: JSON statt Datei-Suche (405 nur für bekannte Nur-Lese-Adressen)
@@ -5653,22 +5836,21 @@ const server = http.createServer(async (req, res) => {
     // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe, gzip-Fassung mit eigenem ETag)
     const isAsset = p.startsWith('/vendor/') || p.startsWith('/fonts/') || p.startsWith('/env/') || p.startsWith('/img/gallery/');
     headers['Cache-Control'] = isAsset ? 'public, max-age=2592000, immutable' : 'no-cache';
-    const compressible = ['.html', '.css', '.js', '.json', '.svg'].includes(ext);
-    const gz = compressible && /\bgzip\b/.test(String(req.headers['accept-encoding'] || '').slice(0, 500)) && stat.size > 1024;
-    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}${gz ? '-gz' : ''}"`;
-    headers.ETag = etag;
-    if (compressible) headers.Vary = 'Accept-Encoding';
-    // If-None-Match tolerant: Liste, schwache ETags (W/ — z. B. von einem Proxy, der selbst komprimiert) und *
-    const inm = String(req.headers['if-none-match'] || '').slice(0, 2000);
-    if (inm && inm.split(',').some((t) => { const v = t.trim(); return v === '*' || v.replace(/^W\//, '') === etag; })) {
-      res.writeHead(304, headers);
-      return res.end();
+    // Text-Dateien gepackt aus dem Speicher (gepackt: gzip 9 / Brotli 11 je Pfad + mtime + Größe), ETag je Fassung (…-gz, …-br),
+    // Vary auch auf der ungepackten Fassung; If-None-Match tolerant (etagTreffer)
+    if (KOMPRIMIERBAR.has(ext)) headers.Vary = 'Accept-Encoding';
+    const packbar = KOMPRIMIERBAR.has(ext) && stat.size > PACK_MIN && stat.size <= PACK_MAX;
+    const basis = `${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}`, q = kodierungen(req);
+    const treffer = etagTreffer(req, basis, q, packbar);
+    if (treffer) { res.writeHead(304, { ...headers, ETag: treffer }); return res.end(); }
+    if (packbar) {
+      const [enc, body] = await packWahl(q, gepackt(file, `${stat.mtimeMs}|${stat.size}`, () => readFile(file))).catch(() => [null, null]);
+      if (body) {
+        res.writeHead(200, { ...headers, ETag: etagFuer(basis, enc), 'Content-Encoding': enc, 'Content-Length': body.length });
+        return res.end(req.method === 'HEAD' ? undefined : body);
+      }
     }
-    if (gz) {
-      headers['Content-Encoding'] = 'gzip';
-      res.writeHead(200, headers);
-      return createReadStream(file).pipe(createGzip({ level: zc.Z_BEST_SPEED })).pipe(res);
-    }
+    headers.ETag = etagFuer(basis, null);
     headers['Content-Length'] = stat.size;
     res.writeHead(200, headers);
     createReadStream(file).pipe(res);
