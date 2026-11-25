@@ -1,6 +1,6 @@
 # formsam – Rechtstexte: Notiz für Julian
 
-Stand: 27.09.2026 · Code: `lib/legal.js` · Seiten: `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand`
+Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand`
 
 > **Keine Rechtsberatung.** Die Texte sind sorgfältig nach dem tatsächlichen Verhalten des Shops geschrieben
 > (Code gelesen: `server.js`, `lib/mailer.js`, `lib/mail-templates.js`, `public/js/*`, `public/sw.js`),
@@ -15,18 +15,38 @@ Stand: 27.09.2026 · Code: `lib/legal.js` · Seiten: `/impressum`, `/datenschutz
    Eine ladungsfähige Anschrift ist Pflicht (§ 5 DDG). Ein Postfach reicht nicht.
 2. **Telefonnummer** eintragen. Für Fernabsatzverträge ist sie Pflichtinformation
    (Art. 246a § 1 Abs. 1 Nr. 2 EGBGB) und gehört auch in die Widerrufsbelehrung. Ohne Nummer fehlt sie überall.
-3. **E-Mail-Adresse** auf die neue Domain umstellen, z. B. `hallo@formsam.de`. Bleibt Gmail der Posteingang,
-   landen Kundenmails bei Google – dann „E-Mails“ in der Datenschutzerklärung um Google ergänzen.
-4. **Öffentliche Adresse** im Admin (E-Mail → öffentliche Shop-URL) auf `https://formsam.de` setzen.
-   Davon hängen ab: die Internet-Adresse der Widerrufsfunktion in der Belehrung, der Hinweis „Verbindung ist
-   verschlüsselt (HTTPS)“, der Canonical-Link und die Nennung von „formsam.de“ in den AGB.
-   Solange dort `localhost` steht, wird nichts davon angezeigt.
-5. **Auftragsverarbeitungsvertrag mit IONOS** abschließen. Das geht online im IONOS-Kundenkonto
-   (Bereich Datenschutz/„Vertrag zur Auftragsverarbeitung“). Die Datenschutzerklärung sagt, dass es ihn gibt.
-6. **AV-Vertrag mit dem E-Mail-Anbieter**, falls der SMTP-Versand nicht ohnehin über IONOS läuft.
-7. **Log-Aufbewahrung** am Server auf höchstens 14 Tage stellen – so steht es in der Datenschutzerklärung:
-   nginx-Zugriffsprotokolle (logrotate z. B. `daily` + `rotate 14`) und das Systemprotokoll, in dem die
-   Meldungen des Shops landen (journald: `MaxRetentionSec=14day`).
+3. **E-Mail-Adresse** auf die eigene Domain umstellen: `hallo@formsam.com` (Postfach auf dem eigenen Mailserver).
+   Bleibt Gmail der Posteingang, landen Kundenmails bei Google – dann „E-Mails“ in der Datenschutzerklärung um
+   Google ergänzen.
+4. **Öffentliche Adresse** im Admin (✉️ E-Mail → „Öffentliche Shop-Adresse“) auf `https://www.formsam.com` setzen.
+   Davon hängen ab: die Internet-Adresse der Widerrufsfunktion in der Belehrung (Pflichtangabe nach dem Muster),
+   der Hinweis „Verbindung ist verschlüsselt (HTTPS)“, Canonical und Vorschau-Adressen von Startseite und
+   Rechtsseiten, robots.txt/sitemap.xml und die Nennung der Adresse in den AGB. Solange dort nichts oder `localhost`
+   steht, nennt die Belehrung nur „den Punkt „Vertrag widerrufen“ auf der Seite „Widerruf““ – die Admin-Übersicht
+   warnt dann.
+5. **Hoster und AV-Vertrag – je Server** (Admin → Mein Unternehmen → Rechtstexte). Es gibt keinen Standard mehr:
+   ohne Eintrag nennt die Datenschutzerklärung nur „einen Hosting-Anbieter“, und die Übersicht warnt. Den Satz
+   „Dafür habe ich einen Vertrag zur Auftragsverarbeitung … geschlossen“ zeigt sie nur, wenn das Häkchen
+   „AV-Vertrag … abgeschlossen“ gesetzt ist (wird der Hoster geändert, ist das Häkchen wieder weg).
+   - Produktivserver: **1blu** (laut Betreibernotiz; Firma und Anschrift aus dem 1blu-Kundenkonto übernehmen,
+     Serverstandort laut Vertrag). Die Einstellungen wurden vom Testserver übernommen – dort steht womöglich noch IONOS.
+     Bitte im Prod-Admin prüfen und den AV-Vertrag mit 1blu im Kundenkonto abschließen, dann das Häkchen setzen.
+   - Testserver: IONOS (AV-Vertrag im IONOS-Kundenkonto, Bereich Datenschutz).
+   Bestehende Installationen mit eingetragenem Hoster gelten nach dem Update einmalig als bestätigt (der Text
+   ändert sich dort nicht) – also bewusst prüfen.
+6. **Mail-Versand** (Rechtstexte → „Mail-Versand“): Auf dem Produktivserver „Eigener Mailserver auf diesem Server“
+   (Stalwart, mx.formsam.com) einstellen. Dann beschreibt die Datenschutzerklärung den eigenen Mailserver beim
+   Hoster mit Postfächern, Spamprüfung, Mailserver-Protokollen (14 Tage) und den Sicherungen der Postfächer und
+   nennt keinen E-Mail-Anbieter. Läuft der Versand über einen Anbieter (z. B. Testserver), „Über einen
+   E-Mail-Anbieter“ wählen, Namen eintragen und mit ihm einen AV-Vertrag schließen. Bestehende Installationen
+   stehen nach dem Update auf „Anbieter“ (wie der bisherige Text).
+7. **Protokolle und Sicherungen** auf 14 Tage begrenzen – so steht es in der Datenschutzerklärung (Zugriffs- und
+   Betriebsprotokolle, Mailserver-Protokolle, Sicherungen). Die Dateien liegen unter `deploy/`
+   (`journald-formsam.conf`, `logrotate-formsam-nginx`, `nginx-formsam-log.conf`; die Sicherungsskripte löschen nach
+   14 Tagen); einspielen laut README „Protokolle und Sicherungen“, prüfen mit
+   `bash /srv/formsam/deploy/prod-update.sh --pruefen`. Eine zusätzliche Sicherung außer Haus bei einem weiteren
+   Anbieter ist ein weiterer Empfänger: dann AV-Vertrag schließen und die Datenschutzerklärung (Abschnitt
+   „Hosting und Server“ → Sicherungen, „Wer Daten bekommt“) in `lib/legal.js` ergänzen.
 8. **Wirtschafts-Identifikationsnummer**: Sobald das BZSt dir eine W-IdNr. zuteilt (Format `DE123456789-00001`),
    muss sie ins Impressum (§ 5 Abs. 1 Nr. 6 DDG). Trag sie vorerst ins Feld „USt-IdNr.“ ein – das Impressum erkennt
    das Format und beschriftet sie richtig.
@@ -49,7 +69,7 @@ Stand: 27.09.2026 · Code: `lib/legal.js` · Seiten: `/impressum`, `/datenschutz
       Musteranschrift und Gmail-Adresse, und das Bau-Skript warnt deshalb. Die Rechnung mit Anschrift geht nur per E-Mail
       raus und ersetzt den Beileger nicht, solange sie nicht ausgedruckt beiliegt.
 
-    Erledigt ist das erst, wenn die echte Anschrift und `hallo@formsam.de` eingetragen sind und der Beileger danach neu
+    Erledigt ist das erst, wenn die echte Anschrift und `hallo@formsam.com` eingetragen sind und der Beileger danach neu
     gebaut und gedruckt ist (`brandkit.mjs beileger`, siehe `docs/marke.md` → Offene To-dos). Mit der Anschrift im Admin
     allein ist es nicht getan. Lass beides bei der anwaltlichen Prüfung mit ansehen.
 12. **Aufsichtsbehörde** (optional): In „Deine Rechte“ steht allgemein die Behörde deines Bundeslandes. Wenn du magst,
@@ -66,15 +86,29 @@ Stand: 27.09.2026 · Code: `lib/legal.js` · Seiten: `/impressum`, `/datenschutz
   die jemand völlig unverändert aus einer Vorlage bestellt, ist es nicht ganz sicher. Deshalb bleibt die volle
   Widerrufsbelehrung stehen, und die Funktion „Vertrag widerrufen“ nimmt jeden Widerruf an – du entscheidest dann
   im Einzelfall.
-- **Widerrufsbelehrung im gesetzlichen Wortlaut (per Sie, „wir“)**. Nur das unveränderte Muster schützt dich
-  (Gesetzlichkeitsfiktion, Art. 246a § 1 Abs. 2 EGBGB). Die Seite erklärt das in einem Satz.
+- **Widerrufsbelehrung nach dem gesetzlichen Muster (per Sie, „wir“)** in der seit 19.06.2026 geltenden Fassung
+  (Anlage 1 zu Art. 246a § 1 Abs. 2 Satz 2 EGBGB; abgeglichen am 25.11.2026 mit gesetze-im-internet.de). Weil der
+  Shop zur Widerrufsfunktion verpflichtet ist (§ 356a BGB), steht der Baustein aus Gestaltungshinweis 3 für diesen
+  Fall darin: „Sie können Ihr Widerrufsrecht auch online unter <Adresse>/widerruf#widerrufen ausüben. Wenn Sie diese
+  Online-Funktion nutzen, übermitteln wir Ihnen auf einem dauerhaften Datenträger (z. B. durch eine E-Mail)
+  unverzüglich eine Eingangsbestätigung …“ – nicht mehr der Baustein für ein freiwilliges Webformular. Nur das
+  unveränderte Muster schützt dich (Gesetzlichkeitsfiktion, Art. 246a § 1 Abs. 2 EGBGB). Deshalb steht im Kasten nur
+  das Muster bis „Ende der Widerrufsbelehrung“; der **Ausschluss** (§ 312g Abs. 2 Nr. 1 BGB) folgt getrennt darunter,
+  zusammen mit „Was das für dich heißt“. Die Internetadresse kommt aus der öffentlichen Shop-Adresse (Punkt 4).
+  Ändert der Gesetzgeber das Muster, `widerruf()` in `lib/legal.js` und `LEGAL_STAND` anpassen.
+- **Aussagen zum Widerrufsrecht** sind überall gleich: Für Vasen nach deinem Design ist es *in der Regel*
+  ausgeschlossen, jeder Widerruf wird geprüft (Kasse, FAQ, AGB § 10, Seite „Widerruf“; die Eingangsbestätigung per
+  Mail kündigt keine Rücksendung/Erstattung an, sondern die Prüfung).
 - **Vertragsschluss** so, wie der Shop arbeitet: „Zahlungspflichtig bestellen“ (bzw. Zahlung bei PayPal) = Angebot,
   die sofortige Bestellbestätigung mit Rechnung = Annahme.
 - **Kein Widerrufsrecht von dir** außer in zwei klaren Fällen: Design technisch nicht druckbar, Gravur rechtswidrig.
 - **Haftung und Gewährleistung** rein gesetzlich, keine Einschränkung, keine Garantie.
 - **Produkteigenschaften** (PLA, 50 °C, Trockenblumen, Voronoi, Standfestigkeit, Schichtlinien) stehen als
   Beschreibung in § 13 AGB, ausdrücklich ohne Einschränkung der Mängelrechte.
-- **Datenschutz**: keine Cookies, kein Tracking, keine externen Ressourcen außer PayPal (nur wenn aktiv).
+- **Datenschutz**: keine Cookies (außer dem Zugangs-Cookie `fs_zugang`, 30 Tage, nur wenn jemand im Wartungsmodus
+  das Zugangskennwort eingibt), kein Tracking, keine externen Ressourcen außer PayPal (nur wenn aktiv). Tägliche
+  Sicherungen (Shop und Postfächer) werden nach 14 Tagen gelöscht – auch gelöschte Daten liegen so lange noch darin;
+  das steht in „Hosting und Server“.
   Aufbewahrung: Rechnungen/Buchungsbelege 8 Jahre (§ 147 AO seit 2025), Geschäftsbriefe 6 Jahre,
   Widerrufe 3 Jahre. Der Shop löscht nichts automatisch – das Löschen nach Fristablauf machst du von Hand.
   Rechnungen, Gutschriften, Stornobelege und Druckdateien sind nur über Links mit geheimem Schlüssel (`?k=…`) abrufbar,
@@ -137,8 +171,9 @@ Stand: 27.09.2026 · Code: `lib/legal.js` · Seiten: `/impressum`, `/datenschutz
 | Versandkosten / Freigrenze | AGB § 6, „Versand & Zahlung“ (auch „kostenlos“ oder „ohne Freigrenze“), Versandhinweis am Preis im Shop |
 | Lieferzeit / Liefergebiet | AGB § 7, „Versand & Zahlung“ |
 | Firmendaten, Telefon, USt-IdNr. | Impressum, Datenschutz, AGB § 2, Widerrufsbelehrung, Muster-Formular, Fußzeile |
-| Hoster / Serverstandort | Datenschutz |
-| Öffentliche Shop-URL | Adresse der Widerrufsfunktion, HTTPS-Hinweis, Canonical, AGB § 1 |
+| Hoster / Serverstandort / AV-Vertrag (Häkchen) | Datenschutz (Hosting, Kurzfassung, Empfänger; ohne Hoster neutraler Text + Admin-Warnung) |
+| Mail-Versand (eigener Mailserver / Anbieter + Name) | Datenschutz (E-Mails, Speicherdauer, Sicherungen, Empfänger) |
+| Öffentliche Shop-URL | Adresse der Widerrufsfunktion, HTTPS-Hinweis, Canonical/og der Startseite und Rechtsseiten, robots.txt, sitemap.xml, AGB § 1 |
 
 PayPal gilt – genau wie im Shop – erst als angeboten, wenn „aktiv“ **und** eine Client-ID gesetzt ist.
 
@@ -154,21 +189,27 @@ PayPal gilt – genau wie im Shop – erst als angeboten, wenn „aktiv“ **und
 
 - `renderLegalPage(slug, { settings, baseUrl })` – die fünf Seiten.
 - `renderLegalPage(slug, { settings, baseUrl, forMail: true })` – dieselbe Seite ohne Skript/Formular, mit absoluten
-  Links. Die Bestellbestätigung verschickt AGB und Widerrufsbelehrung so als Anhang (`formsam-AGB.html`,
+  Links (auch im Text, z. B. AGB § 10 → Widerrufsfunktion). Die Bestellbestätigung verschickt AGB und Widerrufsbelehrung so als Anhang (`formsam-AGB.html`,
   `formsam-Widerrufsbelehrung.html`) – „dauerhafter Datenträger“ nach § 312f Abs. 2 BGB.
 - `legalWarnings(settings)` – Liste fehlender oder vorläufiger Pflichtangaben (Platzhalter-Anschrift, fehlende
-  Telefonnummer …); steht im Startlog und als Hinweis in der Admin-Übersicht.
+  Telefonnummer, Hoster/Serverstandort fehlt, AV-Vertrag nicht bestätigt, öffentliche Adresse fehlt …); steht im
+  Startlog und als Hinweis in der Admin-Übersicht.
+- `lib/produkthinweise.js` – Produkthinweise (Material, Wasser, Voronoi, Standfestigkeit) und der Wortlaut des
+  Kassen-Häkchens je Fassung. Die Rechnung nimmt die Sätze von dort (Voronoi- und Formen-Satz mit Positionsnummern),
+  die Kasse zeigt dieselben Sätze aus `content.json`; `node tools/test-recht.mjs` prüft die Wortgleichheit.
 - Kundenkonto und Mails können direkt auf das Formular verlinken: `/widerruf?order=FS-…#widerrufen`
   (auch `?bestellung=`) – die Bestellnummer ist dann schon eingetragen.
 
 ## Kasse (Stand der Umsetzung)
 
 - Über „Zahlungspflichtig bestellen“ stehen Links zu AGB, Widerrufsbelehrung und Datenschutz und der Hinweis,
-  dass individuell gestaltete Vasen vom Widerrufsrecht ausgenommen sind (§ 312g Abs. 2 Nr. 1 BGB).
+  dass nach deinem Design gefertigte Vasen in der Regel vom Widerrufsrecht ausgenommen sind (§ 312g Abs. 2 Nr. 1 BGB).
 - Pflicht-Häkchen „Ich bin ausdrücklich einverstanden: … Wasserdichtigkeit nicht vereinbart … Standfestigkeit nicht
   vereinbart“ (ausdrückliche und gesonderte Vereinbarung nach § 476 Abs. 1 Satz 2 Nr. 2 BGB, verweist auf AGB § 13).
   Ohne das Häkchen nimmt der Server keine Bestellung an (auch nicht bei PayPal vor der Zahlung). Der Zeitpunkt steht als
-  `beschaffenheitBestaetigt` in der Bestellung (`orders/<ID>/order.json`).
+  `beschaffenheitBestaetigt`, die Fassung des Wortlauts als `beschaffenheitFassung` (z. B. `2026-09-27`, Text in
+  `lib/produkthinweise.js` → `BESCHAFFENHEIT_TEXTE`) in der Bestellung (`orders/<ID>/order.json`). Bestellungen vor dem
+  Update (mit `beschaffenheitBestaetigt`, ohne Fassung) haben dem Wortlaut `2026-09-27` zugestimmt. Wer den Häkchentext ändert, legt dort eine neue Fassung an.
 - Lieferfrist: Bestellbestätigung, Rechnung und der Hinweis nach dem Bestellen sagen wörtlich dasselbe wie AGB § 7 und
   die Versandseite (ohne „ca.“, Fristbeginn bei Vorkasse am Tag nach dem Überweisungsauftrag, bei PayPal am Tag nach
   Vertragsschluss) — eine Quelle: `lib/lieferfrist.js`.
