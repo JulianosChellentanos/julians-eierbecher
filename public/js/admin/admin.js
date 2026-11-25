@@ -1805,7 +1805,7 @@ function fillSettings() {
   $('#s-adminkey').value = '';
   $('#s-wartung').checked = !!s.wartung?.aktiv; $('#s-wartung-kw').value = '';
   $('#s-wartung-hint').textContent = s.wartung?.kennwortGesetzt
-    ? 'Besucher sehen eine Wartungsseite; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.'
+    ? 'Besucher sehen eine Wartungsseite — Rechtsseiten, „Vertrag widerrufen“ und Rechnungslinks bleiben erreichbar; mit dem Kennwort sieht man den Shop 30 Tage lang normal. Ein neues Kennwort sperrt alle bisherigen Freigaben.'
     : 'Noch kein Zugangskennwort gesetzt — zum Einschalten bitte eines eintragen.';
   const info = DATA.info || {};
   $('#sys-info').innerHTML = `<dt>Node</dt><dd>${esc(info.node || '—')}</dd><dt>Läuft seit</dt><dd>${info.startedAt ? fmtDT(info.startedAt) : '—'} (${info.uptime != null ? fmtDur(info.uptime / 60) : '—'})</dd><dt>Bestellungen</dt><dd>${DATA.orders.length}</dd><dt>Kundenkonten</dt><dd>${USERS.length}</dd><dt>Nächste Rechnung</dt><dd>${esc(naechsteBelegNr(s.invoicePrefix || 'RE-2026-', s.nextInvoice))}</dd><dt>Nächste Gutschrift</dt><dd>${esc(naechsteBelegNr(s.creditPrefix || 'GS-2026-', s.nextCredit))}</dd><dt>Produkte im Shop</dt><dd>${produktAn('eierbecher') ? 'Vasen, Eierbecher' : 'Vasen'}</dd>`;
