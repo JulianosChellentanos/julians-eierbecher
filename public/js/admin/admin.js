@@ -1201,15 +1201,16 @@ function renderCoupons() {
   // Spalte „mit Aktion kombinierbar“ (coupons[i].mitAktion, Vertrag „Aktionen“): ohne Haken lehnt der Server den Code ab, solange eine Aktion läuft
   $('#coupons-table').innerHTML = `<thead><tr><th>Code</th><th>Art</th><th>Wert</th><th>Mindestbestellwert (€)</th><th>Aktiv</th><th title="Gilt der Gutschein auch, während eine Aktion läuft? Ohne Haken wird er dann abgelehnt.">mit Aktion kombinierbar</th><th title="Optional: letzter Gültigkeitstag und Höchstzahl an Bestellungen, die den Code einlösen dürfen (leer = unbegrenzt). Nicht für Guthaben.">Gültig bis / max.</th><th></th></tr></thead><tbody>` +
     coupons.map((c, i) => {
-      // Guthaben (Gutschrift aus einer Reklamation): Code, Art und Wert stehen so auf dem Beleg — nur aktiv/Mindestwert/Aktion änderbar
+      // Guthaben (Gutschrift aus einer Reklamation): Code, Art und Wert stehen so auf dem Beleg; es gilt immer ohne Mindestbestellwert
+      // und auch während einer Aktion (der Server erzwingt das, gutscheineAus) — änderbar ist nur „aktiv“
       const fest = c.guthaben ? ` readonly title="Guthaben aus einer Gutschrift — Code, Art und Wert stehen so auf dem Beleg"` : '';
       return `<tr>
       <td data-l="Code"><input type="text" value="${esc(c.code)}" onchange="coupons[${i}].code=this.value.toUpperCase()" style="width:140px;text-transform:uppercase"${fest}></td>
       <td data-l="Art"><select onchange="coupons[${i}].type=this.value"${c.guthaben ? ' disabled title="Guthaben: immer € Betrag"' : ''}><option value="percent" ${c.type === 'percent' ? 'selected' : ''}>% Rabatt</option><option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>€ Betrag</option></select></td>
       <td data-l="Wert"><input type="number" min="0" value="${c.value}" onchange="coupons[${i}].value=+this.value"${fest}>${couponRestHTML(c)}</td>
-      <td data-l="Mindestwert"><input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value"></td>
+      <td data-l="Mindestwert">${c.guthaben ? '<span class="muted" title="Guthaben gilt ohne Mindestbestellwert">—</span>' : `<input type="number" min="0" value="${c.minOrder || 0}" onchange="coupons[${i}].minOrder=+this.value">`}</td>
       <td data-l="Aktiv" style="text-align:center"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="coupons[${i}].active=this.checked"></td>
-      <td data-l="mit Aktion" style="text-align:center"><input type="checkbox" ${c.mitAktion ? 'checked' : ''} onchange="coupons[${i}].mitAktion=this.checked" title="Mit laufender Aktion kombinierbar"></td>
+      <td data-l="mit Aktion" style="text-align:center">${c.guthaben ? '<input type="checkbox" checked disabled title="Guthaben gilt immer, auch während einer Aktion">' : `<input type="checkbox" ${c.mitAktion ? 'checked' : ''} onchange="coupons[${i}].mitAktion=this.checked" title="Mit laufender Aktion kombinierbar">`}</td>
       <td data-l="Grenzen">${c.guthaben ? '<span class="muted" title="Guthaben ist Geld der Kundschaft – ohne Ablauf und Mindestbestellwert">—</span>' : `<input type="date" value="${/^\d{4}-\d{2}-\d{2}$/.test(c.gueltigBis || '') ? c.gueltigBis : ''}" onchange="coupons[${i}].gueltigBis=this.value||null" title="letzter Gültigkeitstag (leer = unbegrenzt)" style="width:112px;padding:7px 6px;font-size:.8rem;display:block;margin-bottom:4px"><input type="number" min="1" step="1" value="${Number(c.maxEinloesungen) > 0 ? Number(c.maxEinloesungen) : ''}" placeholder="max. ∞" onchange="coupons[${i}].maxEinloesungen=this.value===''?null:Math.round(+this.value)" title="höchstens so viele Bestellungen (leer = unbegrenzt)" style="width:90px">`}</td>
       <td><button class="ghost mini" onclick="delCoupon(${i})">🗑</button></td>
     </tr>`;

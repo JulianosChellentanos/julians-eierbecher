@@ -1571,9 +1571,10 @@ const isGuthaben = (c) => !!c?.guthaben && c.type === 'fixed';
  * Gutschein-Liste aus dem Admin übernehmen, ohne Guthaben zu verlieren: Guthaben-Codes (guthaben: true) legt nur der Server an
  * (Reklamation „gutschein“ erledigen). Ein Admin-Tab, der vor der Gutschrift geladen wurde, kennt den neuen Code nicht — fehlt er
  * im Patch, bleibt er trotzdem stehen. Löschen nur ausdrücklich über loeschen (Codes aus dem 🗑 des Admins).
- * Kommt ein Guthaben-Code im Patch vor, bleiben die vom Server gesetzten Felder (Code, Art, Wert, Notiz) — nur aktiv,
- * Mindestbestellwert und „mit Aktion“ kommen aus dem Admin. Ein Eintrag mit guthaben: true, den der Server nicht als Guthaben
- * kennt (umbenannt, veralteter Tab nach dem Löschen), wird verworfen — sonst entstünde neues Guthaben ohne Gutschrift.
+ * Kommt ein Guthaben-Code im Patch vor, bleiben die vom Server gesetzten Felder (Code, Art, Wert, Notiz) — aus dem Admin kommt nur
+ * „aktiv“ (Mindestbestellwert 0 und „mit Aktion“ erzwingt gutscheineAus; der Admin zeigt beides nicht änderbar). Ein Eintrag mit
+ * guthaben: true, den der Server nicht als Guthaben kennt (umbenannt, veralteter Tab nach dem Löschen), wird verworfen — sonst
+ * entstünde neues Guthaben ohne Gutschrift.
  */
 function mergeCoupons(alt, neu, loeschen) {
   const key = (x) => String(x ?? '').trim().toUpperCase();
