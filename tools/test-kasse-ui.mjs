@@ -8,11 +8,13 @@
 // „3MF, 2 Filamente“), Kassen-Meldungen je Feld (feld für die Markierung) und PLZ nach dem Liefergebiet (Browser- und Server-Wortlaut
 // gleich), Konto-Adresse (vollständig oder leer, PLZ), Bezugspreis der Aktionen (Rechnung/Mail = Kasse: pricing.js aus /api/pricing ⇔
 // gespeicherte aktionRef/ersparnisRef/prozentOk, auch nach einer früheren Aktion), ältere Bestellungen unverändert, Danke-Angaben aus
-// /complete (Betrag, Bankverbindung, Verwendungszweck; 0 €), Widerrufe im Konto, Texte/Attribute der Kasse in index.html.
+// /complete (Betrag, Bankverbindung, Verwendungszweck; 0 €), Widerrufe im Konto, Texte/Attribute der Kasse in index.html, verlorene
+// Antworten (GET /api/order/<ID>/stand nach einem Abschluss ohne Antwort; PayPal-Checkout mit derselben Zahlung → dieselbe offene
+// Bestellung). PayPal wird dabei nie angesprochen: Client-ID ohne Secret, die Zahlungen stehen vorab im Capture-Speicher.
 // Die Bedienung im Browser (Enter, PayPal-Auswahl, Meldungen statt alert) prüft ein Puppeteer-Lauf, siehe README „Kasse“.
 import { spawn } from 'node:child_process';
 import net from 'node:net';
-import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as P from '../public/js/pricing.js';
@@ -73,10 +75,12 @@ async function bestelle(items, { couponCode = null, kunde = {}, headers = {} } =
   return { orderId, accessKey, complete: complete.json };
 }
 
-async function start() {
-  rmSync(TMP, { recursive: true, force: true });
-  mkdirSync(DATA, { recursive: true }); mkdirSync(ORDERS, { recursive: true });
-  writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify({ adminKey: ADMIN }));
+async function start(frisch = true) {
+  if (frisch) {
+    rmSync(TMP, { recursive: true, force: true });
+    mkdirSync(DATA, { recursive: true }); mkdirSync(ORDERS, { recursive: true });
+    writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify({ adminKey: ADMIN }));
+  }
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [path.join(ROOT, 'server.js')], { cwd: ROOT, env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS, TRUST_PROXY: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -241,6 +245,50 @@ try {
   const cartJs = readFileSync(path.join(ROOT, 'public', 'js', 'cart.js'), 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
   check(!/\balert\(/.test(cartJs.replace(/if \(text\) alert\(text\)/, '')) && /addEventListener\('keydown'/.test(cartJs) && /pay-paypal'\)\?\.checked\) return/.test(cartJs),
     'cart.js: kein alert() (außer Rückfall ohne Meldezeile), Enter abgefangen, kein Absenden bei PayPal');
+  check(/knopf\.addEventListener\('pointerdown'/.test(cartJs) && /!direkt && Date\.now\(\) - enterImFeld < 1000\) return kassenMeldung\(/.test(cartJs),
+    'cart.js: Sperre nach Enter gilt nicht für einen echten Klick auf den Bestellknopf und meldet sich sonst');
+  check(/\/stand`/.test(cartJs) && /offeneKasse\?\.paypalOrderId\) return submitOrder\('paypal'/.test(cartJs),
+    'cart.js: nach verlorenem Abschluss erst nachfragen (…/stand), bezahlte PayPal-Kasse auch über den Bestellknopf fortsetzen');
+
+  console.log('8) Verlorene Antworten: Stand einer offenen Kasse, PayPal-Checkout mit derselben Zahlung');
+  const it8 = [V(1, { pattern: 'wellen' })];
+  const q8 = await quote(it8);
+  const st8 = (id, key) => req('GET', `/api/order/${id}/stand`, undefined, key ? { 'x-order-key': key } : {});
+  const o8 = (await kasse(it8, { expectedTotal: q8.total })).json;
+  const vorStand = readFileSync(path.join(ORDERS, o8.orderId, 'order.json'), 'utf8');
+  let s8 = await st8(o8.orderId, o8.accessKey);
+  check(s8.status === 200 && s8.json?.abgeschlossen === false && s8.json?.storniert === false, 'Stand einer offenen Kasse: abgeschlossen false', s8.json);
+  check(readFileSync(path.join(ORDERS, o8.orderId, 'order.json'), 'utf8') === vorStand, 'Stand-Abfrage ändert die Bestellung nicht');
+  check((await st8(o8.orderId)).status === 404 && (await st8(o8.orderId, 'falsch')).status === 404 && (await st8('FS-000000-0000', 'x')).status === 404, 'Stand ohne/mit falschem Schlüssel bzw. unbekannte Nummer → 404');
+  await req('PUT', `/api/order/${o8.orderId}/stl/0`, stl(), { 'x-order-key': o8.accessKey });
+  await req('POST', `/api/order/${o8.orderId}/complete`, {}, { 'x-order-key': o8.accessKey });
+  s8 = await st8(o8.orderId, o8.accessKey);
+  check(s8.status === 200 && s8.json?.abgeschlossen === true, 'Stand nach dem Abschluss: abgeschlossen true', s8.json);
+  // PayPal „an“ ohne Secret (der Server kann PayPal nie erreichen) und zwei eingezogene Zahlungen im Capture-Speicher → Neustart
+  check((await setze({ paypal: { enabled: true, sandbox: true, clientId: 'test-ohne-verbindung' } })).status === 200, 'PayPal mit Client-ID ohne Secret eingeschaltet');
+  const exit = new Promise((r) => child.once('exit', r)); child.kill(); await exit;
+  const PP1 = 'PPTESTWIEDER00001', PP2 = 'PPTESTWIEDER00002';
+  const cap = { amount: q8.total.toFixed(2), currency: 'EUR', capturedAt: new Date().toISOString(), usedBy: null };
+  writeFileSync(path.join(DATA, 'paypal-captures.json'), JSON.stringify({ [PP1]: cap, [PP2]: cap }));
+  serverLog = await start(false);
+  const pp = (id, kunde = {}) => req('POST', '/api/checkout', { customer: { ...KUNDE, email: 'paypal@example.test', ...kunde }, items: it8, payment: 'paypal', paypalOrderId: id, couponCode: null, beschaffenheit: true, mitSchluessel: true, kasseStand: 2, expectedTotal: q8.total });
+  const p1 = await pp(PP1);
+  check(p1.status === 200 && p1.json?.ok && !p1.json.wiederholt, 'PayPal-Checkout: Bestellung angelegt', p1.json);
+  const p2 = await pp(PP1, { note: 'später geändert' });
+  check(p2.status === 200 && p2.json?.orderId === p1.json.orderId && p2.json?.accessKey === p1.json.accessKey && p2.json?.wiederholt === true && near(p2.json?.total, p1.json.total),
+    'Antwort verloren, dieselbe Zahlung noch einmal → dieselbe offene Bestellung (Schlüssel, Betrag)', p2.json);
+  check(lies(p1.json.orderId).customer.note === '', 'die Wiederholung ändert die Bestellung nicht (Anmerkung wie beim ersten Mal)');
+  const p3 = await pp(PP1, { email: 'jemand.anderes@example.test' });
+  check(p3.status === 400 && /bereits einer Bestellung zugeordnet/.test(p3.json?.error || '') && !p3.json?.orderId, 'andere E-Mail-Adresse → 400, keine Bestellnummer', p3.json);
+  await req('PUT', `/api/order/${p1.json.orderId}/stl/0`, stl(), { 'x-order-key': p1.json.accessKey });
+  const c8 = await req('POST', `/api/order/${p1.json.orderId}/complete`, {}, { 'x-order-key': p1.json.accessKey });
+  check(c8.json?.ok && lies(p1.json.orderId).payment === 'paypal' && lies(p1.json.orderId).paymentStatus === 'bezahlt', 'PayPal-Bestellung abgeschlossen (bezahlt)', c8.json);
+  const p4 = await pp(PP1);
+  check(p4.status === 400 && !p4.json?.orderId, 'nach dem Abschluss: dieselbe Zahlung → 400 (nie eine zweite Bestellung)', p4.json);
+  const mitPP1 = readdirSync(ORDERS).filter((d) => existsSync(path.join(ORDERS, d, 'order.json')) && lies(d).paypalOrderId === PP1);
+  check(mitPP1.length === 1, 'genau eine Bestellung zur Zahlung', mitPP1);
+  const p5 = await pp(PP2);
+  check(p5.status === 200 && p5.json?.orderId && p5.json.orderId !== p1.json.orderId, 'zweite Zahlung → eigene Bestellung', p5.json);
 } catch (err) {
   fail++;
   console.log('  ✗ Abbruch:', err?.stack || err);
