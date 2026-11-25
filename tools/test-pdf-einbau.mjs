@@ -292,8 +292,32 @@ async function main() {
   const d = await bestellung({ name: `Erika${U(0x200e)} ${U(0x202e)}Muster${U(0x85)}frau`, items: [{ config: { text: `Für${U(0x200b)} Oma${U(0x91)} ${'x'.repeat(28)}` } }] });
   await warte(() => existsSync(datei(d.orderId, 'rechnung.pdf')));   // entsteht nach der Antwort (Hook der Bestätigung)
   const od = order(d.orderId);
-  check(d.complete.status === 200 && od.customer.name === 'Erika Muster frau' && od.lines[0].config.text === ('Für Oma  ' + 'x'.repeat(28)).slice(0, 30)
-    && existsSync(datei(d.orderId, 'rechnung.pdf')), 'Steuer-/Formatzeichen entfernt, Gravur auf 30 Zeichen, PDF entsteht', { name: od.customer.name, text: od.lines[0].config.text });
+  // Gravur: Steuer-/Formatzeichen fallen weg wie in der Druckdatei (keine Glyphe), gekürzt wird nicht (36 Zeichen > Kassenfeld 30)
+  check(d.complete.status === 200 && od.customer.name === 'Erika Muster frau' && od.lines[0].config.text === 'Für Oma ' + 'x'.repeat(28)
+    && existsSync(datei(d.orderId, 'rechnung.pdf')), 'Steuer-/Formatzeichen entfernt (Gravur wie gedruckt, nicht gekürzt), PDF entsteht', { name: od.customer.name, text: od.lines[0].config.text });
+  // Gravur aus einer Liste (Design-Codes erlauben 40 Zeichen): Bestellung und Beleg tragen denselben Text wie die Druckdatei
+  const lang = 'Für Anna und Tom zur Hochzeit 2027';
+  const dc = await req('POST', '/api/design', { config: { ...VASE, text: lang } });
+  const li = await req('POST', '/api/list', { name: 'Hochzeit', items: [{ code: dc.json?.code, qty: 1 }] });
+  const lText = (await req('GET', `/api/list/${li.json?.code}`)).json?.list?.items?.[0]?.config?.text;
+  const g = await bestellung({ name: 'Hanna Hochzeit', items: [{ config: { text: lText } }] });
+  await warte(() => existsSync(datei(g.orderId, 'rechnung.pdf')));
+  check(lText === lang && order(g.orderId).lines[0].config.text === lang && readFileSync(datei(g.orderId, 'rechnung.html'), 'utf8').includes(`Gravur „${lang}“`) && existsSync(datei(g.orderId, 'rechnung.pdf')),
+    'Gravur mit 34 Zeichen aus einer Liste: Bestellung, Beleg und PDF ungekürzt', { liste: lText, bestellung: order(g.orderId).lines[0].config.text });
+  // nur unsichtbare Zeichen: keine Gravur — kein Aufpreis im Browser (pricing.js) und im Server, kein „Gravur“ auf dem Beleg
+  const P = await import(new URL('../public/js/pricing.js', import.meta.url));
+  P.setPricing((await req('GET', '/api/pricing')).json);
+  const unsichtbar = `${U(0x200b)}${U(0x200e)}${U(0x85)}`;
+  const mit = (text) => ({ product: 'vase', qty: 1, saucer: false, config: { ...VASE, text }, color: 'elfenbein', colorName: 'Elfenbein' });
+  const qLeer = (await req('POST', '/api/quote', { items: [mit('')] })).json?.total, qUns = (await req('POST', '/api/quote', { items: [mit(unsichtbar)] })).json?.total;
+  const qAnna = (await req('POST', '/api/quote', { items: [mit('Anna')] })).json?.total;
+  check(qUns === qLeer && qAnna > qLeer && P.unitParts(mit(unsichtbar)).gravur === 0 && P.unitParts(mit('Anna')).gravur > 0 && P.unitParts(mit(`An${U(0x200b)}na`)).gravur > 0,
+    'Gravur nur aus unsichtbaren Zeichen: kein Aufpreis (Server und pricing.js gleich)', { leer: qLeer, unsichtbar: qUns, anna: qAnna });
+  const h = await bestellung({ name: 'Zora Zwsp', items: [{ config: { text: unsichtbar } }] });
+  await warte(() => existsSync(datei(h.orderId, 'rechnung.pdf')));
+  const hHtml = readFileSync(datei(h.orderId, 'rechnung.html'), 'utf8');
+  check(order(h.orderId).lines[0].config.text === '' && order(h.orderId).lines[0].parts?.gravur === 0 && !/Gravur/.test(hHtml) && existsSync(datei(h.orderId, 'rechnung.pdf')),
+    'Bestellung mit unsichtbarer Gravur: ohne Gravur und ohne Gravur-Aufpreis, PDF entsteht', { text: order(h.orderId).lines[0].config.text, parts: order(h.orderId).lines[0].parts });
 
   console.log('\n— Platzhalter-Firmendaten (wie im Auslieferungszustand): Rechtstexte als HTML');
   await stop();

@@ -139,8 +139,11 @@ Antwort an die Kasse oder eine Mail auf. Im Protokoll steht nur Code, Codepunkt 
   Gleiche Druckfassung → dieselben Bytes (Zwischenspeicher je Hash, Datum = Stand der Rechtstexte).
 - **Unvollständige Firmendaten** (Inhaber fehlt, Anschrift unvollständig oder Platzhalter Musterstraße/00000/Musterstadt, keine
   gültige E-Mail): keine Rechtstext-PDF (`INCOMPLETE`), die Bestätigung bekommt AGB und Widerrufsbelehrung wie früher als HTML.
-- **Kundendaten** aus der Kasse ohne C0/C1-Steuerzeichen und unsichtbare Formatzeichen (Bidi-Marken, Null-Breiten-Zeichen …),
-  Gravur höchstens 30 Zeichen wie das Kassenfeld — so stehen auf Beleg und PDF nur sichtbare Zeichen.
+- **Kundendaten** aus der Kasse ohne C0/C1-Steuerzeichen und unsichtbare Formatzeichen (Bidi-Marken, Null-Breiten-Zeichen …) — so
+  stehen auf Beleg und PDF nur sichtbare Zeichen. Der Gravurtext verliert dieselben Zeichen, die auch die Druckdatei mangels Glyphe
+  weglässt, und wird nie gekürzt (die Prüfung lässt bis 40 Zeichen zu wie Design-Codes und Listen, das Kassenfeld hat 30): Beleg,
+  PDF und gedruckte Vase tragen denselben Text. Eine Gravur nur aus unsichtbaren Zeichen ist keine Gravur — kein Aufpreis
+  (`priceItem` und `pricing.js` gleich).
 - **Vorlage neuer Belege** (gespeicherte Belege bleiben, wie sie sind): Mengen und Beträge der Positionstabelle rechtsbündig,
   Tabellenkopf in `<thead>` (wiederholt sich auf Folgeseiten), Rücksendezeile darf umbrechen, geschützte Leerzeichen zwischen Zahl
   und Einheit („150 mm“, „19 %“, „14 Tagen“) sowie in Telefonnummer und IBAN. Auf dem Handy (bis 640 px, nur Bildschirm:

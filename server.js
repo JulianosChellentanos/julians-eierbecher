@@ -1761,6 +1761,12 @@ function discountFor(product, qty) {
   for (const t of tiers) if (qty >= t.qty && t.off > off) off = t.off;
   return off;
 }
+/**
+ * Gravurtext ohne Steuer- und Formatzeichen (Cc: C0/C1, Cf: Bidi-Marken, Null-Breiten-Zeichen …, dazu U+2028/2029): Die
+ * Druckdatei kennt für sie keine Glyphe und lässt sie weg (textrelief.js) — Preis (priceItem, wie pricing.js), Bestellung und
+ * Belege (positionSauber) sehen so genau den gedruckten Text; nur unsichtbare Zeichen = keine Gravur, kein Aufpreis
+ */
+const gravurSichtbar = (t) => String(t ?? '').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '');
 /** Gravur-Regel (Spiegel von public/js/pricing.js und geometry.js): Die Geometrie schaltet die Gravur ab,
  * sobald die WIRKSAME Mustertiefe über 2,5 mm (Vase) bzw. 2,0 mm (Eierbecher) liegt — dann darf
  * auch kein Gravur-Aufpreis berechnet werden. Wirksam = Wunschtiefe, begrenzt durch die
@@ -1805,7 +1811,7 @@ function priceItem(item, aktionen = aktiveAktionen()) {
   if (!p) throw new Error('Unbekanntes Produkt');
   const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
   const c = item.config || {};
-  const hasText = !!String(c.text || '').trim() && gravurAllowed(c, item.product);
+  const hasText = !!gravurSichtbar(c.text).trim() && gravurAllowed(c, item.product);
   const col = colorOfItem(item);
   const parts = {
     grund: euro(p.single),
@@ -3291,15 +3297,13 @@ function paypalPendingAufraeumen(now = Date.now()) {
  */
 const ohneFormatzeichen = (v) => String(v ?? '').replace(/\p{Cf}+/gu, '');
 /**
- * Gravurtext und Farbname einer Position für Bestellung und Belege: ohne C0/C1-Steuer- und Formatzeichen, Gravur höchstens
- * GRAVUR_MAX Zeichen wie das Kassenfeld (maxlength; ein Ersatzpaar wird nicht zerteilt). Die Druckdatei kommt vom Konfigurator,
- * der dieselbe Grenze hat — gekürzt wird also nur, was nicht aus dem Shop stammt.
+ * Gravurtext und Farbname einer Position für Bestellung und Belege. Gravur = gravurSichtbar: ohne Steuer- und Formatzeichen,
+ * die auch die Druckdatei weglässt, und nie gekürzt — die Länge begrenzt schon die Prüfung (lib/eingaben.js TEXT_MAX 40 wie
+ * Design-Codes und Listen; das Kassenfeld hat 30), Beleg und Druckdatei tragen so denselben Text. Farbname ohne Steuerzeichen.
  */
-const GRAVUR_MAX = 30;
 const positionsText = (v) => ohneFormatzeichen(v).replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ');
 function positionSauber(l) {
-  const config = l.config && typeof l.config.text === 'string'
-    ? { ...l.config, text: positionsText(l.config.text).slice(0, GRAVUR_MAX).replace(/[\ud800-\udbff]$/, '') } : l.config;
+  const config = l.config && typeof l.config.text === 'string' ? { ...l.config, text: gravurSichtbar(l.config.text) } : l.config;
   return { config, colorName: typeof l.colorName === 'string' ? positionsText(l.colorName).trim().slice(0, 80) : l.colorName };
 }
 /**
@@ -3821,7 +3825,7 @@ async function handleCheckout(req, res) {
     paypalOrderId: paypalCap ? ppId : null,
     customer,
     lines: totals.lines.map((l, i) => ({
-      // Gravur und Farbname ohne Steuer-/Formatzeichen, Gravur auf die Länge des Kassenfelds (positionSauber)
+      // Gravur und Farbname ohne Steuer-/Formatzeichen (positionSauber); stlFile unten nach dem Text, wie ihn der Browser hatte
       product: l.product, qty: l.qty, saucer: !!l.saucer, config: positionSauber(l).config,
       // Design-Code der Zeile (Warenkorb schickt ihn mit) — für Druckzettel, Admin, Rechnung und Nachbestellung; nur in Normalform
       code: typeof l.code === 'string' && /^[A-Z0-9]{4,20}$/.test(normalizeCode(l.code)) ? normalizeCode(l.code) : null,
