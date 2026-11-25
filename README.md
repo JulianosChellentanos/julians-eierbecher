@@ -582,8 +582,8 @@ immer geprüft), `/robots.txt` (dann `Disallow: /` mit `Cache-Control: max-age=3
 der Wartung nicht noch einen Tag lang behalten), Favicon, Logos, Schriften, Manifest und `sw.js`. Alles andere: Seiten →
 Wartungsseite (503, `Retry-After: 3600`), API → 503 bewusst ohne `Retry-After` (sonst warten `curl --retry` und Überwachungen
 eine Stunde, auch wenn die Wartung längst vorbei ist; JSON mit `code: 'wartung'`). Das Freigabe-Cookie bekommt beim Einschalten nur
-der Admin-Tab, der schaltet — ein zweiter, schon offener Admin-Tab speichert danach nichts mehr und meldet „Wartungsmodus ist an –
-dieser Tab ist dafür noch nicht freigeschaltet … Seite neu laden und das Zugangskennwort eingeben“. Pfade mit kodiertem Schrägstrich/Backslash oder `..` beantwortet das
+der Browser, der schaltet (das Cookie gilt für alle seine Tabs) — ein schon offener Admin auf einem anderen Gerät oder in einem anderen Browser speichert danach nichts mehr und meldet „Wartungsmodus ist an –
+dieser Browser ist dafür noch nicht freigeschaltet … Seite neu laden und das Zugangskennwort eingeben“. Pfade mit kodiertem Schrägstrich/Backslash oder `..` beantwortet das
 Tor mit 400; das Ziel nach dem Kennwort ist immer ein Pfad dieser Seite (keine Steuer-/Leerzeichen, gleicher Host, auch
 nach dem Auflösen von Punktsegmenten kein `//host`).
 Schalten im Admin unter System oder auf dem Server (Shop-Server vorher stoppen, danach starten):

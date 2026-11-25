@@ -146,11 +146,11 @@ const KEINE_VERBINDUNG = 'Keine Verbindung zum Server';
 /** Meldung für eine Antwort ohne JSON (z. B. nginx-Fehlerseite) — schreibt = die Anfrage sollte etwas ändern */
 const serverFehler = (status, schreibt) => `${status >= 502 && status <= 504 ? 'Server gerade nicht erreichbar' : 'Serverantwort ungültig'} (${status})${schreibt ? ' – nichts gespeichert' : ''}`;
 /**
- * 503 vom Wartungstor (Kopfzeile X-Formsam-Wartung, code 'wartung'): Die Wartung wurde eingeschaltet, während dieser Tab offen war, und
- * er hat noch kein Freigabe-Cookie (das bekommt nur der Tab, der sie einschaltet). Statt des Kundentexts sagen, was zu tun ist.
+ * 503 vom Wartungstor (Kopfzeile X-Formsam-Wartung, code 'wartung'): Die Wartung wurde eingeschaltet, während diese Seite offen war, und
+ * dieser Browser hat noch kein Freigabe-Cookie (das bekommt nur der Browser, der sie einschaltet). Statt des Kundentexts sagen, was zu tun ist.
  */
 const istWartung = (r, j) => r.status === 503 && (r.headers.get('x-formsam-wartung') === '1' || j?.code === 'wartung');
-const wartungFehler = (schreibt) => `Wartungsmodus ist an – dieser Tab ist dafür noch nicht freigeschaltet${schreibt ? ', nichts gespeichert' : ''}. Bitte die Seite neu laden und das Zugangskennwort eingeben${schreibt ? ' (Eingaben vorher kopieren)' : ''}.`;
+const wartungFehler = (schreibt) => `Wartungsmodus ist an – dieser Browser ist dafür noch nicht freigeschaltet${schreibt ? ', nichts gespeichert' : ''}. Bitte die Seite neu laden und das Zugangskennwort eingeben${schreibt ? ' (Eingaben vorher kopieren)' : ''}.`;
 async function api(path, opts = {}) {
   const schreibt = /^(POST|PUT|DELETE|PATCH)$/i.test(opts.method || 'GET');
   let r;
