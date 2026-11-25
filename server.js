@@ -1234,6 +1234,17 @@ function readBody(req, limit = MAX_JSON) {
     req.on('error', reject);
   });
 }
+/**
+ * Schutz-Kopfzeilen für jede Antwort (vor writeHead gesetzt; Routen mit eigenen Werten überschreiben sie, z. B. Belege mit
+ * Referrer-Policy no-referrer). Bewusst ohne script-src: Shop und Admin nutzen Inline-Skripte, Inline-Handler und Worker —
+ * eine Skript-Richtlinie bräuchte erst deren Umbau. HSTS setzt nginx (nur über HTTPS sinnvoll, deploy/nginx-formsam.conf).
+ */
+function schutzKopfzeilen(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
+}
 /** Datumsstempel YYMMDD (UTC) für Bestell- und Widerrufsnummern */
 const stampYYMMDD = (d = new Date()) => d.toISOString().slice(2, 10).replace(/-/g, '');
 // Bestellnummern: neu „FS-YYMMDD-XXXXXX“; ältere Bestellungen tragen „OV-…“ und bleiben gültig (Routen/Prüfungen akzeptieren beide)
@@ -2347,6 +2358,38 @@ function sendBelegFehler(res, code) {
   res.end(html);
 }
 
+/**
+ * Unbekannte Adresse: API → JSON, Seitenaufrufe (Accept text/html bzw. Pfad ohne Endung) → kleine Seite im formsam-Look mit Weg
+ * zurück in den Shop, alles andere (Bilder, Skripte …) → kurzer Text. Rechtsseiten in anderer Schreibweise (/Impressum,
+ * /impressum.html) → 301 auf die richtige Adresse. Status bleibt 404.
+ */
+function sendNichtGefunden(req, res, p, url) {
+  if (p.startsWith('/api/')) return send(res, 404, { ok: false, error: 'Unbekannte Schnittstelle' });
+  const slug = p.length < 40 ? p.slice(1).toLowerCase().replace(/\/+$/, '').replace(/\.html?$/, '') : '';
+  if (LEGAL_ROUTES.includes(slug) && (req.method === 'GET' || req.method === 'HEAD')) {
+    res.writeHead(301, { Location: `/${slug}${url.search}`, 'Cache-Control': 'no-cache' });
+    return res.end();
+  }
+  const seite = /text\/html/.test(String(req.headers.accept || '').slice(0, 500)) || !path.extname(p);
+  if (!seite) return send(res, 404, 'Nicht gefunden', 'text/plain; charset=utf-8');
+  const html = `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Seite nicht gefunden · ${BRAND}</title>
+  <style>@font-face{font-family:'Fraunces';src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:400 700;font-display:swap}
+  @font-face{font-family:'Inter';src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
+  body{margin:0;background:#f4efe7;color:#211d18;font:16px/1.6 Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+  main{max-width:560px;margin:48px auto 24px;padding:32px 28px;background:#fbf8f2;border-radius:18px;box-shadow:0 14px 36px rgba(33,29,24,.08)}
+  .logo{display:block;height:34px;width:auto;margin-bottom:24px}.wortmarke{font-family:Fraunces,Georgia,serif;font-size:30px}
+  h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:26px;line-height:1.2;margin:0 0 12px}a{color:#9e4f2c}
+  .knopf{display:inline-block;margin-top:8px;padding:10px 22px;border-radius:999px;background:#211d18;color:#f4efe7;text-decoration:none}
+  footer{max-width:560px;margin:0 auto 40px;padding:0 28px;font-size:14px;color:#6b6157}footer a{color:inherit}
+  @media (max-width:600px){main{margin:16px;padding:24px 20px}footer{padding:0 20px}}</style></head><body><main>
+  <a href="/" aria-label="Zur Startseite">${logoHTML(34)}</a><h1>Diese Seite gibt es nicht</h1>
+  <p>Unter dieser Adresse ist nichts zu finden – vielleicht ein Tippfehler oder ein veralteter Link.</p>
+  <p><a class="knopf" href="/">Zum Shop</a></p></main>
+  <footer><a href="/impressum">Impressum</a> · <a href="/datenschutz">Datenschutz</a> · <a href="/agb">AGB</a> · <a href="/widerruf">Widerruf</a></footer></body></html>`;
+  res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+  res.end(req.method === 'HEAD' ? undefined : html);
+}
+
 // ---------------------------------------------------------------------------
 // Bestellungen
 // ---------------------------------------------------------------------------
@@ -2500,15 +2543,11 @@ async function handleComplete(req, res, id, url) {
   await runHook('orderCompleted', order);
 }
 
-// ---------------------------------------------------------------------------
-// Admin-Seite (Login clientseitig, API mit x-admin-key)
-// ---------------------------------------------------------------------------
-function adminHTML() {
-  return readFileSync(path.join(PUBLIC, 'admin.html'), 'utf8');
-}
+// Admin-Seite: /admin liefert public/admin.html wie eine statische Datei (Login clientseitig, API mit x-admin-key)
 
 // ---------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
+  schutzKopfzeilen(res);
   // URL-Parsen/Dekodieren geschützt: kaputte Prozentkodierung oder ein ungültiger Host-Header dürfen den
   // Prozess nicht beenden (400 statt unbehandelter Ausnahme). Der Host wird nirgends ausgewertet → feste Basis.
   let url, p;
@@ -2518,6 +2557,8 @@ const server = http.createServer(async (req, res) => {
   } catch {
     return send(res, 400, { ok: false, error: 'Ungültige URL' });
   }
+  // API-Antworten (Konto, Bestellungen, Admin) nie zwischenspeichern — Routen mit eigenem Cache-Control (Vorschaubilder) überschreiben es
+  if (p.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
 
   try {
     // --- Wartungsmodus: ohne Freigabe nur die Wartungsseite
@@ -3457,7 +3498,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': MIME['.ico'], 'Cache-Control': 'public, max-age=86400' });
       return createReadStream(ico).pipe(res);
     }
-    if (p === '/admin' || p === '/admin/') return send(res, 200, adminHTML(), 'text/html; charset=utf-8');
+    if (p === '/admin' || p === '/admin/') p = '/admin.html';   // wie /admin.html ausliefern (gzip, ETag)
 
     if (p.startsWith('/orders/')) {
       // Nur Rechnung/Gutschrift (Links in Mails/Konto) und Modelldateien — order.json mit Kundendaten, interner Notiz und
@@ -3484,28 +3525,33 @@ const server = http.createServer(async (req, res) => {
       return createReadStream(file).pipe(res);
     }
 
-    // Statische Dateien — mit Browser-Cache & gzip für Text-Assets
+    // Statische Dateien — mit Browser-Cache & gzip für Text-Assets. Pfade mit „..“ (auch %2e%2e/%2f) gar nicht erst auflösen;
+    // die Datei muss IN public/ liegen (mit Trenner geprüft — ein Nachbarordner wie public-alt/ ist kein Unterordner)
+    if (p.includes('\0') || p.split(/[/\\]/).includes('..')) return send(res, 400, { ok: false, error: 'Ungültige URL' });
     let file = path.normalize(path.join(PUBLIC, p === '/' ? 'index.html' : p));
-    if (!file.startsWith(PUBLIC)) return send(res, 403, { ok: false, error: 'Verboten' });
+    if (file !== PUBLIC && !file.startsWith(PUBLIC + path.sep)) return send(res, 403, { ok: false, error: 'Verboten' });
     if (existsSync(file) && statSync(file).isDirectory()) file = path.join(file, 'index.html');
-    if (!existsSync(file)) return send(res, 404, 'Nicht gefunden', 'text/plain; charset=utf-8');
+    if (!existsSync(file) || !statSync(file).isFile()) return sendNichtGefunden(req, res, p, url);
     const ext = path.extname(file);
     const stat = statSync(file);
     const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
     // vendor/fonts/env ändern sich praktisch nie → lange cachen;
-    // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe)
+    // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe, gzip-Fassung mit eigenem ETag)
     const isAsset = p.startsWith('/vendor/') || p.startsWith('/fonts/') || p.startsWith('/env/') || p.startsWith('/img/gallery/');
     headers['Cache-Control'] = isAsset ? 'public, max-age=2592000, immutable' : 'no-cache';
-    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    const compressible = ['.html', '.css', '.js', '.json', '.svg'].includes(ext);
+    const gz = compressible && /\bgzip\b/.test(String(req.headers['accept-encoding'] || '').slice(0, 500)) && stat.size > 1024;
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}${gz ? '-gz' : ''}"`;
     headers.ETag = etag;
-    if (req.headers['if-none-match'] === etag) {
+    if (compressible) headers.Vary = 'Accept-Encoding';
+    // If-None-Match tolerant: Liste, schwache ETags (W/ — z. B. von einem Proxy, der selbst komprimiert) und *
+    const inm = String(req.headers['if-none-match'] || '').slice(0, 2000);
+    if (inm && inm.split(',').some((t) => { const v = t.trim(); return v === '*' || v.replace(/^W\//, '') === etag; })) {
       res.writeHead(304, headers);
       return res.end();
     }
-    const compressible = ['.html', '.css', '.js', '.json', '.svg'].includes(ext);
-    if (compressible && /\bgzip\b/.test(req.headers['accept-encoding'] || '') && stat.size > 1024) {
+    if (gz) {
       headers['Content-Encoding'] = 'gzip';
-      headers.Vary = 'Accept-Encoding';
       res.writeHead(200, headers);
       return createReadStream(file).pipe(createGzip({ level: zc.Z_BEST_SPEED })).pipe(res);
     }
