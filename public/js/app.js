@@ -19,7 +19,7 @@ import {
   setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge, eierbecherAktiv, fillShopInfo,
 } from './cart.js';
 import { produktAktiv, EIERBECHER_HINWEIS } from './produkte.js';
-import { initDesignCodes, loadFromURL, saveDesign, uploadThumb, formatCode } from './designcode.js';
+import { initDesignCodes, loadFromURL, loadDesign, saveDesign, uploadThumb, formatCode, normalizeCode, stripURLParam } from './designcode.js';
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
 import { activateTab, initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
@@ -871,48 +871,94 @@ const rebuildTextSoon = () => rebuildBodySoon();
 // ---------------------------------------------------------------------------
 // Entwurf sichern: die aktuelle Gestaltung liegt laufend im Browser (localStorage „ovju-entwurf“, nur auf diesem Gerät) und kommt beim
 // nächsten Aufruf zurück — Handys verwerfen schwere Tabs gern im Hintergrund (App-Wechsel), dazu Neuladen oder versehentliches Zurück.
-// Ein Design-Code in der Adresse (?d=/#d=) hat Vorrang. Wiederhergestellt wird über applyDesign (dieselbe Prüfung und Klemmung wie bei
-// Design-Codes), ein unlesbarer oder veralteter Stand wird ignoriert. Dazu „Zurücksetzen“ (Panel-Kopf, mobil ↺ in der Bühne).
+// Wiederhergestellt wird über applyDesign (dieselbe Prüfung und Klemmung wie bei Design-Codes); ein unlesbarer oder abgelaufener Stand
+// (ENTWURF_TAGE ohne Änderung) wird gelöscht, nach einer Bestellung ebenso. Dazu „Zurücksetzen“ (Panel-Kopf, im Touch-Layout am Panel-Ende).
+// Design-Codes (Link ?d=/#d=, Code-Eingabe): Ein Code in der Adresse hat Vorrang. Solange das geladene Design unverändert ist, wird nichts
+// gesichert (ein eigener Entwurf bleibt erhalten, der Hinweis bietet ihn an); beim ersten Weitergestalten verschwindet der Code aus der
+// Adresse — sie zeigt dieses Design nicht mehr, Neuladen/Tab-Verwurf bringt den Entwurf. Der Entwurf merkt sich, aus welchem Code er
+// entstand (von): Öffnet man denselben Link erneut, kommt der Entwurf mit „Original-Design laden“.
 // ---------------------------------------------------------------------------
-const ENTWURF_KEY = 'ovju-entwurf', ENTWURF_TAGE = 90;
+const ENTWURF_KEY = 'ovju-entwurf', ENTWURF_TAGE = 30;
 let entwurfAn = false;    // erst nach dem Start — sonst überschriebe der Grundzustand den gesicherten Entwurf
 let startConfig = null;   // Grundzustand beim Laden (Ziel von „Zurücksetzen“/„Neu beginnen“)
 let hinweisStand = null, hinweisAktion = null;
+let codeStand = null;     // gerade aus einem Code geladen: { code, sig } (sig = Stand nach dem Laden, beim ersten Sichern ermittelt)
+let entwurfVon = null;    // Code, aus dem der aktuelle Entwurf weitergestaltet wurde
+let bestelltSig = null;   // Stand bei der letzten Bestellung (danach erst wieder sichern, wenn sich etwas ändert)
 /** Was ein Entwurf festhält: das Design wie ein Design-Code, aber mit dem getippten Gravurtext (auch wenn eine Regel ihn gerade sperrt) */
 const entwurfDaten = () => ({ ...designConfig(), text: state.text, textColor: state.textColor });
 const ENTWURF_FELDER = ['product', 'preset', 'height', 'width', 'rim', 'pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves', 'text', 'textSize', 'textPos', 'textStyle', 'font', 'textColor', 'color', 'customPoints', 'saucer'];
 const entwurfSig = (c) => JSON.stringify(ENTWURF_FELDER.map((k) => (c?.[k] ?? null)));
+const entwurfLoeschen = () => { try { localStorage.removeItem(ENTWURF_KEY); } catch { /* gesperrt – egal */ } };
 const entwurfMerkenJetzt = debounce(() => {
   if (!entwurfAn) return;
-  const d = entwurfDaten();
-  if (hinweisStand && entwurfSig(d) !== hinweisStand) versteckeEntwurfHinweis(); // weitergestaltet → Hinweis hat sich erledigt
-  try { localStorage.setItem(ENTWURF_KEY, JSON.stringify({ v: 1, t: Date.now(), cfg: d })); } catch { /* privater Modus, Speicher voll – egal */ }
+  const d = entwurfDaten(), sig = entwurfSig(d);
+  if (hinweisStand && sig !== hinweisStand) versteckeEntwurfHinweis(); // weitergestaltet → Hinweis hat sich erledigt
+  if (codeStand) {
+    if (codeStand.sig === null) codeStand.sig = sig;   // Stand direkt nach dem Laden (inkl. Klemmungen)
+    if (sig === codeStand.sig) return;                 // Code-Design unverändert: nichts sichern
+    entwurfVon = codeStand.code; codeStand = null;
+    stripURLParam('d');                                // weitergestaltet: die Adresse zeigt dieses Design nicht mehr
+  }
+  if (sig === bestelltSig) return;                     // gerade bestellt, seitdem nichts geändert
+  bestelltSig = null;
+  if (startConfig && sig === entwurfSig(startConfig)) { entwurfLoeschen(); return; } // Grundzustand: nichts Eigenes zu sichern
+  try { localStorage.setItem(ENTWURF_KEY, JSON.stringify({ v: 1, t: Date.now(), cfg: d, ...(entwurfVon ? { von: entwurfVon } : {}) })); } catch { /* privater Modus, Speicher voll – egal */ }
 }, 600);
 function entwurfMerken() { if (entwurfAn) entwurfMerkenJetzt(); }
+/** Gesicherter Entwurf { cfg, von } oder null — ein unlesbarer oder abgelaufener Stand wird dabei gelöscht */
 function entwurfLesen() {
-  try {
-    const d = JSON.parse(localStorage.getItem(ENTWURF_KEY) || 'null');
-    if (!d || d.v !== 1 || !d.cfg || typeof d.cfg !== 'object' || Array.isArray(d.cfg) || !(Date.now() - (+d.t || 0) < ENTWURF_TAGE * 864e5)) return null;
-    return d.cfg;
-  } catch { return null; }
+  let d;
+  try { d = JSON.parse(localStorage.getItem(ENTWURF_KEY) || 'null'); } catch { d = undefined; }
+  if (d === null) return null;
+  if (!d || d.v !== 1 || !d.cfg || typeof d.cfg !== 'object' || Array.isArray(d.cfg) || !(Date.now() - (+d.t || 0) < ENTWURF_TAGE * 864e5)) { entwurfLoeschen(); return null; }
+  return { cfg: d.cfg, von: typeof d.von === 'string' ? d.von : null };
 }
-/** Beim Start: gesicherten Entwurf laden (nur wenn er vom Grundzustand abweicht und das Produkt bestellbar ist) */
-function entwurfWiederherstellen() {
-  const cfg = entwurfLesen();
-  if (!cfg || entwurfSig(cfg) === entwurfSig(startConfig)) return;
-  if (!produktAktiv(cfg.product === 'eierbecher' ? 'eierbecher' : 'vase', getPricing())) return;
-  applyDesign(cfg, null, { still: true }).then((ok) => {
-    if (ok !== false) zeigeEntwurfHinweis('Dein letzter Entwurf ist wieder da.', 'Neu beginnen', () => zuruecksetzen('Neu begonnen.'));
+/** Code aus der Adresse (?d=/#d=), wie loadFromURL ihn liest */
+const adressCode = () => normalizeCode((location.search + location.hash).match(/[?&#]d=([A-Za-z0-9-]{4,40})/)?.[1] || '') || null;
+/**
+ * Beim Start: gesicherten Entwurf laden (nur wenn er vom Grundzustand abweicht und das Produkt bestellbar ist). Mit Code in der Adresse
+ * nur, wenn der Entwurf aus genau diesem Code weitergestaltet wurde — dann mit „Original-Design laden“. true = Entwurf statt Code geladen.
+ */
+function entwurfWiederherstellen(code) {
+  const e = entwurfLesen();
+  if (!e || entwurfSig(e.cfg) === entwurfSig(startConfig) || (code && e.von !== code)) return false;
+  if (!produktAktiv(e.cfg.product === 'eierbecher' ? 'eierbecher' : 'vase', getPricing())) return false;
+  if (code) stripURLParam('d'); // loadFromURL lädt den Code dann nicht mehr
+  applyDesign(e.cfg, null, { still: true, von: e.von }).then((ok) => {
+    if (ok === false) return;
+    if (code) zeigeEntwurfHinweis('Dein letzter Entwurf ist wieder da.', 'Original-Design laden', () => originalLaden(code));
+    else zeigeEntwurfHinweis('Dein letzter Entwurf ist wieder da.', 'Neu beginnen', () => zuruecksetzen('Neu begonnen.'));
   }).catch(() => {});
+  return true;
+}
+/** „Original-Design laden“: den Code laden und den daraus weitergestalteten Entwurf verwerfen (Rückgängig bringt ihn zurück) */
+async function originalLaden(code) {
+  const vorher = entwurfDaten(), vorherVon = entwurfVon;
+  try {
+    const d = await loadDesign(code);
+    if (await applyDesign(d.config, d.code, { still: true }) === false) return;
+    entwurfLoeschen();
+    history.replaceState(history.state, '', `${location.pathname}${location.search ? `${location.search}&` : '?'}d=${d.code}${location.hash}`);
+    zeigeEntwurfHinweis(`Design ${formatCode(d.code)} geladen.`, 'Rückgängig', () => { stripURLParam('d'); applyDesign(vorher, null, { still: true, von: vorherVon }); });
+  } catch (e) { showToast(`🔖 ${e.message}`, 5000); }
+}
+/** Nach dem Laden eines Codes (Link, Code-Eingabe): ein abweichender gesicherter Entwurf bleibt bis zum Weitergestalten — hier angeboten */
+function entwurfAnbieten() {
+  const e = entwurfLesen(), jetzt = entwurfSig(entwurfDaten());
+  if (!e || entwurfSig(e.cfg) === jetzt || entwurfSig(e.cfg) === entwurfSig(startConfig)) return;
+  if (!produktAktiv(e.cfg.product === 'eierbecher' ? 'eierbecher' : 'vase', getPricing())) return;
+  zeigeEntwurfHinweis('Dein vorheriger Entwurf ist noch gesichert.', 'Wieder laden', () => { stripURLParam('d'); applyDesign(e.cfg, null, { still: true, von: e.von }); });
 }
 /** Zurück zum Grundzustand (Form, Muster, Farbe, Gravur aus) — mit „Rückgängig“ im Hinweis */
 function zuruecksetzen(text = 'Alles auf Anfang gesetzt.') {
   if (!startConfig) return;
-  const vorher = entwurfDaten();
+  const vorher = entwurfDaten(), vorherVon = entwurfVon;
   customByProduct[startConfig.product] = null; // eigene Silhouette verwerfen (Rückgängig bringt sie über vorher.customPoints zurück)
+  stripURLParam('d');
   applyDesign(startConfig, null, { still: true }).then(() => {
     userInteracted = false; // neu einrahmen und wieder langsam drehen wie beim ersten Besuch
-    zeigeEntwurfHinweis(text, 'Rückgängig', () => applyDesign(vorher, null, { still: true }));
+    zeigeEntwurfHinweis(text, 'Rückgängig', () => applyDesign(vorher, null, { still: true, von: vorherVon }));
   });
 }
 function zeigeEntwurfHinweis(text, knopf, aktion) {
@@ -929,6 +975,10 @@ function versteckeEntwurfHinweis() {
 function initEntwurf() {
   $('#draft-note-btn')?.addEventListener('click', () => { const a = hinweisAktion; versteckeEntwurfHinweis(); a?.(); });
   $('#btn-reset')?.addEventListener('click', () => zuruecksetzen());
+  // Bestellung abgeschlossen (cart.js trägt die Bestellnummer in die Erfolgsmeldung ein): gesicherten Entwurf löschen — der offene
+  // Konfigurator behält das Design, gesichert wird erst wieder, wenn sich etwas ändert
+  const nr = $('#confirm-id');
+  if (nr) new MutationObserver(() => { if (nr.textContent.trim()) { entwurfLoeschen(); bestelltSig = entwurfSig(entwurfDaten()); } }).observe(nr, { childList: true, characterData: true, subtree: true });
 }
 
 /**
@@ -1523,6 +1573,9 @@ async function applyDesign(cfg, code, opts = {}) {
   $$('input[type=range]').forEach((el) => sliderFill(el));
   $('#i-text').value = state.text; $('#c-gravur').checked = !!state.text; $('#gravur-options').hidden = !state.text;
   $('#c-saucer').checked = state.saucer;
+  // Herkunft für den Entwurf: aus einem Code geladen → erst sichern, wenn weitergestaltet; sonst gilt die mitgegebene Herkunft (Entwurf)
+  if (code) codeStand = { code: normalizeCode(code), sig: null };
+  else { codeStand = null; entwurfVon = opts.von || null; }
   rebuild();
   reframeAt = reqSeq; // das geladene Design einrahmen, sobald es berechnet ist (auch wenn die Kamera schon bewegt wurde)
   if (!opts.still) showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Konfigurator bereit");
@@ -1746,9 +1799,12 @@ warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noc
   setProduct(START_PRODUCT);
   startConfig = entwurfDaten(); // Grundzustand (Ziel von „Zurücksetzen“)
   // Vor dem Start angeklickter Entwurf (Formenwelt/Karten) gewinnt — erst nach setProduct(), das sonst Form und Höhe zurücksetzte;
-  // sonst den gesicherten Entwurf zurückholen, außer ein Design-Code steht in der Adresse (loadFromURL lädt ihn weiter unten)
+  // sonst den gesicherten Entwurf zurückholen; ein Design-Code in der Adresse gewinnt (loadFromURL lädt ihn weiter unten), außer der
+  // Entwurf ist aus genau diesem Code weitergestaltet
+  const linkCode = adressCode();
+  let entwurfStattLink = false;
   if (pendingStudioDesign) { const cfg = pendingStudioDesign; pendingStudioDesign = null; onStudioDesign(cfg); }
-  else if (!/[?&#]d=/.test(location.search + location.hash)) entwurfWiederherstellen();
+  else entwurfStattLink = entwurfWiederherstellen(linkCode) && !!linkCode;
   entwurfAn = true;
   if (renderer) animate(); else zeigeOhne3D();
   initBuildIndicator();
@@ -1761,7 +1817,10 @@ warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noc
   initDesignCodes({
     getConfig: designConfig,
     // Abgelehntes Design (deaktiviertes Produkt) als Fehler melden → der Code-Dialog zeigt den Hinweis statt zu schließen
-    applyConfig: async (cfg, code) => { if (await applyDesign(cfg, code) === false) throw new Error(EIERBECHER_HINWEIS); },
+    applyConfig: async (cfg, code) => {
+      if (await applyDesign(cfg, code) === false) throw Object.assign(new Error(EIERBECHER_HINWEIS), { endgueltig: true });
+      entwurfAnbieten(); // eigener, abweichender Entwurf bleibt erhalten und wird angeboten
+    },
     getThumb: () => { zeichne(); return captureThumb(); },
     whenReady: modelReady,
     onListCode: (code) => openList(code),
@@ -1785,7 +1844,7 @@ warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noc
   });
   $('#cart-to-list')?.addEventListener('click', () => createListFromCart(getCart()).catch((e) => showToast(e.message)));
   // Direktlinks: ?d=CODE → Design laden, ?l=CODE → Liste öffnen
-  if (await loadFromURL()) $('#konfigurator').scrollIntoView();
+  if (await loadFromURL() || entwurfStattLink) $('#konfigurator').scrollIntoView();
   await loadListFromURL();
 
   // Steuer-Hook für automatisierte Tests/Renders (kein UI-Feature)
