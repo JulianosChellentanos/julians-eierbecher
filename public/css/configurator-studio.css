@@ -19,11 +19,12 @@
 
 /* Prüfung 11/2026 — Lesbarkeit und Erreichbarkeit; das abgenommene Erscheinungsbild bleibt sonst unverändert */
 /* Desktop: Preis und „In den Warenkorb“ immer im Panel sichtbar (vorher rutschten sie bei Muster, Gravur oder Größenzuschlag unter die
-   Panelkante). Der Preisbereich selbst bleibt unverändert im Fluss; solange sein Preis oder Kaufknopf außer Sicht ist, liegt unten im Panel
-   eine kompakte Leiste (#cta-mini: Preis, „zzgl. Versand“, In den Warenkorb, ≈ 70 px — die ganze Leiste haftend nahm bis zur Hälfte des
-   Panels ein). Anker 0 px hoch als letztes Kind (kein Platzbedarf, der negative Rand hebt den Flex-Abstand auf), bottom = −Panel-Padding,
-   damit die Leiste bündig an der Panelkante sitzt und nichts darunter durchscheint; scroll-padding-bottom (app.js) hält per Tastatur
-   angesteuerte Regler über ihr. */
+   Panelkante). Der Preisbereich selbst bleibt unverändert im Fluss; ist sein Kaufknopf nicht zu sehen (Regel: app.js initPanelCta), liegt
+   unten im Panel eine kompakte Leiste (#cta-mini: Preis, „zzgl. Versand“, In den Warenkorb, ≈ 70 px — die ganze Leiste haftend nahm bis zur
+   Hälfte des Panels ein). Solange sie anliegt, ist der Preisbereich ausgeblendet (.panel.cta-mini-an: kein halber oder doppelter Preis über
+   der Leiste; per Tastatur fokussiert erscheint er trotzdem). Anker 0 px hoch als letztes Kind (kein Platzbedarf, der negative Rand hebt
+   den Flex-Abstand auf), bottom = −Panel-Padding, damit die Leiste bündig an der Panelkante sitzt und nichts darunter durchscheint;
+   scroll-padding-bottom (app.js) hält per Tastatur angesteuerte Regler über ihr. */
 .cta-mini{display:none}
 @media(min-width:981px){.cta-mini{display:block;position:sticky;bottom:-24px;height:0;margin-top:-18px;z-index:3;pointer-events:none}
 .cta-mini-in{position:absolute;left:-28px;right:-28px;bottom:0;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 28px 13px;background:var(--card);border-top:1px solid var(--line);box-shadow:0 -12px 22px -18px #23311e40;opacity:0;transform:translateY(6px);transition:opacity .18s,transform .18s,visibility 0s .18s;visibility:hidden}
@@ -31,8 +32,12 @@
 .cta-mini-preis{display:flex;flex-direction:column;gap:2px;min-width:0}.cta-mini .price{font:450 24px/1.1 var(--serif);letter-spacing:-.8px}
 .cta-mini small{font-size:11px;color:var(--ink-soft)}.cta-mini small .price-unit{margin:0;font-size:inherit}.cta-mini small a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .cta-mini .btn-primary{background:#35452b;color:#f3f6e9;border-radius:7px;font-size:12px;padding:13px 22px;white-space:nowrap}
-.dark .cta-mini .btn-primary{background:#d0e2aa;color:#2b3722}}
+.dark .cta-mini .btn-primary{background:#d0e2aa;color:#2b3722}
+.panel .panel-cta{transition:opacity .18s}.panel.cta-mini-an .panel-cta{opacity:0;pointer-events:none}.panel.cta-mini-an .panel-cta:focus-within{opacity:1;pointer-events:auto}}
 @media(min-width:981px) and (max-width:1150px){.cta-mini{bottom:-20px}.cta-mini-in{left:-18px;right:-18px;padding-inline:18px}}
+/* Panel-Kopf: „↺ Zurücksetzen“ neben „↗ Design-Code“ statt als dritte Zeile — der Kopf bleibt so hoch wie abgenommen (zwei Zeilen) und
+   schiebt den Preisbereich nicht unter die Panelkante */
+@media(min-width:981px){.panel-head-btns{display:grid;grid-template-columns:auto auto;column-gap:14px;row-gap:1px;justify-items:end;align-items:center}.panel-head-btns #btn-random{grid-column:1/-1}}
 /* Waren- und Preisangaben (Produkthinweis, Mengenrabatt, Aufpreise, Hinweise unter dem Kaufknopf) mindestens 11 px statt 8–9 px */
 .panel .tiny{font-size:11px;line-height:1.55}
 .panel .note-box{font-size:11px;line-height:1.55}

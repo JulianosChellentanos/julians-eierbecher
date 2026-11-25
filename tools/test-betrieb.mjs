@@ -7,7 +7,7 @@
 //   • prod-update.sh in einer Attrappe (eigenes Git-Repo, Stubs für sudo, systemctl, curl, journalctl, install, sleep):
 //     Sicherung schlägt fehl → Abbruch; Update; --zurueck; Syntaxfehler → zurück ohne Neustart; Fehlstart → automatisch zurück;
 //     beschädigte Datendatei → Update und Rückweg brechen ab; Update mit dem alten Skript (ohne letztes-update) → --zurueck nennt
-//     den Stand laut git reflog, --pruefen trägt ihn nach; --zurueck <commit>
+//     den Stand laut git reflog, --pruefen trägt ihn nach; --zurueck <commit>; --pruefen meldet zu kleine nginx-Uploadgrenze und fehlendes HSTS
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, chmodSync, utimesSync, existsSync, cpSync } from 'node:fs';
 import path from 'node:path';
@@ -91,8 +91,12 @@ esac
   git(p, 'clone', '-q', '-b', 'main', path.join(T, 'origin.git'), 'app');
   writeFileSync(path.join(p, 'aktiv'), '');
   const kopf = () => git(path.join(p, 'app'), 'rev-parse', 'HEAD');
+  // nginx-Seite wie auf Prod nach certbot (Vorlage + 443/80-Blöcke); --pruefen meldet zu kleine Uploadgrenze und fehlendes HSTS
+  const nginxSeite = path.join(p, 'nginx-formsam');
+  schreib(nginxSeite, readFileSync(path.join(ROOT, 'deploy/nginx-formsam.conf'), 'utf8').replace('listen 80;', 'listen 443 ssl; # managed by Certbot')
+    + '\nserver {\n    listen 80;\n    server_name www.formsam.com formsam.com;\n    return 301 https://$host$request_uri; # managed by Certbot\n}\n');
   const lauf = (args = [], env = {}) => bash([path.join(ROOT, 'deploy/prod-update.sh'), ...args],
-    { PATH: `${st}:${process.env.PATH}`, APP: path.join(p, 'app'), BACKUP: path.join(p, 'backup'), ZUSTAND: path.join(p, 'letztes-update'), ...env });
+    { PATH: `${st}:${process.env.PATH}`, APP: path.join(p, 'app'), BACKUP: path.join(p, 'backup'), ZUSTAND: path.join(p, 'letztes-update'), NGINX_SITE: nginxSeite, ...env });
   const B = commit('B', '// Stand B\n');
   r = lauf([], { BACKUP_RC: '1' });
   check(r.status === 1 && kopf() === A && /Sicherung fehlgeschlagen/.test(r.stdout), 'Sicherung schlägt fehl → Abbruch, nichts geändert', r.stdout + r.stderr);
@@ -142,6 +146,22 @@ esac
   check(r.status === 0 && kopf() === E, '--zurueck <commit> → E', r.stdout + r.stderr);
   r = lauf(['--zurueck', 'gibtsnicht']);
   check(r.status === 1 && kopf() === E && /Unbekannter Stand/.test(r.stdout), '--zurueck mit unbekanntem Stand → Exit 1, nichts geändert', r.stdout + r.stderr);
+
+  // nginx-Seite: Uploadgrenze (≥ 200 MB) und HSTS — nur Hinweise, Exit bleibt 0
+  r = lauf(['--pruefen']);
+  check(r.status === 0 && !/nginx: Uploadgrenze|HSTS-Kopfzeile fehlt|nicht gefunden/.test(r.stdout), '--pruefen: nginx-Seite wie deploy/nginx-formsam.conf → kein nginx-Hinweis', r.stdout);
+  const seite = readFileSync(nginxSeite, 'utf8');
+  schreib(nginxSeite, seite.replace('client_max_body_size 200m;', 'client_max_body_size 100m;').replace(/^\s*add_header Strict-Transport-Security.*$/m, '    # add_header Strict-Transport-Security "max-age=31536000" always;'));
+  r = lauf(['--pruefen']);
+  check(r.status === 0 && /nginx: Uploadgrenze für Druckdateien unter 200 MB/.test(r.stdout) && /HSTS-Kopfzeile fehlt/.test(r.stdout), '--pruefen: client_max_body_size 100m und auskommentiertes HSTS → beide Hinweise', r.stdout);
+  schreib(nginxSeite, seite.replace('client_max_body_size 200m;', 'client_max_body_size 1g;'));
+  r = lauf(['--pruefen']);
+  check(r.status === 0 && !/nginx: Uploadgrenze/.test(r.stdout), '--pruefen: client_max_body_size 1g reicht', r.stdout);
+  schreib(nginxSeite, seite.replace(/^\s*client_max_body_size.*$/m, ''));
+  r = lauf(['--pruefen']);
+  check(r.status === 0 && /nginx: Uploadgrenze/.test(r.stdout), '--pruefen: ohne client_max_body_size (nginx-Standard 1 MB) → Hinweis', r.stdout);
+  r = lauf(['--pruefen'], { NGINX_SITE: path.join(p, 'gibtsnicht') });
+  check(r.status === 0 && /nginx-Seite .* nicht gefunden/.test(r.stdout), '--pruefen: nginx-Seite fehlt → Hinweis, Exit 0', r.stdout);
 } catch (e) {
   fail++; console.log('  ✗ Abbruch:', e?.stack || e);
 } finally {

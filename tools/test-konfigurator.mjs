@@ -161,6 +161,13 @@ const cs = lies('public/css/configurator-studio.css');
 check(!/\.panel-cta\{position:sticky/.test(cs) && /\.cta-mini\{display:block;position:sticky;bottom:-24px;height:0/.test(cs), 'Desktop: Preisbereich im Fluss, kompakte Leiste #cta-mini haftet unten (0 px hoch, bündig)');
 check(/<div class="cta-mini" id="cta-mini" aria-hidden="true" inert>[\s\S]*id="cta-mini-price"[\s\S]*id="cta-mini-ship"[\s\S]*id="cta-mini-order"[\s\S]*<\/div>\s*<\/aside>/.test(html), 'Leiste mit Preis, Versand-Hinweis und Kaufknopf als letztes Kind des Panels, ausgeblendet inert');
 check(/new IntersectionObserver\([\s\S]*\{ root: panel, threshold/.test(app) && /animateMoney\(\$\('#cta-mini-price'\)/.test(app) && /\$\('#cta-mini-ship'\)/.test(app), 'app.js: Leiste folgt der Sichtbarkeit von Preis/Kaufknopf und spiegelt Preis und Versand');
+// Leiste und Preisbereich nie übereinander: liegt sie an, ist der Preisbereich ausgeblendet; steht der Preis ganz und der Kaufknopf
+// mindestens zur Hälfte im Panel, bleibt sie weg (kein halber oder doppelter Preis, Abnahme-Optik bei 1440×900)
+const panelCta = app.slice(app.indexOf('function initPanelCta'), app.indexOf('function zeigeOhne3D'));
+check(/!\(kaufGanz \|\| \(preisGanz && kaufHalb\)\)/.test(panelCta) && /panel\.classList\.toggle\('cta-mini-an', an\)/.test(panelCta) && /threshold: \[0, 0\.5, 0\.98, 1\]/.test(panelCta)
+  && /\.panel\.cta-mini-an \.panel-cta\{opacity:0;pointer-events:none\}\.panel\.cta-mini-an \.panel-cta:focus-within\{opacity:1/.test(cs),
+'Leiste nur ohne sichtbaren Kaufknopf (Preis ganz + Knopf ≥ ½ → keine Leiste); liegt sie an, ist der Preisbereich ausgeblendet (fokussiert sichtbar)');
+check(/\.panel-head-btns\{display:grid;grid-template-columns:auto auto;[^}]*\}\.panel-head-btns #btn-random\{grid-column:1\/-1\}/.test(cs), 'Panel-Kopf zweizeilig: „Zurücksetzen“ neben „Design-Code“ (schiebt den Preisbereich nicht nach unten)');
 check(!/<script[^>]+mobile-home\.js/.test(html) && /await import\('\.\/mobile-home\.js'\)/.test(lies('public/js/studio.js')), 'mobile-home.js nur auf dem Handy (über studio.js)');
 check(!/loadFont\('helvetiker'\)\.catch/.test(lies('public/js/model-worker.js')), 'Gravurschriften nicht mehr beim Start im Worker');
 // Formenkarten: 700-px-Fassungen für srcset (Anzeige ≈ 400 CSS-px), jede deutlich kleiner als das Original

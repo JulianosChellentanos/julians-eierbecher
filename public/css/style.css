@@ -1265,6 +1265,7 @@ section[id] { scroll-margin-top: 72px; }
 #gravur-options.disabled .font-row, #gravur-options.disabled .style-row, #gravur-options.disabled .slider-row { opacity: 0.45; pointer-events: none; }
 #text-warn.err { color: #b3261e; font-weight: 600; }
 .dark #text-warn.err, .dark .err-msg, .dark #text-count.over, .dark .ls-delete { color: #ffb4ad; } /* Fehlerrot ist auf dunklem Grund unlesbar (2,1:1) → helles Rot (≥ 8:1) */
+.dark .ok-msg { color: #8fd19e !important; } /* Erfolgsgrün (Gutschein eingelöst, Design-Code) war auf dem dunklen Dialoggrund 2,7:1 → helles Grün wie .auth-info (≥ 6,5:1) */
 .font-chip:disabled, .style-chip:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* Farbschrift: zweite Farbreihe im Gravur-Tab */

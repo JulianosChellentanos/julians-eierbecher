@@ -1017,29 +1017,34 @@ function initBedienhilfen() {
 }
 
 /**
- * Desktop: kompakte Preisleiste unten im Panel (#cta-mini, configurator-studio.css), solange Preis oder „In den Warenkorb“ des
- * Preisbereichs nicht ganz im Panel zu sehen sind; ihr Knopf löst denselben Kauf aus. Ausgeblendet ist sie inert (kein Fokus, nicht
- * vorgelesen). scroll-padding-bottom hält per Tastatur angesteuerte Regler über ihr.
+ * Desktop: kompakte Preisleiste unten im Panel (#cta-mini, configurator-studio.css); ihr Knopf löst denselben Kauf aus.
+ * Sie erscheint, wenn „In den Warenkorb“ des Preisbereichs nicht ganz zu sehen ist — außer Preis und mindestens die halbe Höhe des
+ * Kaufknopfs (samt Aufschrift) stehen schon im Panel: Dann bleibt der Preisbereich wie abgenommen stehen, unten nur leicht
+ * angeschnitten. Liegt die Leiste an, blendet das Panel (Klasse cta-mini-an) den Preisbereich aus — so steht nie ein halber Preis über
+ * der Leiste oder derselbe Preis zweimal untereinander. Ausgeblendet ist die Leiste inert (kein Fokus, nicht vorgelesen);
+ * scroll-padding-bottom hält per Tastatur angesteuerte Regler und Knöpfe über ihr.
  */
 function initPanelCta() {
   const panel = $('#konfigurator .panel'), mini = $('#cta-mini'), preis = $('#price'), kauf = $('#btn-order');
   if (!panel || !mini || !preis || !kauf) return;
   $('#cta-mini-order')?.addEventListener('click', () => kauf.click());
   const desk = matchMedia('(min-width: 981px)');
-  const sichtbar = new Map([[preis, false], [kauf, false]]);
+  const anteil = new Map([[preis, 0], [kauf, 0]]);   // sichtbarer Anteil im Panel (0–1)
   const setze = () => {
-    const an = desk.matches && [...sichtbar.values()].includes(false);
+    const kaufGanz = anteil.get(kauf) > 0.98, kaufHalb = anteil.get(kauf) >= 0.5, preisGanz = anteil.get(preis) > 0.98;
+    const an = desk.matches && !(kaufGanz || (preisGanz && kaufHalb));
     mini.classList.toggle('an', an);
+    panel.classList.toggle('cta-mini-an', an);
     mini.inert = !an; mini.setAttribute('aria-hidden', String(!an));
     const h = $('.cta-mini-in', mini)?.offsetHeight || 0;
     panel.style.scrollPaddingBottom = desk.matches && h ? `${h + 8}px` : '';
   };
-  if (!('IntersectionObserver' in window)) { setze(); return; } // alter Browser: Leiste bleibt einfach da
-  // ganz sichtbar = vollständig im sichtbaren Teil des Panels (die Leiste liegt darüber und gibt ihn beim Ausblenden frei)
+  if (!('IntersectionObserver' in window)) return;   // alter Browser: Preisbereich wie abgenommen, ohne Leiste
+  // sichtbar = im sichtbaren Teil des Panels (die Leiste liegt darüber und gibt ihn beim Ausblenden frei)
   const io = new IntersectionObserver((eintraege) => {
-    for (const e of eintraege) sichtbar.set(e.target, e.isIntersecting && e.intersectionRatio > 0.98);
+    for (const e of eintraege) anteil.set(e.target, e.isIntersecting ? e.intersectionRatio : 0);
     setze();
-  }, { root: panel, threshold: [0, 0.98, 1] });
+  }, { root: panel, threshold: [0, 0.5, 0.98, 1] });
   io.observe(preis); io.observe(kauf);
   desk.addEventListener?.('change', setze);
 }

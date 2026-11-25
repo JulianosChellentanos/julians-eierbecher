@@ -3,7 +3,7 @@
 #   bash /srv/formsam/deploy/prod-update.sh             sichern, main holen, Syntax prüfen, neu starten, Erreichbarkeit prüfen
 #   bash /srv/formsam/deploy/prod-update.sh --zurueck   Code auf den Stand vor dem letzten Update zurück (Daten bleiben)
 #   bash /srv/formsam/deploy/prod-update.sh --zurueck <commit>   … auf einen bestimmten Stand (z. B. laut git reflog)
-#   bash /srv/formsam/deploy/prod-update.sh --pruefen   nur Betriebsdateien prüfen (Sicherung, Protokoll-Aufbewahrung)
+#   bash /srv/formsam/deploy/prod-update.sh --pruefen   nur Betriebsdateien prüfen (Sicherung, Protokoll-Aufbewahrung, nginx-Uploadgrenze/HSTS)
 # Daten (data/, orders/, Galerie-Bilder) sind nicht im Git und bleiben unberührt. Vorher prüft das Skript, ob die
 # Datendateien lesbares JSON sind, und sichert — schlägt eins fehl, bricht es ab, ohne etwas zu ändern. Den alten Stand merkt
 # sich das Skript in /var/backups/formsam/letztes-update (fehlt er, weil das Update noch mit dem alten Skript lief, trägt
@@ -11,12 +11,13 @@
 # geht es automatisch auf den alten Stand zurück.
 # Das Skript liest sich vor dem Ausführen ganz ein (Aufruf von main in der letzten Zeile) — git reset darf die Datei ersetzen.
 set -euo pipefail
-# Pfade (APP, DATEN, BACKUP, ZUSTAND, PRUEF_URL) lassen sich nur für Tests per Umgebung umbiegen
+# Pfade (APP, DATEN, BACKUP, ZUSTAND, PRUEF_URL, NGINX_SITE) lassen sich nur für Tests per Umgebung umbiegen
 APP=${APP:-/srv/formsam}
 DATEN=${DATEN:-$APP/data}
 BACKUP=${BACKUP:-/usr/local/sbin/formsam-backup}
 ZUSTAND=${ZUSTAND:-/var/backups/formsam/letztes-update}
 PRUEF_URL=${PRUEF_URL:-http://127.0.0.1:4488/api/pricing}
+NGINX_SITE=${NGINX_SITE:-/etc/nginx/sites-available/formsam}
 
 als_formsam() { sudo -u formsam "$@"; }
 
@@ -92,6 +93,31 @@ betrieb_pruefen() {
     || echo "⚠️  nginx-Protokollformat ohne Query-String nicht eingespielt – README „Protokolle und Sicherungen“"
   cmp -s "$d/logrotate-formsam-nginx" /etc/logrotate.d/formsam-nginx \
     || echo "⚠️  logrotate-Regel für die nginx-Protokolle (14 Tage) nicht eingespielt – README „Protokolle und Sicherungen“"
+  nginx_pruefen
+  return 0
+}
+
+# nginx-Seite des Shops: certbot hat sie verändert, ein Dateivergleich mit deploy/nginx-formsam.conf geht deshalb nicht. Geprüft wird,
+# was der Shop braucht: Uploadgrenze für Druckdateien (server.js MAX_STL 190 MB → client_max_body_size 200m; darunter antwortet nginx
+# großen Bestellungen mit einer 413-Seite) und die HSTS-Kopfzeile. Nur melden, nichts ändern.
+nginx_pruefen() {
+  local f=$NGINX_SITE mb
+  if [ ! -r "$f" ]; then
+    echo "⚠️  nginx-Seite $f nicht gefunden – client_max_body_size 200m und HSTS von Hand prüfen (deploy/nginx-formsam.conf)"
+    return 0
+  fi
+  # kleinste eingetragene Grenze in MB (Einheit k/m/g oder Bytes; 0 = unbegrenzt); ohne Eintrag gilt der nginx-Standard 1 MB
+  mb=$(awk '{ sub(/#.*/, "") }
+    { for (i = 1; i < NF; i++) if ($i == "client_max_body_size") {
+        v = $(i + 1); sub(/;.*/, "", v); n = v + 0; e = tolower(substr(v, length(v)))
+        if (e == "k") n /= 1024; else if (e == "g") n *= 1024; else if (e != "m") n /= 1048576
+        if (v + 0 == 0) n = 1e9
+        if (min == "" || n < min) min = n } }
+    END { print (min == "" ? 1 : min) }' "$f")
+  awk -v m="$mb" 'BEGIN { exit !(m >= 200) }' \
+    || echo "⚠️  nginx: Uploadgrenze für Druckdateien unter 200 MB (client_max_body_size in $f) – große Bestellungen scheitern mit 413. Wert aus deploy/nginx-formsam.conf übernehmen, dann nginx -t && systemctl reload nginx"
+  awk '{ sub(/#.*/, "") } tolower($0) ~ /strict-transport-security/ { f = 1 } END { exit !f }' "$f" \
+    || echo "⚠️  nginx: HSTS-Kopfzeile fehlt in $f – Zeile add_header Strict-Transport-Security aus deploy/nginx-formsam.conf übernehmen, dann nginx -t && systemctl reload nginx"
   return 0
 }
 

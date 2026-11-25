@@ -133,7 +133,7 @@ async function openDruckzettel(orderId) {
   const win = window.open('', '_blank');   // synchron öffnen, sonst blockt der Popup-Blocker
   try {
     const r = await fetch(`/admin/druckzettel/${encodeURIComponent(orderId)}`, { headers: { 'x-admin-key': KEY() } });
-    if (!r.ok) throw new Error(r.status === 401 ? 'Nicht angemeldet' : 'Druckzettel nicht verfügbar (' + r.status + ')');
+    if (!r.ok) throw new Error(r.status === 401 ? 'Nicht angemeldet' : istWartung(r) ? wartungFehler(false) : 'Druckzettel nicht verfügbar (' + r.status + ')');
     const html = await r.text();
     if (win) { win.document.open(); win.document.write(html); win.document.close(); }
   } catch (e) {
@@ -145,6 +145,12 @@ async function openDruckzettel(orderId) {
 const KEINE_VERBINDUNG = 'Keine Verbindung zum Server';
 /** Meldung für eine Antwort ohne JSON (z. B. nginx-Fehlerseite) — schreibt = die Anfrage sollte etwas ändern */
 const serverFehler = (status, schreibt) => `${status >= 502 && status <= 504 ? 'Server gerade nicht erreichbar' : 'Serverantwort ungültig'} (${status})${schreibt ? ' – nichts gespeichert' : ''}`;
+/**
+ * 503 vom Wartungstor (Kopfzeile X-Formsam-Wartung, code 'wartung'): Die Wartung wurde eingeschaltet, während dieser Tab offen war, und
+ * er hat noch kein Freigabe-Cookie (das bekommt nur der Tab, der sie einschaltet). Statt des Kundentexts sagen, was zu tun ist.
+ */
+const istWartung = (r, j) => r.status === 503 && (r.headers.get('x-formsam-wartung') === '1' || j?.code === 'wartung');
+const wartungFehler = (schreibt) => `Wartungsmodus ist an – dieser Tab ist dafür noch nicht freigeschaltet${schreibt ? ', nichts gespeichert' : ''}. Bitte die Seite neu laden und das Zugangskennwort eingeben${schreibt ? ' (Eingaben vorher kopieren)' : ''}.`;
 async function api(path, opts = {}) {
   const schreibt = /^(POST|PUT|DELETE|PATCH)$/i.test(opts.method || 'GET');
   let r;
@@ -159,6 +165,7 @@ async function api(path, opts = {}) {
   if (r.status === 429 && /^\/api\/admin\//.test(path)) { setKey(''); showLogin('gebremst'); throw new Error('gebremst'); }   // zu viele falsche Passwörter
   // JSON-Antworten unverändert durchreichen (auch 404 „Bestellung unbekannt“); nur ein 404 ohne JSON heißt „Endpoint fehlt noch“
   const j = await r.json().catch(() => null);
+  if (istWartung(r, j)) return { ok: false, code: 'wartung', error: wartungFehler(schreibt) };
   if (j && typeof j === 'object') return j;
   if (r.status === 404) return { ok: false, notReady: true, error: 'Noch nicht eingerichtet' };
   return { ok: false, error: serverFehler(r.status, schreibt) };
@@ -1395,6 +1402,7 @@ async function userExport(id) {
     return toast(`${KEINE_VERBINDUNG} – keine Datei gespeichert.`, 'err', 6000);
   }
   if (r.status === 401) { setKey(''); return showLogin('auth'); }
+  if (istWartung(r)) return toast(`${wartungFehler(false)} Keine Datei gespeichert.`, 'err', 8000);
   if (r.ok && !/json/i.test(r.headers.get('content-type') || '')) return toast(`Export fehlgeschlagen (${r.status}) – keine Datei gespeichert.`, 'err');
   if (!r.ok) return toast((await r.json().catch(() => null))?.error || `Export fehlgeschlagen (${r.status})`, 'err');
   const a = document.createElement('a');
@@ -1476,6 +1484,7 @@ async function uploadImages() {
     if (r.status === 401) { setKey(''); return showLogin('auth'); }
     const j = await r.json().catch(() => null);
     if (r.ok && j?.ok !== false) done++;
+    else if (istWartung(r, j)) { fehler.push(wartungFehler(true)); break; }
     else fehler.push(`${f.name}: ${j?.error || serverFehler(r.status)}`);
   }
   if (done) toast(`${done} Foto(s) hochgeladen — live auf der Seite`, 'ok');
@@ -2445,6 +2454,7 @@ async function downloadCSV() {
     return toast(`${KEINE_VERBINDUNG} – CSV nicht erstellt, keine Datei gespeichert.`, 'err', 6000);
   }
   if (r.status === 401) { setKey(''); return showLogin('auth'); }
+  if (istWartung(r)) return toast(`${wartungFehler(false)} Keine Datei gespeichert.`, 'err', 8000);
   if (!r.ok || !/text\/csv/i.test(r.headers.get('content-type') || '')) return toast(`CSV-Export fehlgeschlagen (${r.status}) – keine Datei gespeichert.`, 'err', 6000);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(await r.blob());

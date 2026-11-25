@@ -225,7 +225,10 @@ function renderCart() {
   if (!cart.length) {
     box.innerHTML = '<p class="cart-empty">Dein Warenkorb ist leer.<br><small>Gestalte etwas Schönes im Konfigurator! 🎨</small></p>';
   } else {
+    // Knopfnamen mit Bezug zur Position (Bildschirmleser hören sonst in jeder Zeile dasselbe); gleich benannte Vasen bekommen die Nummer dazu
+    const titel = cart.map(itemTitle);
     box.innerHTML = cart.map((it, i) => {
+      const wer = titel.filter((t) => t === titel[i]).length > 1 ? `${titel[i]}, Position ${i + 1}` : titel[i];
       const lp = linePrice(it);
       const { off, line } = lp;
       const akt = lp.aktionProzent > 0 ? aktionFor(it.product, it.config?.pattern) : null;
@@ -243,13 +246,13 @@ function renderCart() {
           ${ref ? `<small class="ci-ref">${esc(referenzTextZeile(lp.lineRef, it.qty))}</small>` : ''}
           ${it.code ? `<button class="ci-code" data-code="${esc(it.code)}" title="Design-Code kopieren – damit kannst du dieses Design jederzeit wieder laden">🔖 ${esc(formatCode(it.code))}</button>` : ''}
           <div class="ci-qty">
-            <span class="ci-step"><button data-i="${i}" data-d="-1" aria-label="Eins weniger">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1" aria-label="Eins mehr">+</button></span>
+            <span class="ci-step"><button data-i="${i}" data-d="-1" aria-label="${esc(`Eins weniger: ${wer}`)}">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1" aria-label="${esc(`Eins mehr: ${wer}`)}">+</button></span>
             ${ref ? `<span class="aktion-badge" title="${esc(akt.name)}: −${lp.refProzent} % gegenüber dem niedrigsten Preis der letzten 30 Tage">−${lp.refProzent}\u00a0%</span>` : ''}
             ${off ? `<span class="ci-off">−${off}\u00a0%</span>` : ''}
             ${nextTier ? `<small class="ci-hint">ab ${nextTier.qty} St. −${nextTier.off}\u00a0%</small>` : ''}
           </div>
         </div>
-        <div class="ci-right"><b${ref ? ' class="aktion-price"' : ''}>${fmt(line)}</b>${ref ? refStrike(lp, it.qty) : ''}<button class="ci-del" data-del="${i}" title="Entfernen" aria-label="Aus dem Warenkorb entfernen">🗑</button></div>
+        <div class="ci-right"><b${ref ? ' class="aktion-price"' : ''}>${fmt(line)}</b>${ref ? refStrike(lp, it.qty) : ''}<button class="ci-del" data-del="${i}" title="Entfernen" aria-label="${esc(`Aus dem Warenkorb entfernen: ${wer}`)}">🗑</button></div>
       </div>`;
     }).join('');
   }

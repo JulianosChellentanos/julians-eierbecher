@@ -94,6 +94,11 @@ async function loadReference() {
   if (args.alt) return { mod: await import(pathToFileURL(path.resolve(args.alt)).href), name: args.alt };
   const ref = args.ref || 'HEAD';
   const show = (p) => execFileSync('git', ['-C', ROOT, 'show', `${ref}:${p}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  // Nur gegen das eigene Repo vergleichen: Liegt der Code ohne eigenes .git in einem anderen Repo (z. B. Kopie per git archive unter
+  // tmp-tests/), fände git dessen HEAD — ein fremder Stand ergäbe lauter Abweichungen. Dann übersprungen wie ganz ohne git.
+  let oben = null;
+  try { oben = execFileSync('git', ['-C', ROOT, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { /* kein git */ }
+  if (oben && fs.realpathSync(oben) !== fs.realpathSync(ROOT)) return { skip: `${ROOT} hat kein eigenes git-Repo (gehört zu ${oben})` };
   let src;
   try { src = show('lib/legal.js'); } catch (e) { return { skip: `git show ${ref}:lib/legal.js geht nicht (${String(e.message).split('\n')[0]})` }; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'formsam-legal-ref-'));

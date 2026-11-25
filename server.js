@@ -1422,7 +1422,8 @@ async function wartungTor(req, res, p, url) {
     // bewusst ohne Retry-After: Werkzeuge mit automatischer Wiederholung (curl --retry, Überwachung) hielten sich daran und
     // warteten eine Stunde — auch wenn die Wartung längst vorbei ist; Seiten und Dateien behalten Retry-After 3600
     res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Formsam-Wartung': '1' });
-    res.end(JSON.stringify({ ok: false, error: 'Wartungsmodus – bitte später noch einmal versuchen.' }));
+    // code 'wartung': der Admin erkennt daran einen Tab ohne Freigabe-Cookie (eigene Meldung statt dieses Kundentexts)
+    res.end(JSON.stringify({ ok: false, code: 'wartung', error: 'Wartungsmodus – bitte später noch einmal versuchen.' }));
     return true;
   }
   const seite = (req.method === 'GET' || req.method === 'HEAD') && (/text\/html/.test(String(req.headers.accept || '')) || !path.extname(p));
