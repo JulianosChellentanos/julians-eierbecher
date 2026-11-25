@@ -5,7 +5,7 @@
 // Nutzt bestehende Schnittstellen: ovju:studio-design (→ app.js), ovju:hero-select (← studio.js), ovju:world-ready/-snapshot (← studio.js, BG-Modus),
 // #hero-hint (Preisfeed), #mb-price (Live-Preis), Body-Klassen has-mbar / no-scroll der App-Shell (mobile.js).
 import { STUDIO_DESIGNS, designConfig, designImage } from './studio-designs.js';
-import { buzz } from './mobile.js';
+import { buzz, activateTab } from './mobile.js';
 import { unitPrice, aktionFor, onAktionEnde, getPricing, fmt, colorByRef, aktionenActive, aktionTextKurz, referenzpreis, referenzText, aktionProzentGueltig, euroKurz, versandText, versandHTML, ustText, discountTeaser } from './pricing.js';
 import { openSheet, isSheetOpen, sheetElement } from './mobile-sheet.js';
 import { MOBILE_PATTERNS, patternConfig, patternByKey } from './mobile-patterns.js';
@@ -135,6 +135,7 @@ const lazyQueue = [], lazyTargets = new Map(); // beobachtetes Element → Bilde
 function lazyLoad(img) {
   const s = img.dataset.src; if (!s) return;
   delete img.dataset.src;
+  if (img.dataset.srcset) { if (!img.getAttribute('srcset')) img.srcset = img.dataset.srcset; delete img.dataset.srcset; } // Formenkarten (studio.js)
   if (!img.getAttribute('src')) img.src = s; // eine inzwischen gesetzte Quelle (z. B. Finish-Wahl) gewinnt
 }
 /** img erst laden, wenn target (Standard: das Bild selbst) auf 600 px herankommt — Wischreihen geben alle Bilder gemeinsam frei (der Observer
@@ -314,6 +315,11 @@ const HERO_CTA = 'Diese Vase gestalten';
  */
 function paintHeroPrice() {
   if (!heroPriceEl) return;
+  // Vor dem 3D-Start zeigt die Bühne das Kollektions-Poster (Kugel, Flasche, Kurve) — dazu passt keine einzelne Vase: neutral „Vasen ab …“
+  if (!worldStarted && art?.dataset.world !== 'photo') {
+    heroPriceEl.innerHTML = `<span class="mhp-name">Vasen</span>` + (getPricing() ? ` <b>${heroFromHTML()}</b> <small>${versandHTML({ kurz: true })}</small>` : '');
+    return;
+  }
   const d = STUDIO_DESIGNS[shownIndex] || STUDIO_DESIGNS[0], p = shownPrice(designConfig(d));
   // Kein Streichpreis in dieser engen Zeile: seine Kennzeichnung stünde nur im title (auf dem Handy unsichtbar, § 11 PAngV) — der
   // Aktionspreis in Akzentfarbe genügt, Streichpreis samt „Niedrigster Preis der letzten 30 Tage“ zeigt das Sheet
@@ -336,6 +342,9 @@ function paintHero() {
 function initHeroDom() {
   art = $('#hero-art'); hero = $('.form-hero');
   art.dataset.world = canRun3D() ? 'deferred' : 'photo'; // studio.js liest das synchron beim Start
+  // Poster beim Erstbesuch nicht erst unsichtbar machen: einblenden (m-fade) nur, wenn es beim Aufbau noch lädt — ein geladenes Poster
+  // blieb sonst bei belastetem Main-Thread bis zum 3D-Start auf Deckkraft 0 (leere Bühne)
+  const poster = $('.hero-fallback', art); if (poster && !poster.complete) poster.classList.add('m-fade-in');
   const side = $('.hero-side'), use = $('#hero-use'), hint = $('#hero-hint'), intro = $('.hero-intro');
   side.insertBefore(use, hint);
   // Knopftext fest „Diese Vase gestalten ↓“ (der Konfigurator liegt weiter unten auf derselben Seite: Richtungspfeil statt ↗);
@@ -581,7 +590,7 @@ const missingPreviews = () => MOBILE_PATTERNS.filter((p) => p.tier === 'swatch' 
 const konfAktiv = () => document.body.classList.contains('konf-aktiv');
 window.addEventListener('ovju:konf-aktiv', (e) => { if (!e.detail) setTimeout(kickPreviews, 1500); });
 function kickPreviews() {
-  if (prevBusy || !missingPreviews().length || konfAktiv()) return;
+  if (!art || prevBusy || !missingPreviews().length || konfAktiv()) return; // !art: Handy-Startseite nicht aufgebaut (Fenster > 700 px)
   const hero3D = worldReady && art.dataset.world !== 'photo';
   if (hero3D) {
     prevBusy = true;
@@ -851,9 +860,9 @@ function initRest() {
 // ---------------------------------------------------------------------------
 function initIcons() {
   for (const el of [$('#theme-btn'), $('#account-btn'), $('#cart-btn'), $('#print-badge'), $('#stage-hint .sh-mob'), $('#mobile-bar .mb-code'), $('#mb-download')]) iconize(el);
-  // Kopfzeile „Listen“: Lesezeichen statt Listen-Symbol (das las sich wie ein Hamburger-Menü), Name „Merkliste“
+  // Kopfzeile „Listen“: Lesezeichen statt Listen-Symbol (das las sich wie ein Hamburger-Menü)
   const lists = $('.topbar .lists-btn');
-  if (lists) { iconize(lists, null, ICON.bookmark); lists.setAttribute('aria-label', 'Merkliste'); lists.title = 'Merkliste'; }
+  if (lists) { iconize(lists, null, ICON.bookmark); lists.setAttribute('aria-label', 'Design-Listen'); lists.title = 'Design-Listen'; } // gleicher Name wie Dialog und Desktop
   // Footer „Gut zu wissen“: nur die rechtlichen Hinweise (Trockenblumen/Voronoi, Pflege/Hitze, Standfestigkeit) — die Materialzeile
   // (p[data-material]) steht schon im Hero-Vertrauensband (keine Dopplung)
   const col = $$('footer .footer-col').find((c) => /Gut zu wissen/.test($('h4', c)?.textContent || ''));
@@ -946,15 +955,36 @@ function initTabNext() {
     const b = e.target.closest('.m-next'); if (!b) return;
     if (!b.dataset.next) { $('#mb-cart')?.click(); return; } // Warenkorb wie über die Preisleiste (mobile.js: buzz + #btn-order)
     buzz();
-    $(`.mtab[data-tab="${b.dataset.next}"]`, tabs)?.click(); // vorhandene Tab-Logik (activateTab, Tab-Leiste zentriert)
-    // Tab-Anfang unter Bühne + Tab-Leiste (activateTab holt das Panel nur hoch, wenn es darüber liegt; hier immer, auch nach der Bühnen-Transition)
-    const align = (smooth) => {
-      const sec = $(`.ctrl[data-tab="${b.dataset.next}"]`, panel); if (!sec) return;
-      const d = sec.getBoundingClientRect().top - tabs.getBoundingClientRect().bottom - 12;
-      if (Math.abs(d) > 6) window.scrollBy({ top: d, behavior: smooth && !reduced.matches ? 'smooth' : 'instant' });
-    };
-    requestAnimationFrame(() => align(true)); setTimeout(() => align(false), 520);
+    const next = b.dataset.next;
+    // Tab wechseln OHNE den eigenen Sprung von activateTab — vorher stapelten sich dessen weiches scrollBy und zwei Nachkorrekturen
+    // (relativ, gemessen mitten im Andocken der Bühne) und landeten oft eine Bühnenhöhe zu weit oben (Tab unter der Preisleiste)
+    activateTab(next, 'right', false, { springen: false });
+    // EIN absolutes Ziel: Abschnittsanfang 12 px unter der Tab-Leiste, wie sie bei angedockter (kleinerer) Bühne steht. Die Lage des
+    // Abschnitts im Dokument ändert das Andocken nicht (das Panel bekommt die eingesparte Höhe als margin-top, style.css).
+    const ziel = () => { const sec = $(`.ctrl[data-tab="${next}"]`, panel); return sec ? Math.max(0, Math.round(sec.getBoundingClientRect().top + scrollY - tabsAngedocktUnten(tabs) - 12)) : null; };
+    // Sofort statt weich: ein weiches Scrollen lief auf belasteten Handys noch, wenn die Nachkontrolle sprang, und addierte dann seinen
+    // Weg ein zweites Mal (eine Bühnenhöhe zu weit oben) — den Übergang zeigt der hereingleitende Tab-Inhalt
+    const y = ziel(); if (y === null) return;
+    window.scrollTo({ top: y, behavior: 'instant' });
+    // Nachkontrolle nach dem Bühnen-Übergang (0,38 s): falls sich die Lage danach noch verschoben hat, einmal exakt nachsetzen
+    setTimeout(() => { const y2 = ziel(); if (y2 !== null && Math.abs(scrollY - y2) > 4 && !isSheetOpen()) window.scrollTo({ top: y2, behavior: 'instant' }); }, 600);
   });
+}
+/**
+ * Unterkante der Tab-Leiste im Fenster, wenn Bühne und Tabs angedockt sind (body.konf-stuck): die Leiste klebt bei
+ * „var(--stage-h) + Abstand“ (style.css bzw. mobile.css); angedockt gilt --stage-h = --stage-h-stuck. Gemessen statt nachgebaut:
+ * Abstand = Klebe-Abstand (top) − aktuelle Bühnenhöhe, dazu die angedockte Höhe aus einem unsichtbaren Messelement. Mitten im
+ * Andock-Übergang (.mtabs transition: top) liefert computed top einen Zwischenwert — dann zählt der Zielwert des laufenden Übergangs
+ * (sonst landete „Weiter“ bei spät kippendem Andocken bis zu 84 px zu tief).
+ */
+function tabsAngedocktUnten(tabs) {
+  const mess = (h) => { const p = document.createElement('div'); p.style.cssText = `position:absolute;left:0;top:0;width:1px;visibility:hidden;pointer-events:none;height:${h}`; document.body.appendChild(p); const v = p.getBoundingClientRect().height; p.remove(); return v; };
+  const lauf = tabs.getAnimations?.().find((a) => a.transitionProperty === 'top' && a.playState !== 'finished');
+  const kf = lauf?.effect?.getKeyframes?.() || [];
+  const ziel = parseFloat(kf[kf.length - 1]?.top);
+  const top = Number.isFinite(ziel) ? ziel : parseFloat(getComputedStyle(tabs).top);
+  const abstand = Number.isFinite(top) ? top - mess('var(--stage-h)') : 0;
+  return mess('var(--stage-h-stuck)') + abstand + tabs.offsetHeight;
 }
 
 // ---------------------------------------------------------------------------

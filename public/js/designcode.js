@@ -1,5 +1,6 @@
 // formsam — Design-Codes: kurzer Code ⇄ komplettes Design (Form, Muster, Gravur, Farbe …)
 // Server vergibt den Code deterministisch (gleiches Design → gleicher Code), speichert die Konfiguration.
+import { showToast } from './mobile.js';
 const $ = (s) => document.querySelector(s);
 
 export const formatCode = (c) => c ? String(c).replace(/(.{3})(?=.)/g, '$1-') : '';
@@ -18,12 +19,15 @@ export async function saveDesign(config) {
   return r.code;
 }
 
+/** Fehler mit HTTP-Status (404 = gibt es nicht) — Antworten ohne JSON (Fehlerseite eines Proxys beim Neustart) ergeben einen deutschen Satz */
+export const apiFehler = (status, text) => Object.assign(new Error(text), { status });
 /** Code → Konfiguration */
 export async function loadDesign(code) {
   const c = normalizeCode(code);
-  if (c.length < 4) throw new Error('Bitte einen Design-Code eingeben (z. B. K7P-3QX).');
-  const r = await (await fetch(`/api/design/${encodeURIComponent(c)}`)).json();
-  if (!r.ok) throw new Error(r.error || 'Code unbekannt');
+  if (c.length < 4) throw apiFehler(400, 'Bitte einen Design-Code eingeben (z. B. K7P-3QX).');
+  const res = await fetch(`/api/design/${encodeURIComponent(c)}`);
+  const r = await res.json().catch(() => null);
+  if (!r?.ok) throw apiFehler(res.status, r?.error || (res.status === 404 ? 'Diesen Design-Code gibt es nicht – bitte prüfen.' : 'Der Design-Code ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.'));
   return { code: r.code, config: r.config };
 }
 
@@ -113,7 +117,24 @@ async function loadFromInput() {
   btn.disabled = false;
 }
 
-/** Beim Laden mit ?d=CODE bzw. #d=CODE das Design direkt öffnen */
+/** Parameter (d bzw. l) aus Adresse und Anker nehmen — ohne neuen History-Eintrag */
+export function stripURLParam(name) {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete(name);
+    if (new RegExp(`^#${name}=`).test(u.hash)) u.hash = '';
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  } catch { /* egal */ }
+}
+/** Ein Link-Code ist endgültig unbrauchbar (gibt es nicht, ungültig, Produkt abgeschaltet) — nur dann verschwindet er aus der Adresse */
+export const linkUnbrauchbar = (e) => [400, 404].includes(e?.status) || !!e?.endgueltig;
+/** Fehlertext für einen Link-Code: bei endgültigen Fehlern die Meldung („Diesen Design-Code gibt es nicht …“), sonst (Netz, Neustart,
+ *  Fehlerseite eines Proxys) ein deutscher Satz statt technischer Meldungen */
+export const linkFehler = (e, was) => (linkUnbrauchbar(e) && e.message ? e.message : `${was} aus dem Link ließ sich gerade nicht laden – bitte versuch es gleich noch einmal.`);
+
+/** Beim Laden mit ?d=CODE bzw. #d=CODE das Design direkt öffnen. Unbekannter Code (Tippfehler im Link): Meldung statt still das
+ *  Standard-Design — sonst hielte man es für das geteilte —, und der Code verschwindet aus der Adresse; bei vorübergehenden Fehlern
+ *  bleibt er stehen (Neuladen versucht es noch einmal) */
 export async function loadFromURL() {
   const m = (location.search + location.hash).match(/[?&#]d=([A-Za-z0-9-]{4,40})/);
   if (!m) return false;
@@ -121,7 +142,11 @@ export async function loadFromURL() {
     const { code, config } = await loadDesign(m[1]);
     await applyConfig(config, code);
     return code;
-  } catch { return false; }
+  } catch (e) {
+    showToast(`🔖 ${linkFehler(e, 'Der Design-Code')}`, 6000);
+    if (linkUnbrauchbar(e)) stripURLParam('d');
+    return false;
+  }
 }
 
 export function initDesignCodes(opts) {

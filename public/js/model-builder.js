@@ -197,5 +197,15 @@ export function exportModel(config) {
   });
 }
 
-/** Worker früh starten (lädt Geometrie-Code und Schriften, während die Seite noch aufbaut) */
+/** Worker früh starten (lädt den Geometrie-Code, während die Seite noch aufbaut) */
 export function warmUp() { if (mode === 'start' && !worker) startWorker(); }
+
+/** Gravurschriften vorladen, sobald jemand die Gravur ansteuert (Reiter, Häkchen, Feld) — einmal je Schrift; im Worker bzw. auf der Seite */
+const vorgeladen = new Set();
+export function preloadFonts(keys = ['helvetiker', 'droid_sans']) {
+  const neu = keys.filter((k) => k && !vorgeladen.has(k)); if (!neu.length) return;
+  neu.forEach((k) => vorgeladen.add(k));
+  if (mode === 'start' && !worker) startWorker();
+  if (worker && mode !== 'main') worker.postMessage({ type: 'fonts', keys: neu });
+  else for (const k of neu) loadFont(k).catch(() => {});
+}

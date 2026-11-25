@@ -35,9 +35,12 @@
   <link rel="stylesheet" href="css/studio.css">
   <link rel="stylesheet" href="css/configurator-studio.css">
   <link rel="stylesheet" href="css/mobile.css" media="(max-width: 700px)">
+  <link rel="modulepreload" href="/js/mobile-home.js" media="(max-width: 700px)">
+  <link rel="preload" href="fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#f4efe7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#17130f" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f8f6f0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#20241e" media="(prefers-color-scheme: dark)">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -65,14 +68,14 @@
       <a href="#formen">Formen entdecken</a>
       <a href="#konfigurator">Konfigurator</a>
       <a href="#galerie">Galerie</a>
-      <a href="#sogehts">So geht's</a>
+      <a href="#sogehts">So geht’s</a>
       <a href="#faq">FAQ</a>
     </nav>
     <div class="topbar-actions">
-      <button class="icon-btn" id="theme-btn" title="Hell/Dunkel umschalten">🌙</button>
+      <button class="icon-btn" id="theme-btn" title="Hell/Dunkel umschalten" aria-label="Dunkles Design" aria-pressed="false">🌙</button>
       <button class="icon-btn account-btn" id="account-btn" title="Mein Konto">👤 Anmelden</button>
-      <button class="icon-btn lists-btn" data-open-lists title="Design-Listen (z. B. für Hochzeiten)">📋<span class="ab-txt"> Listen</span></button>
-      <button class="cart-btn" id="cart-btn" title="Warenkorb">🛒<span id="cart-count">0</span></button>
+      <button class="icon-btn lists-btn" data-open-lists title="Design-Listen (z. B. für Hochzeiten)" aria-label="Design-Listen">📋<span class="ab-txt"> Listen</span></button>
+      <button class="cart-btn" id="cart-btn" title="Warenkorb" aria-label="Warenkorb, 0 Artikel">🛒<span id="cart-count">0</span></button>
     </div>
   </div>
 </header>
@@ -80,22 +83,22 @@
 <main>
 <section class="hero form-hero">
   <div class="hero-intro wrap">
-    <div><span class="cover-kicker" id="cover-kicker">Vasen · von dir entworfen</span><p class="eyebrow" id="brand-tagline">Sorgsam geformt. Auf dich zugeschnitten.</p><h1 id="hero-headline">Deine Idee.<br>Deine Form.</h1><figure class="hero-cover"><picture><source media="(max-width: 700px)" srcset="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E" width="1122" height="1402" alt="Gehämmerte Vase aus Kupfer-Silk-PLA, 3D-gedruckt mit sichtbaren Schichten" fetchpriority="high" decoding="async"></picture><span class="cover-badge">Hammerschlag · Kupfer-Silk · 3D-Druck</span></figure></div>
-    <div class="hero-side"><p class="sub" id="hero-sub">Starte mit einer Grundform. Verändere Silhouette, Struktur und Farbe. Was du hier siehst, kannst du wirklich gestalten.</p><p class="sub hero-sub-m" id="hero-sub-m">Deine Vase selbst gestalten – Form, Muster, Farbe und Gravur. Ich drucke dein Original in 3D und schicke es dir.</p><button class="btn btn-primary btn-lg" id="hero-cta">Eigene Form gestalten ↗</button><div class="hero-hint" id="hero-hint"></div><div class="trust-row" id="trust-row"></div></div>
+    <div><span class="cover-kicker" id="cover-kicker">Vasen · von dir entworfen</span><p class="eyebrow" id="brand-tagline">Sorgsam geformt. Auf dich zugeschnitten.</p><h1 id="hero-headline">Deine Idee. Deine Form.</h1><figure class="hero-cover"><picture><source media="(max-width: 700px)" srcset="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='5'/%3E" width="1122" height="1402" alt="Gehämmerte Vase aus Kupfer-Silk-PLA, 3D-gedruckt mit sichtbaren Schichten" fetchpriority="high" decoding="async"></picture><span class="cover-badge">Hammerschlag · Kupfer-Silk · 3D-Druck</span></figure></div>
+    <div class="hero-side"><p class="sub" id="hero-sub">Starte mit einer Grundform. Verändere Silhouette, Struktur und Farbe. Was du hier siehst, kannst du wirklich gestalten.</p><p class="sub hero-sub-m" id="hero-sub-m">Deine Vase selbst gestalten – Form, Muster, Farbe und Gravur. Ich drucke dein Original in 3D und schicke es dir.</p><button class="btn btn-primary btn-lg" id="hero-cta">Eigene Form gestalten ↗</button><div class="hero-hint" id="hero-hint"></div><div class="trust-row" id="trust-row"><span><span class="tr-long">🧵 Material: PLA aus Maisstärke oder Zuckerrohr</span><span class="tr-short">🧵 Material: PLA</span></span><span><span class="tr-long">🖨️ Einzeln gedruckt in Deutschland</span><span class="tr-short">🖨️ Gedruckt in Deutschland</span></span><span><span class="tr-long">📦 Lieferzeit <span data-lieferzeit>5–8 Werktage</span></span><span class="tr-short">📦 <span data-lieferzeit>5–8 Werktage</span></span></span></div></div>
   </div>
   <div class="form-world" id="hero-art">
-    <span class="world-type" aria-hidden="true">FORM FOLLOWS YOU.</span>
+    <span class="world-type" aria-hidden="true">FORM FOLGT DIR.</span>
     <picture><img class="hero-fallback" src="/img/studio/fdm-collection.webp" alt="Drei 3D-gedruckte Vasen aus den Formen Kugel, Flasche und Kurve (KI-Inszenierung)" fetchpriority="high"></picture><mark class="ki-tag ki-world">KI-Inszenierung</mark>
     <canvas id="hero-viewer" role="img" aria-label="Interaktive 3D-Kollektion mit drei selbst gestaltbaren Vasen"></canvas>
     <div class="world-meta"><span><i class="live-dot"></i> LIVE 3D<em class="wm-long"> · ECHTE KONFIGURATOR-FORMEN</em></span><button id="motion-toggle" aria-pressed="false" aria-label="Automatische Bewegung pausieren">Ⅱ Bewegung pausieren</button></div>
-    <div class="world-caption"><span id="hero-index">01 / 09</span><h2 id="hero-design-name">Twist</h2><p id="hero-design-detail">Flasche · gedrehte Rippen</p></div>
+    <div class="world-caption"><span id="hero-index">01 / 09</span><h2 id="hero-design-name" role="none">Twist</h2><p id="hero-design-detail">Flasche · gedrehte Rippen</p></div>
     <div class="world-controls"><button id="hero-prev" aria-label="Vorherige Form">←</button><span>Ziehen & drehen</span><button id="hero-next" aria-label="Nächste Form">→</button></div>
     <button class="world-use" id="hero-use">Diese Form weitergestalten <small id="hero-use-price" hidden></small><span>↗</span></button>
     <div class="world-tabs" id="hero-shapes" role="group" aria-label="Grundform auswählen"></div>
   </div>
   <div class="wrap hero-foot"><span>05 GRUNDFORMEN <b>+</b> DEINE FREIE SILHOUETTE</span><a href="#formen">Möglichkeiten entdecken ↓</a><span>VON DER IDEE ZUM 3D-DRUCK</span></div>
 </section>
-<div class="studio-strip" aria-label="Designphilosophie"><span>DEINE FORM</span><i>✳</i><span>DEINE FARBE</span><i>✳</i><span>DEIN ORIGINAL</span><i>✳</i><span>MADE TO BE YOURS</span><i>✳</i></div>
+<div class="studio-strip" aria-label="Designphilosophie"><span>DEINE FORM</span><i>✳</i><span>DEINE FARBE</span><i>✳</i><span>DEIN ORIGINAL</span><i>✳</i><span>GEMACHT FÜR DICH</span><i>✳</i></div>
 
 <section class="shape-collection" id="formen"><div class="wrap">
   <div class="collection-heading"><div><p class="eyebrow">01 / Ein Anfang. Kein fertiges Design.</p><h2>Welche Form<br><em>steckt in dir?</em></h2></div><p>Keine feste Kollektion. Sondern Ausgangspunkte.<br>Jedes dieser Objekte kommt direkt aus dem<br>3D-Konfigurator – und wartet auf deine Handschrift.</p></div>
@@ -131,17 +134,17 @@
   <div class="wrap config-grid">
 
     <div class="stage">
-      <div class="viewer-heading"><span><i></i> <b class="nm">formsam</b> / LIVE STUDIO</span><span>DEIN DESIGN IN 360°</span></div>
-      <div class="viewer-watermark" aria-hidden="true">made<br><em>by you.</em></div>
-      <div id="loading" class="loading"><svg class="loading-icon fs-build" viewBox="0 0 78.99 100" aria-hidden="true" focusable="false"><use href="#fs-l5"/><use href="#fs-l4"/><use href="#fs-l3"/><use href="#fs-l2"/><use href="#fs-l1"/></svg>Lade 3D-Studio …</div>
-      <canvas id="viewer"></canvas>
+      <div class="viewer-heading"><span><i></i> <b class="nm">formsam</b> / LIVE-STUDIO</span><span>DEIN DESIGN IN 360°</span></div>
+      <div class="viewer-watermark" aria-hidden="true">von dir<br><em>gemacht.</em></div>
+      <div id="loading" class="loading" role="status"><svg class="loading-icon fs-build" viewBox="0 0 78.99 100" aria-hidden="true" focusable="false"><use href="#fs-l5"/><use href="#fs-l4"/><use href="#fs-l3"/><use href="#fs-l2"/><use href="#fs-l1"/></svg>Lade 3D-Studio …</div>
+      <canvas id="viewer" role="img" aria-label="3D-Vorschau deiner Vase – ziehen zum Drehen, scrollen zum Zoomen"></canvas>
       <div class="stage-badge" id="dim-info"></div>
       <div class="stage-openwarn" id="open-warn" hidden></div>
       <div class="stage-print p-ok" id="print-badge"></div>
       <div class="stage-build" id="stage-build" hidden aria-hidden="true"><span class="sb-bar"><i></i></span><span class="sb-pill"><svg class="fs-build sb-icon" viewBox="0 0 78.99 100" focusable="false"><use href="#fs-l5"/><use href="#fs-l4"/><use href="#fs-l3"/><use href="#fs-l2"/><use href="#fs-l1"/></svg><span class="sb-txt">Vorschau wird berechnet …</span></span></div>
       <div class="stage-color"><span id="color-name">Elfenbein</span></div>
       <div class="scene-chips" id="scene-chips"></div>
-      <button class="stage-full-btn" id="btn-fullscreen" title="Vollbild">⤢</button>
+      <button class="stage-full-btn" id="btn-fullscreen" title="Vollbild" aria-label="3D-Vorschau im Vollbild" aria-pressed="false">⤢</button>
       <div class="stage-hint" id="stage-hint"><span class="sh-desk">↔ Ziehen zum Drehen · Scrollen zum Zoomen</span><span class="sh-mob">☝️ Mit einem Finger drehen · zwei Finger zoomen</span></div>
       <button class="stage-foto" id="btn-foto" title="Dein Design in mehreren Szenen rendern">▧ Szenenbilder</button>
     </div>
@@ -152,12 +155,15 @@
         <div class="panel-head-btns">
           <button class="btn btn-ghost" id="btn-random" title="Zufälliges Design">↝ Inspiration</button>
           <button class="btn btn-ghost" id="btn-code" data-open-code="show" title="Design-Code anzeigen, teilen oder eingeben">↗ Design-Code</button>
+          <button class="btn btn-ghost" id="btn-reset" title="Alle Einstellungen auf den Anfang zurücksetzen">↺ Zurücksetzen</button>
         </div>
       </div>
 
       <!-- Produkt-Umschalter: erscheint nur, wenn mehr als ein Produkt bestellbar ist (Produktschalter: js/produkte.js) -->
       <div class="product-tabs" id="product-tabs" hidden></div>
       <div class="note-box" id="vase-note" hidden></div>
+      <!-- Entwurf (app.js): „Dein letzter Entwurf ist wieder da · Neu beginnen“ bzw. nach dem Zurücksetzen „Rückgängig“ -->
+      <div class="note-box draft-note" id="draft-note" role="status" hidden><span id="draft-note-txt"></span> <button type="button" class="linkbtn" id="draft-note-btn"></button></div>
       <div class="mtabs" id="mtabs"></div>
 
       <section class="ctrl" data-tab="form">
@@ -179,9 +185,9 @@
         <div class="rim-block">
           <span class="flow-label">Oberer Rand</span>
           <div class="seg seg-rim" id="rim-row">
-            <button class="rim-btn active" data-rim="glatt" title="Das Muster läuft oben sanft aus, der Rand bleibt glatt"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M4 15V3h16v12"/></svg><span>Glatt</span></button>
-            <button class="rim-btn" data-rim="muster" title="Das Muster läuft bis zur oberen Kante durch – die Kante folgt dem Muster"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M4 15V4q2-2.4 4 0t4 0t4 0t4 0v11"/></svg><span>Muster bis Kante</span></button>
-            <button class="rim-btn" data-rim="wulst" title="Runde Lippe außen am Rand (ca. 1,6 mm) – ohne Stützen druckbar"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M6 15V6M18 15V6"/><circle cx="5.5" cy="4" r="2.4"/><circle cx="18.5" cy="4" r="2.4"/><path d="M8 3h8"/></svg><span>Wulst</span></button>
+            <button class="rim-btn active" data-rim="glatt" title="Das Muster läuft oben sanft aus, der Rand bleibt glatt" aria-pressed="true"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M4 15V3h16v12"/></svg><span>Glatt</span></button>
+            <button class="rim-btn" data-rim="muster" title="Das Muster läuft bis zur oberen Kante durch – die Kante folgt dem Muster" aria-pressed="false"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M4 15V4q2-2.4 4 0t4 0t4 0t4 0v11"/></svg><span>Muster bis Kante</span></button>
+            <button class="rim-btn" data-rim="wulst" title="Runde Lippe außen am Rand (ca. 1,6 mm) – ohne Stützen druckbar" aria-pressed="false"><svg viewBox="0 0 24 16" aria-hidden="true"><path d="M6 15V6M18 15V6"/><circle cx="5.5" cy="4" r="2.4"/><circle cx="18.5" cy="4" r="2.4"/><path d="M8 3h8"/></svg><span>Wulst</span></button>
           </div>
           <p class="tiny left rim-note" id="rim-note" hidden>Bei offenen Voronoi-Vasen bleibt der Rand immer glatt.</p>
         </div>
@@ -190,15 +196,15 @@
       <section class="ctrl" data-tab="muster">
         <h3>Oberfläche</h3>
         <div class="seg">
-          <button class="pattern-btn" data-pattern="glatt" title="Ganz ohne Struktur">Glatt</button>
-          <button class="pattern-btn active" data-pattern="rippen" title="Feine Grate – der Klassiker">Rippen</button>
-          <button class="pattern-btn" data-pattern="wellen" title="Weiche runde Wellen">Wellen</button>
-          <button class="pattern-btn" data-pattern="lamellen" title="Tiefe Plissee-Schlitze wie bei Design-Vasen">Lamellen</button>
-          <button class="pattern-btn" data-pattern="zickzack" title="Scharfe Facetten">Zickzack</button>
-          <button class="pattern-btn" data-pattern="querwellen" title="Horizontale Wellenringe">Querwellen</button>
-          <button class="pattern-btn" data-pattern="gehaemmert" title="Organische Dellen wie gehämmertes Metall">Gehämmert</button>
-          <button class="pattern-btn" data-pattern="skelett" id="pattern-skelett" title="Unregelmäßiges Zellnetz mit echten Durchbrüchen">Voronoi</button>
-          <button class="pattern-btn" data-pattern="koralle" title="Feine geschwungene Rippen auf weiten Wellen">Fjordwelle · Neu</button>
+          <button class="pattern-btn" data-pattern="glatt" title="Ganz ohne Struktur" aria-pressed="false">Glatt</button>
+          <button class="pattern-btn active" data-pattern="rippen" title="Feine Grate – der Klassiker" aria-pressed="true">Rippen</button>
+          <button class="pattern-btn" data-pattern="wellen" title="Weiche runde Wellen" aria-pressed="false">Wellen</button>
+          <button class="pattern-btn" data-pattern="lamellen" title="Tiefe Plissee-Schlitze wie bei Design-Vasen" aria-pressed="false">Lamellen</button>
+          <button class="pattern-btn" data-pattern="zickzack" title="Scharfe Facetten" aria-pressed="false">Zickzack</button>
+          <button class="pattern-btn" data-pattern="querwellen" title="Horizontale Wellenringe" aria-pressed="false">Querwellen</button>
+          <button class="pattern-btn" data-pattern="gehaemmert" title="Organische Dellen wie gehämmertes Metall" aria-pressed="false">Gehämmert</button>
+          <button class="pattern-btn" data-pattern="skelett" id="pattern-skelett" title="Unregelmäßiges Zellnetz mit echten Durchbrüchen" aria-pressed="false">Voronoi</button>
+          <button class="pattern-btn" data-pattern="koralle" title="Feine geschwungene Rippen auf weiten Wellen" aria-pressed="false">Fjordwelle · Neu</button>
         </div>
         <p class="surface-note" id="skeleton-note" hidden>Voronoi: offene Zellen mit verbundenen Stegen. Brücken und Stützen prüfe ich vor dem Druck.</p>
         <div id="surface-sliders">
@@ -214,10 +220,10 @@
           <div class="flow-block">
             <span class="flow-label">Verlauf</span>
             <div class="seg seg-flow">
-              <button class="flow-btn active" data-flow="spirale" title="Klassischer Drall">🌀 Spirale</button>
-              <button class="flow-btn" data-flow="gegen" title="Dreht hoch und wieder zurück – V-Optik">⋀ Gegenläufig</button>
-              <button class="flow-btn" data-flow="fluss" title="Rippen schlängeln sich wie Wellen">〜 Wellen</button>
-              <button class="flow-btn" data-flow="zick" title="Scharfe Richtungswechsel">⚡ Zickzack</button>
+              <button class="flow-btn active" data-flow="spirale" title="Klassischer Drall" aria-pressed="true">🌀 Spirale</button>
+              <button class="flow-btn" data-flow="gegen" title="Dreht hoch und wieder zurück – V-Optik" aria-pressed="false">⋀ Gegenläufig</button>
+              <button class="flow-btn" data-flow="fluss" title="Rippen schlängeln sich wie Wellen" aria-pressed="false">〜 Wellenfluss</button>
+              <button class="flow-btn" data-flow="zick" title="Scharfe Richtungswechsel" aria-pressed="false">⚡ Zickzack</button>
             </div>
           </div>
           <label class="slider-row">
@@ -236,18 +242,19 @@
         <label class="check-row">
           <input type="checkbox" id="c-gravur">
           <span>✒️ <b>Persönliche Gravur</b> <span class="opt" id="gravur-price"></span><br>
-          <small id="gravur-small">Name, Datum oder kurzer Spruch, plastisch in die Wand geprägt – in 7 Schriftarten. Bis 30 Zeichen (längere Texte laufen um die Seite) – der Zähler unter dem Feld sagt es dir.</small></span>
+          <small id="gravur-small">Name, Datum oder kurzer Spruch, plastisch in die Wand geprägt – in 7 Schriftarten. Bis 30 Zeichen; lange Texte laufen um die Vase herum – der Zähler unter dem Feld sagt dir, wie viel passt.</small></span>
         </label>
         <div id="gravur-options" hidden>
-          <input type="text" id="i-text" maxlength="30" placeholder="z. B. Anna & Tom 12.06.2027" autocomplete="off">
+          <input type="text" id="i-text" maxlength="30" placeholder="z. B. Anna & Tom 12.06.2027" autocomplete="off" aria-label="Gravurtext (bis 30 Zeichen)" aria-describedby="text-count text-warn">
           <div class="text-meta"><span class="tiny" id="text-arc" hidden></span><span class="tiny text-busy" id="text-busy" hidden>Vorschau wird berechnet …</span><span class="tiny" id="text-count">0/30</span></div>
-          <div class="warn" id="text-warn"></div>
+          <div class="warn" id="text-warn" aria-live="polite"></div>
           <div class="font-row" id="font-row"></div>
           <div class="style-row" id="style-row"></div>
           <div class="tiny left" id="style-hint"></div>
           <div id="text-color-box" hidden>
             <div class="tc-label">Schriftfarbe <span class="opt" id="text-color-name"></span></div>
-            <div class="swatches swatches-sm" id="text-swatches"></div>
+            <div class="swatches swatches-sm" id="text-swatches" role="group" aria-label="Schriftfarbe"></div>
+            <div class="tiny left warn-msg" id="text-color-same" hidden>Gleiche Farbe wie die Vase – die Schrift hebt sich dann kaum ab.</div>
             <div class="tiny left">Zweites Filament – die Druckdatei kommt als 3MF mit zwei Teilen (Körper + Schrift), Bambu Studio ordnet die Filamente automatisch zu.</div>
           </div>
           <label class="slider-row">
@@ -263,7 +270,7 @@
 
       <section class="ctrl" data-tab="farbe">
         <h3>Farbe <span class="opt" id="farbe-name">– PLA matt · glänzend · metallic</span></h3>
-        <div class="swatch-grid" id="swatches"></div>
+        <div class="swatch-grid" id="swatches" role="group" aria-label="Farbe der Vase"></div>
       </section>
 
       <!-- Extras (Untersetzer) gehören zum derzeit deaktivierten Zweitprodukt (js/produkte.js) — bleiben für die Reaktivierung erhalten -->
@@ -294,11 +301,18 @@
         <div class="tiny">Druckfertige STL in Millimetern – direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.<br>
           <button class="linkbtn" data-open-code="show">🔖 Design-Code anzeigen</button> · <button class="linkbtn" data-open-code="enter">Code eingeben</button></div>
       </div>
+      <!-- Desktop: kompakte Preisleiste unten im Panel, solange Preis oder „In den Warenkorb“ des Preisbereichs außer Sicht sind (app.js initPanelCta) -->
+      <div class="cta-mini" id="cta-mini" aria-hidden="true" inert>
+        <div class="cta-mini-in">
+          <div class="cta-mini-preis"><span class="price" id="cta-mini-price">24,90&nbsp;€</span><small><span class="price-unit">/ Stück</span> · <span id="cta-mini-ship">zzgl. <a href="/versand" target="_blank" rel="noopener">Versand</a></span></small></div>
+          <button type="button" class="btn btn-primary" id="cta-mini-order">In den Warenkorb ↗</button>
+        </div>
+      </div>
     </aside>
   </div>
 </section>
 
-<section class="scene-journal wrap"><div class="collection-heading"><div><p class="eyebrow">Gedruckt. Und genau so gedacht.</p><h2>Viele Formen.<br><em>Ein eigener Charakter.</em></h2></div><p>Matt, glänzend, mit Seidenschimmer.<br>Die feinen Schichten gehören zum Design.</p></div><span class="rail-hint">04 Szenen · wischen →</span><div class="scene-journal-grid"><figure><button class="image-expand" data-view-image="/img/studio/fdm-morning.webp" data-ki aria-label="Ein Platz im Licht. Bild vergrößern"><img src="/img/studio/fdm-morning.webp" width="1448" height="1086" alt="Zwei matte 3D-gedruckte Vasen in Salbei und Elfenbein mit feinen horizontalen Druckschichten auf Eiche" loading="lazy"><span>01 / SLOW MORNINGS <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Ein Platz im Licht.</h3><p>Salbei und Elfenbein. Mattes Filament, sanfte Formen und Morgenlicht.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-evening.webp" data-ki aria-label="Schicht für Schicht. Schimmer. Bild vergrößern"><img src="/img/studio/fdm-evening.webp" width="1448" height="1086" alt="Gehämmerte Kupfer-Silk-PLA-Vase und gerippte Graphitvase mit sichtbaren Drucklinien im Abendlicht" loading="lazy"><span>02 / AFTER HOURS <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Schicht für Schicht. Schimmer.</h3><p>Kupfer-Silk und mattes Graphit. Der Druck bleibt sichtbar, auch im Abendlicht.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-collection.webp" data-ki aria-label="Drei Formen. Deine Auswahl. Bild vergrößern"><img src="/img/studio/fdm-collection.webp" width="1448" height="1086" alt="Drei tatsächlich konfigurierbare 3D-gedruckte Vasen in Salbei, Terrakotta und Elfenbein" loading="lazy"><span>03 / SHAPES IN COMPANY <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Drei Formen. Deine Auswahl.</h3><p>Kugel, Flasche, Kurve. Unterschiedliche Silhouetten aus demselben Materialgedanken.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-gloss.webp" data-ki aria-label="Mehr Farbe. Mehr Glanz. Bild vergrößern"><img src="/img/studio/fdm-gloss.webp" width="1448" height="1086" alt="Glänzende feuerrote 3D-gedruckte Tropfenvase mit deutlich sichtbaren horizontalen Filamentlinien" loading="lazy"><span>04 / A LITTLE BOLDER <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Mehr Farbe. Mehr Glanz.</h3><p>Feuerrotes, glänzendes PLA. Feine Druckschichten treffen auf gedrehte Rippen.</p></figcaption></figure></div><p class="scene-disclosure">KI-generierte Inszenierungen auf Basis der Konfigurator-Modelle. Die Live-3D-Vorschau zeigt deine konkrete Form; Farben und Bilddetails können abweichen.</p></section>
+<section class="scene-journal wrap"><div class="collection-heading"><div><p class="eyebrow">Gedruckt. Und genau so gedacht.</p><h2>Viele Formen.<br><em>Ein eigener Charakter.</em></h2></div><p>Matt, glänzend, mit Seidenschimmer.<br>Die feinen Schichten gehören zum Design.</p></div><span class="rail-hint">04 Szenen · wischen →</span><div class="scene-journal-grid"><figure><button class="image-expand" data-view-image="/img/studio/fdm-morning.webp" data-ki aria-label="Ein Platz im Licht. Bild vergrößern"><img src="/img/studio/fdm-morning.webp" width="1448" height="1086" alt="Zwei matte 3D-gedruckte Vasen in Salbei und Elfenbein mit feinen horizontalen Druckschichten auf Eiche" loading="lazy"><span>01 / MORGENLICHT <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Ein Platz im Licht.</h3><p>Salbei und Elfenbein. Mattes Filament, sanfte Formen und Morgenlicht.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-evening.webp" data-ki aria-label="Schicht für Schicht. Schimmer. Bild vergrößern"><img src="/img/studio/fdm-evening.webp" width="1448" height="1086" alt="Gehämmerte Kupfer-Silk-PLA-Vase und gerippte Graphitvase mit sichtbaren Drucklinien im Abendlicht" loading="lazy"><span>02 / FEIERABEND <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Schicht für Schicht. Schimmer.</h3><p>Kupfer-Silk und mattes Graphit. Der Druck bleibt sichtbar, auch im Abendlicht.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-collection.webp" data-ki aria-label="Drei Formen. Deine Auswahl. Bild vergrößern"><img src="/img/studio/fdm-collection.webp" width="1448" height="1086" alt="Drei tatsächlich konfigurierbare 3D-gedruckte Vasen in Salbei, Terrakotta und Elfenbein" loading="lazy"><span>03 / IN GUTER GESELLSCHAFT <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Drei Formen. Deine Auswahl.</h3><p>Kugel, Flasche, Kurve. Unterschiedliche Silhouetten aus demselben Materialgedanken.</p></figcaption></figure><figure><button class="image-expand" data-view-image="/img/studio/fdm-gloss.webp" data-ki aria-label="Mehr Farbe. Mehr Glanz. Bild vergrößern"><img src="/img/studio/fdm-gloss.webp" width="1448" height="1086" alt="Glänzende feuerrote 3D-gedruckte Tropfenvase mit deutlich sichtbaren horizontalen Filamentlinien" loading="lazy"><span>04 / ETWAS MUTIGER <b>↗</b></span><mark class="ki-tag">KI-Inszenierung</mark></button><figcaption><h3>Mehr Farbe. Mehr Glanz.</h3><p>Feuerrotes, glänzendes PLA. Feine Druckschichten treffen auf gedrehte Rippen.</p></figcaption></figure></div><p class="scene-disclosure">KI-generierte Inszenierungen auf Basis der Konfigurator-Modelle. Die Live-3D-Vorschau zeigt deine konkrete Form; Farben und Bilddetails können abweichen.</p></section>
 <section class="usps-band">
   <div class="wrap grid3" id="usps"></div>
 </section>
@@ -535,15 +549,15 @@
 </dialog>
 
 <!-- Mobile Bottom-Bar (App-Shell) -->
-<dialog id="lists-modal">
+<dialog id="lists-modal" aria-labelledby="ls-title">
   <div class="confirm dc lw">
-    <div class="co-head"><h2>📋 Design-Listen</h2><button class="btn btn-ghost" id="ls-close">✕</button></div>
+    <div class="co-head"><h2 id="ls-title">📋 Design-Listen</h2><button class="btn btn-ghost" id="ls-close" aria-label="Schließen">✕</button></div>
     <div id="ls-body"></div>
   </div>
 </dialog>
-<dialog id="code-modal">
+<dialog id="code-modal" aria-labelledby="dc-title">
   <div class="confirm dc">
-    <div class="co-head"><h2>🔖 Design-Code</h2><button class="btn btn-ghost" id="dc-close">✕</button></div>
+    <div class="co-head"><h2 id="dc-title">🔖 Design-Code</h2><button class="btn btn-ghost" id="dc-close" aria-label="Schließen">✕</button></div>
     <p class="dc-lead">Dein aktuelles Design – Form, Muster, Gravur und Farbe – als kurzer Code. Notieren, teilen oder später wieder laden.</p>
     <div class="dc-codebox">
       <output id="dc-code" class="dc-code">…</output>
@@ -558,11 +572,11 @@
     <div class="dc-enter">
       <label for="dc-input" class="dc-enter-label">Code eingeben &amp; Design laden</label>
       <div class="dc-enter-row">
-        <input id="dc-input" placeholder="z. B. K7P-3QX" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="14">
+        <input id="dc-input" placeholder="z. B. K7P-3QX" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="14" aria-describedby="dc-err">
         <button class="btn btn-primary" id="dc-load">Laden</button>
       </div>
-      <div class="tiny err-msg" id="dc-err"></div>
-      <div class="tiny ok-msg" id="dc-msg"></div>
+      <div class="tiny err-msg" id="dc-err" role="alert"></div>
+      <div class="tiny ok-msg" id="dc-msg" role="status"></div>
     </div>
   </div>
 </dialog>
@@ -576,19 +590,19 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <!-- Foto-Shooting -->
-<dialog id="foto-modal">
+<dialog id="foto-modal" aria-labelledby="foto-title">
   <div class="foto-wrap">
-    <h2>📸 Dein Design in Szene</h2>
-    <p class="tiny">Tippe ein Bild an, um es als PNG zu speichern und zu teilen.</p>
+    <h2 id="foto-title">📸 Dein Design in Szene</h2>
+    <p class="tiny">Wähle ein Bild, um es als PNG zu speichern und zu teilen.</p>
     <div class="foto-grid" id="foto-grid"></div>
     <button class="btn btn-primary" id="foto-close">Fertig</button>
   </div>
 </dialog>
 
-<dialog id="scene-lightbox" class="scene-lightbox"><button class="lightbox-close" aria-label="Bild schließen">✕</button><img alt=""><p></p></dialog>
+<dialog id="scene-lightbox" class="scene-lightbox" aria-label="Bild in groß"><button class="lightbox-close" aria-label="Bild schließen">✕</button><img alt=""><p></p></dialog>
 <script type="module" src="js/app.js"></script>
 <script src="/js/pwa.js" defer></script>
-<script type="module" src="/js/mobile-home.js"></script>
+<!-- mobile-home.js (Handy-Startseite) lädt studio.js nur auf dem Handy nach -->
 <script type="module" src="/js/studio.js"></script>
 <script type="module" src="/js/surface-story.js"></script>
 </body>

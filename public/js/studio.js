@@ -3,6 +3,10 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { buildModel } from './geometry.js';
 import { STUDIO_DESIGNS, designConfig, designImage } from './studio-designs.js';
 import { makeStudio, makeObject } from './studio-scene.js';
+// Handy-Startseite (mobile-home.js samt Sheet/Muster-Vorschau) nur auf dem Handy laden — Desktop und Tablet brauchen sie nicht. Hier statt
+// als eigenes <script>: der Rest dieses Moduls liest data-world und braucht deren hero-select-Hörer, also erst nach ihrem Aufbau weiter
+// (index.html lädt sie per modulepreload früh vor).
+if(matchMedia('(max-width:700px)').matches){try{await import('./mobile-home.js');}catch(e){console.warn('Handy-Startseite nicht geladen',e);}}
 const $=s=>document.querySelector(s);
 const motion=matchMedia('(prefers-reduced-motion: reduce)');
 const SMALL=matchMedia('(max-width:700px)').matches; // Handy-Layout: Cover + Formenwelt-Karte; Desktop bleibt unverändert
@@ -10,10 +14,15 @@ const go=config=>window.dispatchEvent(new CustomEvent('ovju:studio-design',{deta
 const observer=new IntersectionObserver(entries=>entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');observer.unobserve(e.target);}}),{threshold:.06});
 for(const el of document.querySelectorAll('.collection-heading,.lab-copy,.editorial-copy,.studio-heading,.story-mark')){ // .story-mark: Bildzeichen baut sich beim Hereinscrollen Schicht für Schicht auf (studio.css)
  if(!motion.matches){el.classList.add('reveal');observer.observe(el);}}
-$('#design-grid').innerHTML=STUDIO_DESIGNS.map((d,i)=>`<button class="design-card" data-design="${i}" aria-label="${d.name} im Konfigurator weitergestalten"><div class="design-image"><img ${SMALL&&i>=2?'data-src':'src'}="${designImage(d)}" alt="${d.description}, KI-Inszenierung auf Basis des 3D-Modells" loading="${SMALL&&i<2?'eager':'lazy'}"${SMALL&&i>=2?' decoding="async"':''} width="800" height="900"><span class="design-number">0${i+1}</span><mark class="ki-tag">KI-Inszenierung</mark><span class="design-arrow">↗</span></div><div class="design-title"><h3>${d.name}</h3><span>${d.config.height/10} cm</span></div><p>${d.description}</p></button>`).join('');
+// Tastatur: ein fokussierter Knopf in einem noch nicht eingeblendeten Block (z. B. „Meine Silhouette übernehmen“) wird sofort sichtbar
+document.addEventListener('focusin',e=>{const r=e.target.closest?.('.reveal:not(.visible)');if(r){r.classList.add('visible');observer.unobserve(r);}});
+// Formenkarten: 700-px-Fassung (…-700.webp) für Anzeigen bis ≈ 400 CSS-px, das Original für hochauflösende Displays (srcset; Handy-Kacheln
+// ab Reihe 2 tragen data-srcset wie data-src, mobile-home.js setzt beides beim Heranscrollen)
+const cardSet=(d)=>{const src=designImage(d);return /^\/img\/studio\/[\w-]+\.webp$/.test(src)?`${src.replace(/\.webp$/,'-700.webp')} 700w, ${src} 1122w`:'';};
+$('#design-grid').innerHTML=STUDIO_DESIGNS.map((d,i)=>`<button class="design-card" data-design="${i}" aria-label="${d.name} im Konfigurator weitergestalten"><div class="design-image"><img ${SMALL&&i>=2?'data-src':'src'}="${designImage(d)}"${cardSet(d)?` ${SMALL&&i>=2?'data-srcset':'srcset'}="${cardSet(d)}" sizes="(max-width: 980px) 50vw, 400px"`:''} alt="${d.description}, KI-Inszenierung auf Basis des 3D-Modells" loading="${SMALL&&i<2?'eager':'lazy'}"${SMALL&&i>=2?' decoding="async"':''} width="800" height="900"><span class="design-number">0${i+1}</span><mark class="ki-tag">KI-Inszenierung</mark><span class="design-arrow">↗</span></div><div class="design-title"><h3>${d.name}</h3><span>${d.config.height/10} cm</span></div><p>${d.description}</p></button>`).join('');
 document.querySelectorAll('[data-design]').forEach(b=>b.addEventListener('click',()=>go(designConfig(STUDIO_DESIGNS[+b.dataset.design]))));
 // Handy: Kacheln ab Reihe 2 tragen data-src — mobile-home.js lädt sie beim Heranscrollen (IntersectionObserver, 600 px Vorlauf). Sicherheitsnetz: läuft die Handy-Startseite nicht (kein body.m-home), sofort laden
-if(SMALL)setTimeout(()=>{if(!document.body.classList.contains('m-home'))document.querySelectorAll('#design-grid img[data-src]').forEach(i=>{i.src=i.dataset.src;i.removeAttribute('data-src');});},4000);
+if(SMALL)setTimeout(()=>{if(!document.body.classList.contains('m-home'))document.querySelectorAll('#design-grid img[data-src]').forEach(i=>{if(i.dataset.srcset){i.srcset=i.dataset.srcset;i.removeAttribute('data-srcset');}i.src=i.dataset.src;i.removeAttribute('data-src');});},4000);
 // Handy-Wischreihen: Text nur auf der eingerasteten Karte (≥ 70 % sichtbar) – die angeschnittene Nachbarkarte blitzt nur mit ihrem Bild an, kein mitten im Wort abgeschnittener Fließtext
 if(SMALL)for(const row of document.querySelectorAll('.pattern-pair,.scene-journal-grid')){row.classList.add('rail-js');const io=new IntersectionObserver(es=>es.forEach(e=>e.target.classList.toggle('rail-current',e.intersectionRatio>=.7)),{root:row,threshold:[.7]});for(const c of row.children)io.observe(c);}
 // Formenreihe (#formen): Karten sind schmaler (58 %), also sind oft zwei zu ≥ 70 % sichtbar – „aktuell“ ist die eingerastete Karte am linken Rand;

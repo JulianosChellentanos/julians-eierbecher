@@ -4,6 +4,7 @@
 // Nachrichten:  { id, type: 'ping' }            → { id, ok, ready: true }
 //               { id, type: 'build', params }   → { id, ok, ms, geometry, inlay, saucer, info, stats }  (Geometrien als übertragbare Arrays)
 //               { id, type: 'export', config }  → { id, ok, ms, ex: { buffer, ext, mime } }
+//               { type: 'fonts', keys }          → (keine Antwort) Gravurschriften vorladen
 import { buildModel, buildSaucer } from './geometry.js';
 import { loadFont, makeExport } from './modelfactory.js';
 import { printStats } from './printcheck.js';
@@ -64,6 +65,7 @@ self.onmessage = async ({ data }) => {
   const { id, type } = data || {};
   try {
     if (type === 'ping') { self.postMessage({ id, ok: true, ready: true }); return; }
+    if (type === 'fonts') { for (const k of data.keys || []) loadFont(k).catch(() => {}); return; }
     if (type === 'build') {
       const { res, transfer } = await build(data.params);
       self.postMessage({ id, ok: true, ...res }, transfer);
@@ -81,6 +83,5 @@ self.onmessage = async ({ data }) => {
   }
 };
 
-// Standardschriften vorwärmen (aus dem HTTP-Cache, kostet kaum etwas) — die erste Gravur startet dann ohne Ladezeit
-loadFont('helvetiker').catch(() => {});
-loadFont('droid_sans').catch(() => {});
+// Gravurschriften (≈ 150 kB) lädt der Worker erst bei Bedarf: build() mit Text bzw. die Seite meldet „fonts“, sobald jemand die Gravur
+// ansteuert (model-builder.js preloadFonts) — Besucher ohne Gravur laden sie nie, die erste Gravur startet trotzdem ohne Wartezeit

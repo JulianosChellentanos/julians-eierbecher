@@ -70,16 +70,19 @@ export function setMobilePrice(text, sub) {
 // ---------------------------------------------------------------------------
 function renderTabs() {
   const bar = $('#mtabs');
+  // aria-pressed: der gewählte Bereich ist auch für Screenreader erkennbar (nicht nur über die Klasse active)
+  bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Bereiche des Konfigurators');
   bar.innerHTML = TABS.filter(([k]) => tabOrder.includes(k)).map(([k, icon, label]) => `
-    <button class="mtab ${k === activeTab ? 'active' : ''}" data-tab="${k}">
-      <span class="mtab-ic">${icon}</span><span>${label}</span></button>`).join('');
+    <button class="mtab ${k === activeTab ? 'active' : ''}" data-tab="${k}" aria-pressed="${k === activeTab}">
+      <span class="mtab-ic" aria-hidden="true">${icon}</span><span>${label}</span></button>`).join('');
   bar.querySelectorAll('.mtab[data-tab]').forEach((b) => b.addEventListener('click', () => {
     buzz();
     activateTab(b.dataset.tab, undefined, true);
   }));
 }
 
-export function activateTab(key, dir, byUser = false) {
+/** Bereich wählen. opts.springen = false: ohne den eigenen Sprung zum Panel-Anfang (mobile-home.js „Weiter: …“ setzt selbst EIN Ziel) */
+export function activateTab(key, dir, byUser = false, { springen = true } = {}) {
   if (!tabOrder.includes(key)) key = tabOrder[0];
   const prevIdx = tabOrder.indexOf(activeTab);
   const nextIdx = tabOrder.indexOf(key);
@@ -91,7 +94,7 @@ export function activateTab(key, dir, byUser = false) {
     sec.classList.remove('from-left', 'from-right');
     if (on) sec.classList.add(direction === 'right' ? 'from-right' : 'from-left');
   });
-  $$('.mtab[data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === key));
+  $$('.mtab[data-tab]').forEach((b) => { const on = b.dataset.tab === key; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); });
   // Produkt-Umschalter gehört zur Form — mobil nur dort zeigen, und nur, wenn er überhaupt Produkte enthält (bei nur
   // einem bestellbaren Produkt bleibt er leer und versteckt, siehe renderProductTabs in app.js / produkte.js);
   // der Vasen-Hinweis gehört überall nur zum Form-Tab
@@ -100,7 +103,7 @@ export function activateTab(key, dir, byUser = false) {
   // Mobile: Inhalt des neuen Tabs direkt unter die Tab-Leiste holen (falls tief gescrollt)
   const tabs = $('#mtabs');
   const panel = $('.panel');
-  if (IS_MOBILE && tabs && panel) {
+  if (IS_MOBILE && tabs && panel && springen) {
     const stuckBottom = tabs.getBoundingClientRect().bottom;
     const panelTop = panel.getBoundingClientRect().top;
     if (panelTop < stuckBottom - 4) {
@@ -194,16 +197,34 @@ function initBottomBar() {
 // ---------------------------------------------------------------------------
 // Vollbild-3D
 // ---------------------------------------------------------------------------
+// Wie die Sheets (mobile-sheet.js): ein eigener History-Eintrag je Öffnung — Android-Zurück und Escape schließen das Vollbild, statt die
+// Seite zu verlassen; ✕ nimmt den eigenen Eintrag wieder weg (history.back), damit kein toter Eintrag bleibt.
 function initFullscreen() {
   const btn = $('#btn-fullscreen');
   const stage = $('.stage');
-  btn.addEventListener('click', () => {
-    buzz();
-    const on = stage.classList.toggle('stage-full');
+  let eintrag = false; // steht unser Eintrag ({ mFull }) gerade oben in der History?
+  const voll = () => stage.classList.contains('stage-full');
+  const setze = (on) => {
+    stage.classList.toggle('stage-full', on);
     btn.textContent = on ? '✕' : '⤢';
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? 'Vollbild schließen' : '3D-Vorschau im Vollbild');
     document.body.classList.toggle('no-scroll', on);
     window.dispatchEvent(new Event('resize'));
+  };
+  const schliessen = () => {
+    if (!voll()) return;
+    if (eintrag && history.state && history.state.mFull) history.back(); // popstate schließt
+    else { eintrag = false; setze(false); }
+  };
+  btn.addEventListener('click', () => {
+    buzz();
+    if (voll()) { schliessen(); return; }
+    setze(true);
+    try { history.pushState({ ...(history.state || {}), mFull: 1 }, ''); eintrag = true; } catch { eintrag = false; }
   });
+  window.addEventListener('popstate', () => { if (voll()) { eintrag = false; setze(false); } });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && voll()) { e.preventDefault(); schliessen(); } });
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +247,9 @@ export function initMobileShell({ product }) {
   dice.setAttribute('aria-label', 'Zufälliges Design');
   dice.addEventListener('click', () => { buzz(12); $('#btn-random').click(); });
   $('.stage').appendChild(dice);
+  // „Zurücksetzen“ wohnt am Desktop im Panel-Kopf, der hier ausgeblendet ist → als Textknopf ans Panel-Ende (Klick-Logik bleibt in app.js)
+  const reset = $('#btn-reset');
+  if (reset) { const row = document.createElement('p'); row.className = 'm-reset-row'; reset.className = 'linkbtn'; row.appendChild(reset); $('.panel').appendChild(row); }
   // Haptik auf allen Auswahl-Buttons
   $('.panel').addEventListener('click', (e) => {
     if (e.target.closest('.pattern-btn, .flow-btn, .preset-btn, .product-tab, .font-chip, .swatch, .check-row')) buzz();

@@ -56,6 +56,11 @@ Faustregel: Creme und Tinte tragen, Terrakotta setzt den Akzent, Salbei beruhigt
 
 Die Website nutzt zusätzlich ein dunkles **Studio-Grün** (`#283226`, `#303b2b`, `#35452b`) für Ankündigungsleiste, Footer, dunkle Sektionen und Knöpfe. Es ist eine Oberflächenfarbe der Seite, keine Logofarbe: Auf Studio-Grün steht das Logo in der hellen Variante (`formsam-logo-hell.svg`).
 
+**Studio-Palette der Website** (bewusst etwas kühler als Creme/Tinte, `public/css/studio.css`): Grund `#f8f6f0`, Fläche `#eeebe2`,
+Karte `#fffdf8`, Text `#292d25`, Nebentext `#66695d` (≥ 4,5 : 1 auf allen Gründen), Akzent `#b65337`; dunkel Grund `#20241e`,
+Karte `#282e25`, Text `#f1eee3`. Die Browserleiste (`theme-color`) folgt dem Seitengrund. Mails, Belege, Wartungs- und Offline-Seite
+und das Manifest bleiben bei den Markenfarben oben.
+
 ## Schriften
 
 - **Fraunces** — Überschriften, Claim, Zitate. Warm und weich (Achsen: `font-variation-settings: 'SOFT' 60, 'WONK' 0`), Gewicht 400–500, leicht enge Laufweite (−0,02 em).
