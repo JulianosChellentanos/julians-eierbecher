@@ -11,6 +11,7 @@ import { createMailer, baseUrlFor, mailSettings } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
   widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse } from './lib/mail-templates.js';
+import { isEmail, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -204,6 +205,14 @@ function farbSperre(items) {
   }
   return null;
 }
+/**
+ * Wertprüfung der Positionen (Quote, PayPal, Checkout; lib/eingaben.js pruefePositionen): Form, Muster, Schrift, Stil, Rand und Verlauf
+ * müssen bekannt sein, Zahlen in den Grenzen der Regler, Texte begrenzt (Gravur 40, Farbname 80), colorHex nur #rrggbb, Farbe
+ * (und bei Farbschrift die Schriftfarbe) muss es in den Einstellungen geben → Meldung (→ 400) oder null
+ */
+const positionenFehler = (items) => pruefePositionen(items, {
+  farbe: colorOfItem, schriftfarbe: (id) => (settings.colors || []).find((x) => x?.id === id) || null,
+});
 
 const DEFAULT_SETTINGS = {
   adminKey: 'formsam-admin',
@@ -910,8 +919,7 @@ async function wartungTor(req, res, p, url) {
 // ---------------------------------------------------------------------------
 const mailer = createMailer({ dataDir: DATA, getSettings: () => settings, log: (m) => console.log('✉️ ', m) });
 const MAIL_KEYS = ['enabled', 'host', 'port', 'secure', 'user', 'pass', 'from', 'fromName', 'replyTo', 'adminTo', 'adminCopy', 'autoStatusMails', 'publicUrl', 'allowSelfSigned'];
-const EMAIL_RE = /^[^\s@<>,;"()]+@[^\s@<>,;"()]+\.[^\s@<>,;"()]+$/;
-const isEmail = (s) => EMAIL_RE.test(String(s || '').trim());
+// isEmail kommt aus lib/eingaben.js (wie der Mailversand, aber linear und höchstens 254 Zeichen)
 const customerAddress = (order) => ({ name: String(order.customer?.name || '').trim(), email: String(order.customer?.email || '').trim().toLowerCase() });
 const httpError = (code, message) => Object.assign(new Error(message), { httpCode: code });
 /** Einstellungen fürs Admin-UI/Export: Geheimnisse maskiert (leer + …Set) — SMTP-Passwort, PayPal-Secret und Admin-Passwort verlassen den Server nie. */
@@ -1114,7 +1122,7 @@ function colorOfItem(item) {
   if (id) { const c = cols.find((x) => x.id === id); if (c) return c; }
   const raw = String(item?.colorName || '').trim();
   if (!raw) return null;
-  const plain = raw.replace(/\s*(?:·\s*[^·()]*|\([^()]*\))\s*$/, '').trim();
+  const plain = ohneFinish(raw);   // linear (der frühere Ausdruck blockierte bei langen Namen den ganzen Server)
   return cols.find((x) => x.name === raw) || (plain && cols.find((x) => x.name === plain)) || null;
 }
 /**
@@ -2160,6 +2168,8 @@ function pruefeKasse(data, { garantie = null } = {}) {
   const items = data?.items;
   if (!Array.isArray(items) || !items.length) return { status: 400, error: 'Warenkorb ist leer', customer };
   if (items.length > MAX_POSITIONEN) return { status: 400, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.`, customer };
+  const ungueltig = positionenFehler(items);   // Werte wie im Konfigurator, bekannte Farben (lib/eingaben.js)
+  if (ungueltig) return { status: 400, error: ungueltig, customer };
   if (garantie) return { customer, items, totals: garantie.totals };
   // Produktschalter (derzeit Eierbecher) und aus dem Shop genommene Farben vor der Preisberechnung abweisen
   const sperre = produktSperre(items) || farbSperre(items);
@@ -2627,13 +2637,16 @@ const server = http.createServer(async (req, res) => {
     }
     // --- Kundenkonten
     if (req.method === 'POST' && p === '/api/auth/register') {
-      const { name, email, password } = JSON.parse((await readBody(req)).toString('utf8'));
-      const mail = String(email || '').trim().toLowerCase();
-      if (!name?.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return send(res, 400, { ok: false, error: 'Bitte Name und gültige E-Mail angeben' });
+      const { name: rohName, email, password } = await readJson(req, 16 * 1024);
+      // Name 2–80 Zeichen ohne < >, E-Mail wie beim Versand (isEmail, ≤ 254) — sonst entstünde ein Konto, an das nie eine Mail geht
+      const { name, error: nameFehler } = kontoName(rohName);
+      if (nameFehler) return send(res, 400, { ok: false, error: nameFehler });
+      const mail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+      if (!isEmail(mail)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an.' });
       if (String(password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
       if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto – bitte anmelden' });
       const salt = crypto.randomBytes(16).toString('hex');
-      const user = { id: crypto.randomUUID(), name: name.trim(), email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
+      const user = { id: crypto.randomUUID(), name, email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
       const verifyToken = newVerifyToken(user);   // Bestätigungslink kommt mit der Willkommensmail
       users.push(user);
       await saveUsers();
@@ -2757,8 +2770,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/auth/address') {
       const u = userFromReq(req);
       if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { street, zip, city } = JSON.parse((await readBody(req)).toString('utf8'));
-      u.address = { street: street || '', zip: zip || '', city: city || '' };
+      const { address, error } = kontoAdresse(await readJson(req, 16 * 1024));   // nur Text: Straße ≤ 120, PLZ ≤ 10, Ort ≤ 80
+      if (error) return send(res, 400, { ok: false, error });
+      u.address = address;
       await saveUsers();
       return send(res, 200, { ok: true });
     }
@@ -2836,11 +2850,17 @@ const server = http.createServer(async (req, res) => {
 
     // --- Design-Codes: speichern (POST) & laden (GET /api/design/CODE)
     if (req.method === 'POST' && p === '/api/design') {
-      let cfg;
-      try { cfg = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')).config; } catch { cfg = null; }
+      const cfg = (await readJson(req, 64 * 1024)).config;
       if (!cfg || !['vase', 'eierbecher'].includes(cfg.product)) return send(res, 400, { ok: false, error: 'Ungültiges Design' });
-      const { code, canon, isNew } = designCode(cfg);
+      let dc;
+      try { dc = designCode(cfg); } catch { return send(res, 400, { ok: false, error: 'Ungültiges Design' }); }   // z. B. customPoints [null]
+      const { code, canon, isNew } = dc;
       if (isNew) {
+        // Neue Codes nur mit Werten, die der Konfigurator erzeugen kann (lib/eingaben.js) und für bestellbare Produkte —
+        // bestehende Codes bleiben unverändert gültig (gleiches Design = gleicher Code)
+        const k = pruefeKonfig(cfg, { farbeBekannt: (id) => (settings.colors || []).some((c) => c?.id === id) });
+        if (k) return send(res, 400, { ok: false, error: `Ungültiges Design (${KONFIG_LABEL[k] || k})` });
+        if (!produktAktiv(cfg.product)) return send(res, 400, { ok: false, error: EIERBECHER_GESPERRT });
         designs[code] = { config: canon, createdAt: Date.now(), loads: 0 };
         await saveDesigns();
       }
@@ -2916,9 +2936,9 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish, aufpreis }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis) })));
     }
     if (req.method === 'POST' && p === '/api/quote') {
-      const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { items, couponCode } = await readJson(req);
       if (Array.isArray(items) && items.length > MAX_POSITIONEN) return send(res, 400, { ok: false, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.` });
-      const sperre = produktSperre(items) || farbSperre(items);
+      const sperre = (Array.isArray(items) && positionenFehler(items)) || produktSperre(items) || farbSperre(items);
       if (sperre) return send(res, 400, { ok: false, error: sperre });
       const t = computeTotals(Array.isArray(items) ? items : [], couponCode);
       return send(res, 200, {

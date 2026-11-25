@@ -263,11 +263,17 @@ export function openAccount() {
 }
 
 async function saveAddress() {
-  await fetch('/api/auth/address', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ street: $('#acc-street').value, zip: $('#acc-zip').value, city: $('#acc-city').value }),
-  });
-  currentUser.address = { street: $('#acc-street').value, zip: $('#acc-zip').value, city: $('#acc-city').value };
+  const address = { street: $('#acc-street').value.trim(), zip: $('#acc-zip').value.trim(), city: $('#acc-city').value.trim() };
+  let r = null;
+  try {
+    const res = await fetch('/api/auth/address', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }, body: JSON.stringify(address),
+    });
+    r = await res.json().catch(() => null);
+  } catch { r = { ok: false, error: 'Keine Verbindung zum Shop – bitte Internetverbindung prüfen.' }; }
+  // Server prüft Längen (Straße 120, PLZ 10, Ort 80) — Meldung statt „Gespeichert“
+  if (!r?.ok) { $('#acc-addr-msg').textContent = `⚠️ ${r?.error || 'Das hat gerade nicht geklappt.'}`; return; }
+  currentUser.address = address;
   $('#acc-addr-msg').textContent = '✅ Gespeichert';
   setTimeout(() => $('#acc-addr-msg').textContent = '', 2000);
 }
