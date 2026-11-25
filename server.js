@@ -1,7 +1,7 @@
 // formsam — Shop-Server: Statik + Pricing + Warenkorb-Checkout + Rechnungen + Admin + PayPal + Rechtsseiten + Widerruf
 // Start: node server.js   →   http://<host>:4488   (Admin: /admin — bei einer Neuinstallation steht ein zufälliges Admin-Passwort einmal im Protokoll)
 import http from 'node:http';
-import { createGzip, gzipSync, constants as zc } from 'node:zlib';
+import * as zlib from 'node:zlib';   // Auslieferung: gzip 9 und (falls vorhanden) Brotli 11 einmal packen, siehe gepackt()
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { mkdir, writeFile, readdir, readFile, rm, rename, open, stat, statfs, link } from 'node:fs/promises';
 import path from 'node:path';
@@ -3427,24 +3427,154 @@ function sitemapXml() {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join('\n')}\n</urlset>\n`;
 }
 /**
- * Startseite (public/index.html) mit Canonical und Vorschau-Adressen aus der öffentlichen Adresse. Zwischengespeichert je
- * Dateistand und Adresse; das ETag kommt aus dem Ergebnis (ändert sich also auch, wenn nur die Adresse im Admin wechselt).
+ * Startseite (public/index.html) mit Canonical, Vorschau-Adressen und strukturierten Daten (JSON-LD) aus der öffentlichen Adresse
+ * und den Firmendaten. Zwischengespeichert je Dateistand, Adresse und JSON-LD; das ETag kommt aus dem Ergebnis (ändert sich also
+ * auch, wenn im Admin nur Adresse oder Firmendaten wechseln). Gepackt wird über gepackt() wie die statischen Dateien.
  */
-let startseiteCache = null;   // { key, html, gz, etag }
+let startseiteCache = null;   // { key, dateiKey, roh, html, basis }
 function startseite() {
   const file = path.join(PUBLIC, 'index.html');
   if (!existsSync(file)) return null;
-  const st = statSync(file), base = oeffentlicheAdresse();
-  const key = `${st.mtimeMs}|${st.size}|${base}`;
+  const st = statSync(file), base = oeffentlicheAdresse(), dateiKey = `${st.mtimeMs}|${st.size}`;
+  const roh = startseiteCache?.dateiKey === dateiKey ? startseiteCache.roh : readFileSync(file, 'utf8');
+  const ld = startseiteJsonLd(roh, base);
+  const key = `${dateiKey}|${base}|${ld}`;
   if (startseiteCache?.key === key) return startseiteCache;
   const b = esc(base);
-  const html = readFileSync(file, 'utf8')
+  const html = roh
     .replace(/(<link rel="canonical" href=")[^"]*(")/, `$1${b}/$2`)
     .replace(/(<meta property="og:url" content=")[^"]*(")/, `$1${b}/$2`)
-    .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*?(\/img\/brand\/og\.jpg")/g, `$1${b}$2`);
-  const etag = `"s-${crypto.createHash('sha1').update(html).digest('base64url').slice(0, 20)}"`;
-  startseiteCache = { key, html, gz: gzipSync(html, { level: zc.Z_BEST_SPEED }), etag };
+    .replace(/(<meta (?:property="og:image"|name="twitter:image") content=")[^"]*?(\/img\/brand\/og\.jpg")/g, `$1${b}$2`)
+    .replace('</head>', () => `  <script type="application/ld+json">${ld}</script>\n</head>`);
+  const basis = `s-${crypto.createHash('sha1').update(html).digest('base64url').slice(0, 20)}`;
+  startseiteCache = { key, dateiKey, roh, html, basis };
   return startseiteCache;
+}
+/**
+ * Strukturierte Daten der Startseite (schema.org, ein @graph): Organization (Name, Adresse des Shops, Logo; E-Mail, Telefon und
+ * Anschrift nur, wenn eingetragen und kein Platzhalter) und WebSite; FAQPage aus content.json nur, solange die Startseite den
+ * FAQ-Bereich zeigt (#faq-list, den app.js aus content.json füllt, vorhanden und nicht versteckt). Bewusst kein Product/Offer:
+ * Die Preise hängen von der Gestaltung ab (Größe, Muster, Gravur, Aktionen) — ein fester Ab-Preis wiche vom Shop ab.
+ */
+function startseiteJsonLd(html, base) {
+  const co = settings.company || {}, t = (v) => String(v ?? '').trim();
+  const org = { '@type': 'Organization', '@id': `${base}/#organisation`, name: t(co.name) || BRAND, url: `${base}/`, logo: `${base}/img/icons/icon-512.png` };
+  if (isEmail(t(co.email))) org.email = t(co.email);
+  if (t(co.phone)) org.telephone = t(co.phone);
+  const platzhalter = /musterstra(ß|ss)e|^0{5}$|musterstadt/i;   // wie PLATZHALTER_RE in lib/legal.js
+  if ([co.street, co.zip, co.city].every((v) => t(v) && !platzhalter.test(t(v)))) {
+    const land = t(co.country);
+    org.address = { '@type': 'PostalAddress', streetAddress: t(co.street), postalCode: t(co.zip), addressLocality: t(co.city),
+      addressCountry: !land || /^(deutschland|germany|de)$/i.test(land) ? 'DE' : land };
+  }
+  const graph = [org, { '@type': 'WebSite', '@id': `${base}/#website`, name: BRAND, url: `${base}/`, inLanguage: 'de-DE', publisher: { '@id': org['@id'] } }];
+  const faq = startseiteFaq(html);
+  if (faq.length) {
+    graph.push({ '@type': 'FAQPage', '@id': `${base}/#faq`, mainEntity: faq.map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })) });
+  }
+  // „<“ maskiert: kein „</script>“ aus Firmendaten oder Texten
+  return JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }).replace(/</g, '\\u003c');
+}
+let faqCache = null;   // { key, liste } — content.json je Dateistand
+/** FAQ aus content.json als Text (Lieferzeit/-gebiet wie im Shop eingesetzt) — leer, wenn die Startseite keinen sichtbaren FAQ-Bereich hat */
+function startseiteFaq(html) {
+  const tags = html.match(/<[a-z]+\b[^>]*\bid="faq(?:-list)?"[^>]*>/gi) || [];
+  if (!tags.some((x) => /id="faq-list"/.test(x)) || tags.some((x) => /\shidden(?=[\s=>/])/i.test(x))) return [];
+  const file = path.join(PUBLIC, 'content.json');
+  let st;
+  try { st = statSync(file); } catch { return []; }
+  const key = `${st.mtimeMs}|${st.size}`;
+  if (faqCache?.key !== key) {
+    let liste = [];
+    try { liste = (JSON.parse(readFileSync(file, 'utf8')).faq || []).filter((f) => f && typeof f.q === 'string' && typeof f.a === 'string'); } catch { liste = []; }
+    faqCache = { key, liste };
+  }
+  const lz = lieferzeitText(settings), lg = String(settings.shop?.liefergebiet || '').trim() || 'Deutschland';
+  const text = (s) => s.replace(/<span data-lieferzeit>[^<]*<\/span>/g, lz).replace(/<span data-liefergebiet>[^<]*<\/span>/g, lg)
+    .replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&shy;/g, '').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ').trim();
+  return faqCache.liste.map((f) => ({ q: text(f.q), a: text(f.a) })).filter((f) => f.q && f.a);
+}
+
+// ---------------------------------------------------------------------------
+// Kompression der Auslieferung: komprimierbare Dateien (HTML, CSS, JS, JSON, SVG, Manifest), die Startseite und die Rechtsseiten
+// werden einmal mit gzip (Stufe 9) und — wenn node:zlib es kann — Brotli (Qualität 11) gepackt und im Speicher gehalten (Schlüssel:
+// Pfad + mtime + Größe bzw. Inhalts-Hash; ein neuer Stand ersetzt den alten). Brotli 11 braucht für three.js gut eine Sekunde und
+// läuft deshalb nacheinander im Hintergrund (Threadpool); bis es fertig ist, geht gzip raus. Ausgeliefert wird je Accept-Encoding
+// (q-Werte zählen, „gzip;q=0“ = nicht erwünscht), mit Content-Length und Vary: Accept-Encoding auch auf der ungepackten Fassung.
+// Jede Fassung hat ihr eigenes ETag (…-gz, …-br); If-None-Match ist tolerant (Liste, W/ — z. B. von einem Proxy —, *).
+// ---------------------------------------------------------------------------
+const KOMPRIMIERBAR = new Set(['.html', '.css', '.js', '.json', '.svg', '.webmanifest']);
+const PACK_MIN = 1024, PACK_MAX = 8 * 1024 * 1024;   // Kleinstdateien lohnen nicht; sehr große Textdateien (gibt es in public/ nicht) ungepackt
+const BROTLI = typeof zlib.brotliCompress === 'function';
+const packeMit = (fn, buf, opts) => new Promise((ok, fail) => fn(buf, opts, (err, out) => (err ? fail(err) : ok(out))));
+const packCache = new Map();   // Name (Dateipfad, „startseite“, „recht:<seite>“) → { key, gz, br, gzP, brP } — gz/br: Buffer, sobald fertig
+let brotliKette = Promise.resolve();
+/** Gepackte Fassungen zu einem Inhalt (laden() → Buffer), je Name nur der aktuelle Stand (key) */
+function gepackt(name, key, laden) {
+  const alt = packCache.get(name);
+  if (alt?.key === key) return alt;
+  const e = { key, gz: null, br: null };
+  const roh = Promise.resolve().then(laden);
+  e.gzP = roh.then((buf) => packeMit(zlib.gzip, buf, { level: zlib.constants.Z_BEST_COMPRESSION })).then((b) => (e.gz = b));
+  if (BROTLI) {
+    e.brP = brotliKette = brotliKette.catch(() => {}).then(() => roh).then((buf) => packeMit(zlib.brotliCompress, buf, {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length },
+    })).then((b) => (e.br = b));
+  }
+  // Fehler (Datei gerade weg, kein Speicher): Eintrag verwerfen — ausgeliefert wird dann ungepackt
+  Promise.allSettled([e.gzP, e.brP].filter(Boolean)).then((r) => { if (r.some((x) => x.status === 'rejected') && packCache.get(name) === e) packCache.delete(name); });
+  packCache.set(name, e);
+  return e;
+}
+/** Accept-Encoding → Gewichte { br, gzip } (q-Werte; „*“ gilt für Ungenanntes; Brotli nur, wenn node:zlib es kann) */
+function kodierungen(req) {
+  const q = {};
+  for (const teil of String(req.headers['accept-encoding'] || '').slice(0, 500).toLowerCase().split(',')) {
+    const [name, ...par] = teil.split(';').map((x) => x.trim());
+    if (!name) continue;
+    const m = par.map((x) => x.match(/^q\s*=\s*([0-9.]+)$/)).find(Boolean);
+    const w = m ? Number(m[1]) : 1;
+    q[name] = Number.isFinite(w) ? w : 0;
+  }
+  const w = (n) => (n in q ? q[n] : '*' in q ? q['*'] : 0);
+  return { br: BROTLI ? w('br') : 0, gzip: Math.max(w('gzip'), q['x-gzip'] || 0) };
+}
+/** Fassung wählen: Brotli, sobald fertig (bei gleichem oder höherem q), sonst gzip; will der Browser nur Brotli, darauf warten → [kodierung, Buffer] */
+async function packWahl(q, e) {
+  if (q.br > 0 && e.br && q.br >= q.gzip) return ['br', e.br];
+  if (q.gzip > 0) return ['gzip', e.gz || await e.gzP];
+  if (q.br > 0 && e.brP) return ['br', e.br || await e.brP];
+  return [null, null];
+}
+const etagFuer = (basis, enc) => `"${basis}${enc === 'br' ? '-br' : enc === 'gzip' ? '-gz' : ''}"`;
+/** If-None-Match (Liste, W/, *): ETag einer noch gültigen Fassung, die der Browser annimmt → für die 304-Antwort, sonst null */
+function etagTreffer(req, basis, q, packbar) {
+  const inm = String(req.headers['if-none-match'] || '').slice(0, 2000);
+  if (!inm) return null;
+  const tokens = inm.split(',').map((x) => x.trim().replace(/^W\//, ''));
+  const fassungen = [null, ...(packbar && q.gzip > 0 ? ['gzip'] : []), ...(packbar && q.br > 0 ? ['br'] : [])];
+  if (tokens.includes('*')) return etagFuer(basis, packbar && q.gzip > 0 ? 'gzip' : null);
+  const f = fassungen.find((x) => tokens.includes(etagFuer(basis, x)));
+  return f === undefined ? null : etagFuer(basis, f);
+}
+/** Text-Antwort (Startseite, Rechtsseiten) gepackt aus dem Speicher; HEAD ohne Inhalt */
+async function sendeGepackt(req, res, code, headers, name, text, { etagBasis = null } = {}) {
+  const buf = Buffer.from(text);
+  const q = kodierungen(req), packbar = buf.length > PACK_MIN;
+  headers = { ...headers, Vary: 'Accept-Encoding' };
+  if (etagBasis) {
+    const treffer = etagTreffer(req, etagBasis, q, packbar);
+    if (treffer) { res.writeHead(304, { ...headers, ETag: treffer }); return res.end(); }
+  }
+  let enc = null, body = buf;
+  if (packbar) {
+    const key = etagBasis || crypto.createHash('sha1').update(buf).digest('base64url');
+    const [k, b] = await packWahl(q, gepackt(name, key, () => buf)).catch(() => [null, null]);
+    if (b) { enc = k; body = b; }
+  }
+  res.writeHead(code, { ...headers, ...(etagBasis ? { ETag: etagFuer(etagBasis, enc) } : {}), ...(enc ? { 'Content-Encoding': enc } : {}), 'Content-Length': body.length });
+  return res.end(req.method === 'HEAD' ? undefined : body);
 }
 
 /**
@@ -5089,15 +5219,11 @@ const server = http.createServer(async (req, res) => {
         } catch (err) { console.error(`Rechtsseite /${slug} fehlgeschlagen:`, err?.message || err); }
       }
       const out = code === 200 ? html : code === 503 ? legalFallbackHTML(slug) : 'Nicht gefunden';
-      // gzip wie bei den statischen Dateien (die Seiten sind 40–60 KB, komprimiert etwa ein Viertel)
-      const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '') && Buffer.byteLength(out) > 1024;
-      res.writeHead(code, {
-        'Content-Type': code === 404 ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', Vary: 'Accept-Encoding',
-        ...(gz ? { 'Content-Encoding': 'gzip' } : {}),
+      // gepackt wie die statischen Dateien (die Seiten sind 40–60 KB; je Inhalt einmal gzip 9/Brotli, siehe sendeGepackt)
+      return sendeGepackt(req, res, code, {
+        'Content-Type': code === 404 ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-cache',
         ...(code === 503 ? { 'Retry-After': '300' } : {}),
-      });
-      if (req.method === 'HEAD') return res.end();
-      return res.end(gz ? gzipSync(out, { level: zc.Z_BEST_SPEED }) : out);
+      }, `recht:${slug}`, out);
     }
 
     // --- robots.txt und sitemap.xml aus der öffentlichen Adresse (robots.txt ist auch im Wartungsmodus erreichbar: „Disallow: /“)
@@ -5111,14 +5237,7 @@ const server = http.createServer(async (req, res) => {
     // --- Startseite: Canonical und Vorschau-Adressen aus der öffentlichen Adresse (sonst wie eine statische HTML-Datei)
     if ((p === '/' || p === '/index.html') && (req.method === 'GET' || req.method === 'HEAD')) {
       const sp = startseite();
-      if (sp) {
-        const headers = { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache', ETag: sp.etag, Vary: 'Accept-Encoding' };
-        if (req.headers['if-none-match'] === sp.etag) { res.writeHead(304, headers); return res.end(); }
-        const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
-        const body = gz ? sp.gz : Buffer.from(sp.html);
-        res.writeHead(200, { ...headers, ...(gz ? { 'Content-Encoding': 'gzip' } : {}), 'Content-Length': body.length });
-        return res.end(req.method === 'HEAD' ? undefined : body);
-      }
+      if (sp) return sendeGepackt(req, res, 200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' }, 'startseite', sp.html, { etagBasis: sp.basis });
     }
 
     // --- Unbekannte API-Adresse bzw. Methode: JSON statt Datei-Suche (405 nur für bekannte Nur-Lese-Adressen)
@@ -5179,22 +5298,21 @@ const server = http.createServer(async (req, res) => {
     // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe, gzip-Fassung mit eigenem ETag)
     const isAsset = p.startsWith('/vendor/') || p.startsWith('/fonts/') || p.startsWith('/env/') || p.startsWith('/img/gallery/');
     headers['Cache-Control'] = isAsset ? 'public, max-age=2592000, immutable' : 'no-cache';
-    const compressible = ['.html', '.css', '.js', '.json', '.svg'].includes(ext);
-    const gz = compressible && /\bgzip\b/.test(String(req.headers['accept-encoding'] || '').slice(0, 500)) && stat.size > 1024;
-    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}${gz ? '-gz' : ''}"`;
-    headers.ETag = etag;
-    if (compressible) headers.Vary = 'Accept-Encoding';
-    // If-None-Match tolerant: Liste, schwache ETags (W/ — z. B. von einem Proxy, der selbst komprimiert) und *
-    const inm = String(req.headers['if-none-match'] || '').slice(0, 2000);
-    if (inm && inm.split(',').some((t) => { const v = t.trim(); return v === '*' || v.replace(/^W\//, '') === etag; })) {
-      res.writeHead(304, headers);
-      return res.end();
+    // Text-Dateien gepackt aus dem Speicher (gepackt: gzip 9 / Brotli 11 je Pfad + mtime + Größe), ETag je Fassung (…-gz, …-br),
+    // Vary auch auf der ungepackten Fassung; If-None-Match tolerant (etagTreffer)
+    if (KOMPRIMIERBAR.has(ext)) headers.Vary = 'Accept-Encoding';
+    const packbar = KOMPRIMIERBAR.has(ext) && stat.size > PACK_MIN && stat.size <= PACK_MAX;
+    const basis = `${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}`, q = kodierungen(req);
+    const treffer = etagTreffer(req, basis, q, packbar);
+    if (treffer) { res.writeHead(304, { ...headers, ETag: treffer }); return res.end(); }
+    if (packbar) {
+      const [enc, body] = await packWahl(q, gepackt(file, `${stat.mtimeMs}|${stat.size}`, () => readFile(file))).catch(() => [null, null]);
+      if (body) {
+        res.writeHead(200, { ...headers, ETag: etagFuer(basis, enc), 'Content-Encoding': enc, 'Content-Length': body.length });
+        return res.end(req.method === 'HEAD' ? undefined : body);
+      }
     }
-    if (gz) {
-      headers['Content-Encoding'] = 'gzip';
-      res.writeHead(200, headers);
-      return createReadStream(file).pipe(createGzip({ level: zc.Z_BEST_SPEED })).pipe(res);
-    }
+    headers.ETag = etagFuer(basis, null);
     headers['Content-Length'] = stat.size;
     res.writeHead(200, headers);
     createReadStream(file).pipe(res);
