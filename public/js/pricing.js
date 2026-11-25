@@ -51,7 +51,8 @@ const STAFFEL_WORT = { vase: 'Vasen', eierbecher: 'Eierbechern' };
  */
 export function discountTeaser(product) {
   const tiers = (pricing?.products?.[product]?.discounts || []).filter((t) => +t.off > 0);
-  return tiers.map((t, i) => `ab ${t.qty}${i ? '' : ` gleichen ${STAFFEL_WORT[product] || 'Stück'}`} −${t.off}\u00a0%`).join(' · ');
+  // innerhalb einer Stufe geschützte Leerzeichen: umbrochen wird nur zwischen den Stufen („… −10 % ·“ / „ab 3 −15 %“)
+  return tiers.map((t, i) => `ab\u00a0${t.qty}${i ? '' : `\u00a0gleichen\u00a0${STAFFEL_WORT[product] || 'Stück'}`}\u00a0−${t.off}\u00a0%`).join(' · ');
 }
 
 /** Mengenrabatt in % für qty nach einer Staffel [{ qty, off }] — höchster erreichter Satz */

@@ -319,6 +319,13 @@ function zahlartFuerBetrag(t) {
   const pp = !!pricing().paypal?.enabled;
   $('#pay-paypal-row').hidden = !pp || nullBetrag;
   if (nullBetrag && $('#pay-paypal')?.checked) { $('#pay-vorkasse').checked = true; $('#pay-vorkasse').dispatchEvent(new Event('change')); }
+  // Hinweis unter „Vorkasse / Überweisung“: bei 0 € keine Bankdaten und kein Warten auf eine Zahlung
+  const hint = $('#pay-vorkasse')?.parentElement?.querySelector('small');
+  if (hint) {
+    hint.dataset.text ||= hint.textContent;
+    const text = nullBetrag ? 'Nichts zu zahlen – der Druck startet direkt nach deiner Bestellung.' : hint.dataset.text;
+    if (hint.textContent !== text) hint.textContent = text;
+  }
 }
 
 /**
