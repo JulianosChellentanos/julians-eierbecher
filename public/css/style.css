@@ -14,6 +14,7 @@
 
 :root {
   --stage-h-full: clamp(300px, 42vh, 420px); --stage-h: var(--stage-h-full); /* --stage-h-full = Bühne im Normalzustand, --stage-h = aktuelle Höhe (mobil geschrumpft bei body.konf-stuck) */
+  --stage-h-stuck: clamp(240px, 32vh, 290px); /* angedockte Bühne (body.konf-stuck) — auch mobile-home.js rechnet damit („Weiter: …“) */
   --bg: #f4efe7;
   --bg-soft: #ece5d8;
   --card: #fbf8f2;
@@ -273,6 +274,8 @@ body:not(.mit-eierbecher) [data-produkt="eierbecher"] { display: none !important
   transition: r 0.1s;
 }
 .ed-handle:hover { fill: var(--ink); }
+.ed-handle:focus { outline: none; }
+.ed-handle:focus-visible { fill: var(--ink); stroke: var(--accent); stroke-width: 3; } /* Tastatur: Punkt per Pfeiltasten verschieben */
 .editor-hint { margin-top: 6px; }
 
 /* Schriften-Auswahl */
@@ -370,10 +373,11 @@ input[type=range]::-moz-range-thumb {
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
+/* Das Feld zeigt den Text genau so, wie er graviert wird (keine Versalien, keine Sperrung — Groß-/Kleinschreibung bleibt) */
 #i-text {
   width: 100%; padding: 11px 15px; border-radius: 12px; border: 1.5px solid var(--line);
   background: var(--bg); font-family: var(--sans); font-size: 1rem; font-weight: 600;
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink);
+  color: var(--ink);
   margin-bottom: 10px; outline: none; transition: border-color 0.15s;
 }
 #i-text:focus { border-color: var(--ink); }
@@ -940,7 +944,7 @@ section[id] { scroll-margin-top: 72px; }
 .ls-foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; padding-top: 6px; border-top: 1px solid var(--line); }
 .ls-delete { color: #b3261e; margin-right: auto; font-size: 0.8rem; }
 .dc-tolist { align-self: center; }
-.lists-btn .ab-txt { font-size: 0.9rem; }
+.lists-btn .ab-txt { font-size: inherit; } /* wie „Anmelden“ daneben */
 @media (max-width: 980px) {
   .lists-btn .ab-txt { display: none; }
   .ls-grid { grid-template-columns: 1fr; }
@@ -1069,7 +1073,7 @@ section[id] { scroll-margin-top: 72px; }
   .stage-sentinel { position: absolute; left: 0; top: 0; width: 1px; height: 1px; pointer-events: none; visibility: hidden; }
   body.is-mobile .stage:not(.stage-full) { transition: height 0.38s cubic-bezier(0.22, 1, 0.36, 1); }
   body.is-mobile .panel { transition: margin-top 0.38s cubic-bezier(0.22, 1, 0.36, 1); }
-  body.konf-stuck { --stage-h: clamp(240px, 32vh, 290px); }
+  body.konf-stuck { --stage-h: var(--stage-h-stuck); }
   body.konf-stuck .panel { margin-top: calc(var(--stage-h-full) - var(--stage-h)); }
   body.konf-stuck .stage:not(.stage-full) .scene-chips { padding: 3px; }
   body.konf-stuck .stage:not(.stage-full) .scene-chip { padding: 5px 8px; }
@@ -1259,13 +1263,20 @@ section[id] { scroll-margin-top: 72px; }
 /* Gravur deaktiviert (Regel greift): Eingaben ausgegraut, Hinweis rot */
 #gravur-options.disabled .font-row, #gravur-options.disabled .style-row, #gravur-options.disabled .slider-row { opacity: 0.45; pointer-events: none; }
 #text-warn.err { color: #b3261e; font-weight: 600; }
+.dark #text-warn.err, .dark .err-msg, .dark #text-count.over, .dark .ls-delete { color: #ffb4ad; } /* Fehlerrot ist auf dunklem Grund unlesbar (2,1:1) → helles Rot (≥ 8:1) */
 .font-chip:disabled, .style-chip:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* Farbschrift: zweite Farbreihe im Gravur-Tab */
 #text-color-box { margin: 8px 0 6px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 12px; background: var(--bg); }
 .tc-label { font-weight: 700; font-size: 0.85rem; margin-bottom: 6px; }
 .tc-label .opt { font-weight: 500; color: var(--ink-soft); font-size: 0.78rem; }
-.swatches-sm .swatch { width: 26px; height: 26px; }
+/* Schriftfarben als Raster: jede Kugel füllt genau ihren Knopf (die 37-px-Kugel aus configurator-studio.css gilt nur für #swatches) —
+   keine Überlappung, Treffer = sichtbare Kugel, Hinweis darunter frei; Desktop 32 px, Touch-Layout (≤ 980 px) 40 px */
+.swatches-sm { display: grid; grid-template-columns: repeat(auto-fill, minmax(32px, 1fr)); gap: 6px; margin-bottom: 8px; }
+.swatches-sm .swatch { width: 100%; height: auto; }
+.panel .swatches-sm .swatch span { width: 100%; height: 100%; border-width: 2px; }
+.panel .swatches-sm .swatch.active span { outline: none; }
+@media (max-width: 980px) { .swatches-sm { grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 8px; } }
 
 /* Passwort vergessen (Auth-Modal): Link unter dem Login, Hinweis-Text, Reset-Formular */
 .auth-forgot-link { align-self: flex-end; font-size: 0.8rem; margin-top: -4px; }
@@ -1412,4 +1423,44 @@ section[id] { scroll-margin-top: 72px; }
 .dark .text-busy { color: #e3a07f; }
 @media (max-width: 980px) {
   .sb-pill { bottom: 64px; font-size: 0.72rem; padding: 6px 13px 6px 10px; }
+}
+
+/* ---------- Prüfung 11/2026: Konfigurator, Barrierefreiheit, Handy ---------- */
+/* Startseite: Platz für den Preis-Hinweis reservieren, bis /api/pricing ihn füllt (sonst springt der erste Bildschirm; mobil versteckt) */
+@media (min-width: 701px) { #hero-hint:empty { min-height: 3.1em; } }
+/* Kopfzeile: ein langer Kontoname wird abgekürzt statt die Navigation zusammenzudrücken */
+@media (min-width: 981px) { .account-btn .ab-txt { display: inline-block; max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; } }
+/* Entwurfs-Hinweis im Panel („Dein letzter Entwurf ist wieder da · Neu beginnen“) */
+.draft-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.draft-note .linkbtn { color: var(--ink); font-weight: 600; }
+/* Zurücksetzen im Touch-Layout: der Panel-Kopf ist dort ausgeblendet → als Textknopf am Panel-Ende (mobile.js) */
+.m-reset-row { text-align: center; margin: 2px 0 0; }
+.m-reset-row .linkbtn { min-height: 40px; padding: 8px 14px; font-size: 0.85rem; }
+/* Ohne WebGL: Erklärung statt Ladeanzeige */
+.loading.no3d { padding: 24px; text-align: center; font-size: 0.9rem; line-height: 1.5; color: var(--ink); gap: 8px; }
+.loading.no3d p { max-width: 34em; margin: 0; }
+.loading.no3d a { color: inherit; text-decoration: underline; }
+/* Dialoge „Design-Listen“/„Design-Code“: Kopf über die ganze Breite — ✕ in der Ecke wie im Warenkorb, Inhalt nicht in schmaler Spalte */
+.dc .co-head, .lw > #ls-body { align-self: stretch; }
+/* Listen: Mengenknöpfe „−/+“ wie im Warenkorb (vorher ungestaltete 12×19-px-Browserknöpfe) */
+.ls-item-row .ci-step button {
+  width: 26px; height: 26px; border-radius: 8px; border: 1.5px solid var(--line);
+  background: transparent; cursor: pointer; font-weight: 700; color: var(--ink);
+}
+.ls-item-row .ci-step > span { min-width: 20px; text-align: center; font-weight: 700; }
+@media (max-width: 980px) {
+  .ls-item-row .ci-step { border: 1.5px solid var(--line); border-radius: 999px; padding: 2px; gap: 4px; }
+  .ls-item-row .ci-step button { width: 40px; height: 40px; border: none; border-radius: 999px; font-size: 1.1rem; }
+  /* Bühnenknöpfe: Optik 32 px, Trefferfläche ≥ 40 px */
+  .stage .stage-full-btn::after, .stage .stage-dice-btn::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; }
+  .dc .co-head .btn { min-width: 44px; min-height: 44px; }
+}
+/* Handy quer (≤ 500 px hoch): kleinere Bühne und kompakte Tab-Leiste — vorher blieben zwischen angedockter Bühne, Tabs und Preisleiste
+   0–18 px zum Bedienen. Bühne und Tabs kleben weiter (Live-Vorschau bleibt im Blick), die Bedienung darunter scrollt. */
+@media (max-width: 980px) and (orientation: landscape) and (max-height: 500px) {
+  :root { --stage-h-full: clamp(150px, 52vh, 260px); --stage-h-stuck: clamp(120px, 36vh, 200px); }
+  body #konfigurator .config-grid > .mtabs .mtab { min-height: 40px; padding: 4px 2px; flex-direction: row; justify-content: center; gap: 6px; }
+  /* angedockt ist die Bühne nur ≈ 140 px hoch: Szenen-Chips, Szenenbilder und Schriftzug weichen der Vase (oben, ungedockt, sind sie da) */
+  body.konf-stuck .stage:not(.stage-full) .scene-chips, body.konf-stuck .stage:not(.stage-full) .stage-foto,
+  body.konf-stuck .stage:not(.stage-full) .viewer-watermark { display: none; }
 }

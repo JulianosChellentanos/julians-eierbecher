@@ -13,7 +13,7 @@ import { makeEgg, makeGrass } from './scenes.js';
 import { RGBELoader } from '../vendor/RGBELoader.js';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
 import { exportExt } from './modelfactory.js';
-import { requestModel, buildModelOnce, exportModel, onBuildStatus, warmUp, builderMode } from './model-builder.js';
+import { requestModel, buildModelOnce, exportModel, onBuildStatus, warmUp, builderMode, preloadFonts } from './model-builder.js';
 import {
   initCart, addToCart, getPricing, fmt, fmtPlus, discountTeaser, setCodeProvider, getCart,
   setColors, unitParts, unitPrice, colorSurcharge, patternSurcharge, eierbecherAktiv, fillShopInfo,
@@ -50,6 +50,11 @@ let userInteracted = false;
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
+/** Auswahlzustand setzen: Klasse active (Optik) UND aria-pressed (Screenreader) — an allen Auswahlknöpfen des Konfigurators */
+const aktiv = (el, on) => { el.classList.toggle('active', on); el.setAttribute('aria-pressed', String(on)); };
+/** Zahl mit deutschem Komma für Anzeigen („2,5 mm“, „7,5 mm“) — die Werte selbst bleiben Zahlen (niemand liest die Ausgaben zurück) */
+const dez = (v, stellen = 1) => Number(v).toLocaleString('de-DE', { minimumFractionDigits: stellen, maximumFractionDigits: stellen });
+const mmText = (v) => Number(v).toLocaleString('de-DE', { maximumFractionDigits: 1 });
 // Grundbereich des Schriftgrößen-Reglers (mm) — markActiveFont() hebt die Untergrenze je Schrift später an
 const TEXTSIZE_RANGE = [+$('#s-textsize').min, +$('#s-textsize').max];
 
@@ -288,7 +293,7 @@ function renderPrices() {
 function setColor({ id, hex, name, finish }) {
   const f = finish || 'matt';
   state.color = id; state.colorHex = hex; state.colorName = name; state.colorFinish = f;
-  $$('#swatches .swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
+  $$('#swatches .swatch').forEach((b) => aktiv(b, b.dataset.id === id));
   // Farbaufpreis (aus /api/colors) mit in die Farbanzeige („Gold · metallic · +1 €“)
   const sur = colorSurcharge(id, name);
   const surTxt = sur > 0 ? ` · ${fmtPlus(sur)}` : '';
@@ -298,7 +303,14 @@ function setColor({ id, hex, name, finish }) {
   Object.assign(material, FINISH_PROPS[f] || FINISH_PROPS.matt);
   material.needsUpdate = true;
   document.documentElement.style.setProperty('--accent-live', hex);
+  farbschriftHinweis();
   renderPrices(); // Farbaufpreis fließt in den Live-Preis (vor dem Laden der Preise ein No-op)
+  entwurfMerken();
+}
+/** Farbschrift in derselben Farbe wie die Vase hebt sich kaum ab — nur ein Hinweis, keine Sperre (Ton in Ton kann gewollt sein) */
+function farbschriftHinweis() {
+  const el = $('#text-color-same'); if (!el) return;
+  el.hidden = !(state.textStyle === 'farbe' && state.textColor && state.textColor === state.color);
 }
 
 /** Schriftfarbe für die Farbschrift (zweites Filament) */
@@ -306,25 +318,34 @@ function setTextColor(id, silent = false) {
   const c = (content?.colors || []).find((x) => x.id === id) || (content?.colors || [])[0];
   if (!c) return;
   state.textColor = c.id;
-  $$('#text-swatches .swatch').forEach((b) => b.classList.toggle('active', b.dataset.id === c.id));
+  $$('#text-swatches .swatch').forEach((b) => aktiv(b, b.dataset.id === c.id));
   $('#text-color-name').textContent = `– ${c.name}`;
+  farbschriftHinweis();
   inlayMaterial.color.set(c.hex);
   Object.assign(inlayMaterial, FINISH_PROPS[c.finish || 'matt'] || FINISH_PROPS.matt);
   inlayMaterial.needsUpdate = true;
   if (!silent) showToast(`🎨 Schriftfarbe: ${c.name}`);
+  entwurfMerken();
 }
 
 // ---------------------------------------------------------------------------
 // 3D-Szene
 // ---------------------------------------------------------------------------
 const canvas = $('#viewer');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+// Ohne WebGL (abgeschaltete Hardwarebeschleunigung, alte Treiber, Suchmaschinen-Renderer) wirft der Renderer — dann läuft die Seite
+// ohne 3D weiter: Inhalte, Preise, Warenkorb und Konto laden normal, die Bühne zeigt statt „Lade 3D-Studio …“ eine Erklärung (zeigeOhne3D).
+// Szene, Kamera und Materialien brauchen kein WebGL; alles, was zeichnet, prüft renderer bzw. nutzt zeichne().
+let renderer = null;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+} catch (err) { renderer = null; console.warn('3D-Vorschau nicht verfügbar (kein WebGL):', err?.message || err); }
+const zeichne = () => renderer?.render(scene, camera);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(32, 1, 1, 1600);
@@ -363,7 +384,7 @@ scene.add(ground);
 // Handy (IS_PHONE): weicher, heller Schatten statt hartem grauem „Teller“ unter der Vase — PCF mit Radius (PCFSoft ignoriert radius),
 // kleine Schattenkarte (breite, weiche Kante; 1/16 des Grafikspeichers), Deckkraft 0,10. Desktop/Tablet unverändert.
 if (IS_PHONE) {
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  if (renderer) renderer.shadowMap.type = THREE.PCFShadowMap;
   keyLight.shadow.mapSize.set(512, 512);
   keyLight.shadow.radius = 10;
   ground.material.opacity = 0.10;
@@ -380,9 +401,12 @@ const material = new THREE.MeshPhysicalMaterial({ color: state.colorHex, ...FINI
 const inlayMaterial = material.clone(); // Farbschrift-Einlage (zweites Filament)
 
 // Neutrale Studio-Umgebung → Metall & Glanz reflektieren auch ohne HDRI-Szene
-const pmrem = new THREE.PMREMGenerator(renderer);
-const roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-pmrem.dispose();
+let roomEnv = null;
+if (renderer) {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  pmrem.dispose();
+}
 
 // ---------------------------------------------------------------------------
 // Szenen: Studio (clean) + fotoreale CC0-HDRI-Räume von Poly Haven
@@ -453,7 +477,7 @@ async function applyScene(key) {
   for (const [name, mesh] of Object.entries(surfaces)) mesh.visible = cfg.surface === name;
   ground.visible = !cfg.surface;
   material.envMapIntensity = cfg.envI ?? 1;
-  $$('.scene-chip').forEach((c) => c.classList.toggle('active', c.dataset.scene === key));
+  $$('.scene-chip').forEach((c) => aktiv(c, c.dataset.scene === key));
   if (cfg.hdri) {
     const tex = await loadEnv(cfg.hdri);
     if (currentScene !== key) return; // inzwischen umgeschaltet
@@ -508,6 +532,7 @@ function frameCamera(live = true) {
 }
 
 function resize() {
+  if (!renderer) return;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (canvas.width !== w * renderer.getPixelRatio() || canvas.height !== h * renderer.getPixelRatio()) {
     renderer.setSize(w, h, false);
@@ -528,7 +553,7 @@ function animate() {
   resize();
   if (!userInteracted && cupMesh && !reducedMotion.matches) cupGroup.rotation.y += 0.004;
   controls.update();
-  renderer.render(scene, camera);
+  zeichne();
 }
 
 const cupGroup = new THREE.Group();
@@ -558,7 +583,7 @@ function updatePrintBadge(stats, info) {
     tip = `Silhouette bis ${sil.toFixed(0)}° Auskragung – druckt mit feinen Schichten sauber.`;
   } else if (state.depth > 2.5 && worst > 65 && frac55 > 0.08) {
     cls = 'p-bad'; txt = '🔶 Tiefe Struktur zu schräg – Drall reduzieren';
-    tip = `Bei ${state.depth.toFixed(1)} mm Mustertiefe sind ${worst.toFixed(0)}°-Flanken echte Überhänge.`;
+    tip = `Bei ${dez(state.depth)} mm Mustertiefe sind ${worst.toFixed(0)}°-Flanken echte Überhänge.`;
   } else if (worst > 75 && frac55 > 0.15) {
     cls = 'p-warn'; txt = '⚠️ Markante Struktur – druckt mit extra Kühlung';
     tip = 'Steile Muster-Flanken (selbsttragende Mikro-Struktur) – feine Schichten empfohlen.';
@@ -622,6 +647,7 @@ function changeKind(prev, next) {
   return 'modell';
 }
 function rebuild() {
+  entwurfMerken();
   const params = JSON.parse(JSON.stringify({ ...state, customPoints: customByProduct[state.product] }));
   const kind = changeKind(lastReqParams, params);
   lastReqParams = params;
@@ -640,7 +666,7 @@ function rebuild() {
 // ohne Vorlauf würde der Browser die Programme genau dann übersetzen (auf schwächeren Handys gut 1 s Stillstand beim Ankommen).
 // compileAsync nutzt KHR_parallel_shader_compile, wartet also ohne den Main-Thread anzuhalten.
 function prewarmShaders() {
-  if (typeof renderer.compileAsync !== 'function') return;
+  if (typeof renderer?.compileAsync !== 'function') return;
   const go = () => renderer.compileAsync(scene, camera).catch(() => {});
   if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 4000 }); else setTimeout(go, 1200);
 }
@@ -684,12 +710,15 @@ function applyBuild({ geometry, inlay, saucer, info, stats }, seq) {
   updateProps();
   // Neu einrahmen: solange niemand die Kamera bewegt hat — oder einmal nach einem geladenen Design (reframeAt)
   if (!userInteracted || (reframeAt && seq >= reframeAt)) { frameCamera(); reframeAt = 0; }
+  // „Ø“ = größte Breite des Modells inkl. Muster (geometry.js maxDiameter) — so viel Platz braucht die Vase; der obere Rand allein
+  // (topDiameter) war bei Flasche/Kugel/Tropfen nur ein Bruchteil davon. Ältere Worker ohne das Feld: Rückfall auf den Rand.
+  const dia = (info.maxDiameter || info.topDiameter).toFixed(0);
   const dimLong = info.product === 'vase'
-    ? `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Öffnung Ø ${info.openingDiameter.toFixed(0)} mm`
-    : `${info.height} mm hoch · Ø ${info.topDiameter.toFixed(0)} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`
+    ? `${info.height} mm hoch · Ø ${dia} mm · Öffnung Ø ${info.openingDiameter.toFixed(0)} mm`
+    : `${info.height} mm hoch · Ø ${dia} mm · Mulde Ø ${info.cavityDiameter.toFixed(0)} mm`
       + (state.saucer ? ` · Untersetzer Ø ${(saucerInfo.outerRadius * 2).toFixed(0)} mm` : '');
-  $('#dim-info').textContent = IS_SMALL ? `${info.height} × Ø ${info.topDiameter.toFixed(0)} mm` : dimLong;
-  $('#dim-info').title = dimLong;
+  $('#dim-info').textContent = IS_SMALL ? `${info.height} × Ø ${dia} mm` : dimLong;
+  $('#dim-info').title = `${dimLong} (Ø = größte Breite inkl. Muster)`;
   // Öffnungs-Hinweis (Vase): eng für Blumen — gelb unter Ø 18 mm, rot unter Ø 10 mm (nicht blockierend)
   const ow = $('#open-warn');
   ow.hidden = !info.openingWarn;
@@ -722,7 +751,7 @@ function initKonfAktiv() {
   const near = new IntersectionObserver(([e]) => {
     if (!e.isIntersecting || !cupMesh) return;
     near.disconnect();
-    try { resize(); renderer.render(scene, camera); } catch { /* egal */ }
+    try { resize(); zeichne(); } catch { /* egal */ }
   }, { rootMargin: '0px 0px 150% 0px' });
   near.observe(sec);
 }
@@ -802,7 +831,7 @@ async function rebuildText() {
     opts.classList.add('disabled');
     if (/Mustertiefe/.test(ti.reason || '')) {
       const b = document.createElement('button'); b.id = 'text-fix'; b.className = 'linkbtn'; b.textContent = 'Tiefe auf 2,5 mm setzen';
-      b.addEventListener('click', () => { state.depth = 2.5; $('#s-depth').value = 2.5; $('#s-depth-val').textContent = '2.5 mm'; sliderFill($('#s-depth')); rebuild(); });
+      b.addEventListener('click', () => { state.depth = 2.5; $('#s-depth').value = 2.5; $('#s-depth-val').textContent = '2,5 mm'; sliderFill($('#s-depth')); rebuild(); });
       warn.appendChild(document.createTextNode(' ')); warn.appendChild(b);
     }
     return;
@@ -839,6 +868,113 @@ const rebuildBodySoon = debounce(rebuild, 160);
 const rebuildTextSoon = () => rebuildBodySoon();
 
 // ---------------------------------------------------------------------------
+// Entwurf sichern: die aktuelle Gestaltung liegt laufend im Browser (localStorage „ovju-entwurf“, nur auf diesem Gerät) und kommt beim
+// nächsten Aufruf zurück — Handys verwerfen schwere Tabs gern im Hintergrund (App-Wechsel), dazu Neuladen oder versehentliches Zurück.
+// Ein Design-Code in der Adresse (?d=/#d=) hat Vorrang. Wiederhergestellt wird über applyDesign (dieselbe Prüfung und Klemmung wie bei
+// Design-Codes), ein unlesbarer oder veralteter Stand wird ignoriert. Dazu „Zurücksetzen“ (Panel-Kopf, mobil ↺ in der Bühne).
+// ---------------------------------------------------------------------------
+const ENTWURF_KEY = 'ovju-entwurf', ENTWURF_TAGE = 90;
+let entwurfAn = false;    // erst nach dem Start — sonst überschriebe der Grundzustand den gesicherten Entwurf
+let startConfig = null;   // Grundzustand beim Laden (Ziel von „Zurücksetzen“/„Neu beginnen“)
+let hinweisStand = null, hinweisAktion = null;
+/** Was ein Entwurf festhält: das Design wie ein Design-Code, aber mit dem getippten Gravurtext (auch wenn eine Regel ihn gerade sperrt) */
+const entwurfDaten = () => ({ ...designConfig(), text: state.text, textColor: state.textColor });
+const ENTWURF_FELDER = ['product', 'preset', 'height', 'width', 'rim', 'pattern', 'ribs', 'depth', 'twist', 'flow', 'flowWaves', 'text', 'textSize', 'textPos', 'textStyle', 'font', 'textColor', 'color', 'customPoints', 'saucer'];
+const entwurfSig = (c) => JSON.stringify(ENTWURF_FELDER.map((k) => (c?.[k] ?? null)));
+const entwurfMerkenJetzt = debounce(() => {
+  if (!entwurfAn) return;
+  const d = entwurfDaten();
+  if (hinweisStand && entwurfSig(d) !== hinweisStand) versteckeEntwurfHinweis(); // weitergestaltet → Hinweis hat sich erledigt
+  try { localStorage.setItem(ENTWURF_KEY, JSON.stringify({ v: 1, t: Date.now(), cfg: d })); } catch { /* privater Modus, Speicher voll – egal */ }
+}, 600);
+function entwurfMerken() { if (entwurfAn) entwurfMerkenJetzt(); }
+function entwurfLesen() {
+  try {
+    const d = JSON.parse(localStorage.getItem(ENTWURF_KEY) || 'null');
+    if (!d || d.v !== 1 || !d.cfg || typeof d.cfg !== 'object' || Array.isArray(d.cfg) || !(Date.now() - (+d.t || 0) < ENTWURF_TAGE * 864e5)) return null;
+    return d.cfg;
+  } catch { return null; }
+}
+/** Beim Start: gesicherten Entwurf laden (nur wenn er vom Grundzustand abweicht und das Produkt bestellbar ist) */
+function entwurfWiederherstellen() {
+  const cfg = entwurfLesen();
+  if (!cfg || entwurfSig(cfg) === entwurfSig(startConfig)) return;
+  if (!produktAktiv(cfg.product === 'eierbecher' ? 'eierbecher' : 'vase', getPricing())) return;
+  applyDesign(cfg, null, { still: true }).then((ok) => {
+    if (ok !== false) zeigeEntwurfHinweis('Dein letzter Entwurf ist wieder da.', 'Neu beginnen', () => zuruecksetzen('Neu begonnen.'));
+  }).catch(() => {});
+}
+/** Zurück zum Grundzustand (Form, Muster, Farbe, Gravur aus) — mit „Rückgängig“ im Hinweis */
+function zuruecksetzen(text = 'Alles auf Anfang gesetzt.') {
+  if (!startConfig) return;
+  const vorher = entwurfDaten();
+  customByProduct[startConfig.product] = null; // eigene Silhouette verwerfen (Rückgängig bringt sie über vorher.customPoints zurück)
+  applyDesign(startConfig, null, { still: true }).then(() => {
+    userInteracted = false; // neu einrahmen und wieder langsam drehen wie beim ersten Besuch
+    zeigeEntwurfHinweis(text, 'Rückgängig', () => applyDesign(vorher, null, { still: true }));
+  });
+}
+function zeigeEntwurfHinweis(text, knopf, aktion) {
+  const box = $('#draft-note'); if (!box) return;
+  $('#draft-note-txt').textContent = text;
+  $('#draft-note-btn').textContent = knopf;
+  hinweisAktion = aktion; hinweisStand = entwurfSig(entwurfDaten());
+  box.hidden = false;
+}
+function versteckeEntwurfHinweis() {
+  const box = $('#draft-note'); if (box) box.hidden = true;
+  hinweisAktion = null; hinweisStand = null;
+}
+function initEntwurf() {
+  $('#draft-note-btn')?.addEventListener('click', () => { const a = hinweisAktion; versteckeEntwurfHinweis(); a?.(); });
+  $('#btn-reset')?.addEventListener('click', () => zuruecksetzen());
+}
+
+/**
+ * Bedienhilfen für Dialoge und Meldungen, deren Markup zur Kasse bzw. zum Konto gehört: nur ergänzen, was dort fehlt (index.html bleibt in
+ * diesen Teilen unberührt) — Dialoge heißen wie ihre Überschrift, „✕“ heißt „Schließen“, Fehler werden sofort angesagt, Fortschritt höflich;
+ * der Warenkorb-Knopf nennt die Anzahl (cart.js schreibt nur #cart-count).
+ */
+function initBedienhilfen() {
+  for (const d of $$('dialog')) {
+    if (d.hasAttribute('aria-labelledby') || d.hasAttribute('aria-label')) continue;
+    const h = d.querySelector('h2'); if (!h) continue;
+    if (!h.id) h.id = `${d.id || 'dialog'}-titel`;
+    d.setAttribute('aria-labelledby', h.id);
+  }
+  for (const b of $$('dialog button')) if (!b.hasAttribute('aria-label') && b.textContent.trim() === '✕') b.setAttribute('aria-label', 'Schließen');
+  const gs = $('#co-coupon'); if (gs && !gs.labels?.length && !gs.hasAttribute('aria-label')) gs.setAttribute('aria-label', 'Gutscheincode (optional)');
+  for (const [sel, role] of [['#auth-err', 'alert'], ['#co-coupon-msg', 'alert'], ['#co-progress', 'status'], ['#acc-addr-msg', 'status']]) {
+    const el = $(sel); if (el && !el.hasAttribute('role') && !el.hasAttribute('aria-live')) el.setAttribute('role', role);
+  }
+  const cnt = $('#cart-count'), btn = $('#cart-btn');
+  if (cnt && btn) {
+    const name = () => { const n = parseInt(cnt.textContent, 10) || 0; btn.setAttribute('aria-label', `Warenkorb, ${n} Artikel`); };
+    name(); new MutationObserver(name).observe(cnt, { childList: true, characterData: true, subtree: true });
+  }
+}
+
+/** Desktop: Preis/Warenkorb haften unten im Panel (configurator-studio.css) — per Tastatur angesteuerte Regler sollen nicht dahinter landen */
+function initPanelCta() {
+  const panel = $('#konfigurator .panel'), cta = $('.panel-cta');
+  if (!panel || !cta || !('ResizeObserver' in window)) return;
+  const desk = matchMedia('(min-width: 981px)');
+  new ResizeObserver(() => { panel.style.scrollPaddingBottom = desk.matches && cta.offsetHeight ? `${cta.offsetHeight + 8}px` : ''; }).observe(cta);
+}
+
+/** Ohne WebGL: statt endlosem „Lade 3D-Studio …“ eine klare Erklärung in der Bühne (Inhalte, Preise und Warenkorb laufen normal) */
+function zeigeOhne3D() {
+  const el = $('#loading'); if (!el) return;
+  el.classList.add('no3d');
+  el.innerHTML = '<p><b>Die 3D-Vorschau startet in diesem Browser nicht.</b></p>'
+    + '<p>Sie braucht WebGL. Bitte schalte in den Einstellungen deines Browsers die Hardwarebeschleunigung ein oder öffne die Seite in einem aktuellen Browser (Chrome, Edge, Firefox oder Safari).</p>'
+    + '<p>Fragen? Schreib mir – die Kontaktdaten stehen im <a href="/impressum">Impressum</a>.</p>';
+  $('#btn-foto')?.setAttribute('hidden', '');
+  $('#btn-fullscreen')?.setAttribute('hidden', '');
+  $('#stage-hint')?.setAttribute('hidden', '');
+}
+
+// ---------------------------------------------------------------------------
 // Silhouetten (SVG) für Preset-Buttons & Formen-Editor
 // ---------------------------------------------------------------------------
 function silhouettePath(points, w, h, pad = 3) {
@@ -873,7 +1009,7 @@ function renderPresetButtons() {
 }
 
 function markActivePreset() {
-  $$('.preset-btn').forEach((x) => x.classList.toggle('active', x.dataset.preset === state.preset));
+  $$('.preset-btn').forEach((x) => aktiv(x, x.dataset.preset === state.preset));
   $('#shape-editor').hidden = state.preset !== 'eigene';
 }
 
@@ -907,8 +1043,21 @@ function renderShapeEditor() {
     <line x1="${ED.w / 2}" y1="${ED.pad - 6}" x2="${ED.w / 2}" y2="${ED.h - ED.pad + 6}" class="ed-axis"/>
     ${pts.map(([t, r], i) => `
       <line x1="${ED.w / 2}" y1="${edY(t)}" x2="${edX(r)}" y2="${edY(t)}" class="ed-guide"/>
-      <circle cx="${edX(r)}" cy="${edY(t)}" r="7" class="ed-handle" data-i="${i}"/>`).join('')}
+      <circle cx="${edX(r)}" cy="${edY(t)}" r="7" class="ed-handle" data-i="${i}" tabindex="0" role="slider" aria-orientation="horizontal"
+        aria-label="Punkt ${i + 1} von ${pts.length} (Höhe ${Math.round(t * 100)} %)" aria-valuemin="12" aria-valuemax="108" aria-valuenow="${Math.round(r * 100)}" aria-valuetext="Breite ${Math.round(r * 100)} %"/>`).join('')}
   `;
+  // Tastatur: Pfeile ±2 %, Bild auf/ab ±10 %, Pos1/Ende = schmalste/breiteste Stelle — wie Ziehen, danach Fokus zurück auf denselben Punkt
+  svg.querySelectorAll('.ed-handle').forEach((c) => c.addEventListener('keydown', (e) => {
+    const step = { ArrowLeft: -0.02, ArrowDown: -0.02, ArrowRight: 0.02, ArrowUp: 0.02, PageDown: -0.1, PageUp: 0.1 }[e.key];
+    const i = parseInt(c.dataset.i, 10), pt = customByProduct[state.product][i];
+    let r = e.key === 'Home' ? 0.12 : e.key === 'End' ? 1.08 : step !== undefined ? pt[1] + step : null;
+    if (r === null) return;
+    e.preventDefault();
+    pt[1] = Math.round(Math.min(1.08, Math.max(0.12, r)) * 100) / 100;
+    renderShapeEditor();
+    svg.querySelector(`.ed-handle[data-i="${i}"]`)?.focus();
+    rebuildSoon();
+  }));
   svg.querySelectorAll('.ed-handle').forEach((c) => {
     c.addEventListener('pointerdown', (e) => {
       e.preventDefault();
@@ -951,7 +1100,7 @@ function renderProductTabs() {
 }
 
 function markActiveProduct() {
-  $$('.product-tab').forEach((x) => x.classList.toggle('active', x.dataset.product === state.product));
+  $$('.product-tab').forEach((x) => aktiv(x, x.dataset.product === state.product));
 }
 
 function setProduct(id) {
@@ -966,6 +1115,7 @@ function setProduct(id) {
   const hs = $('#s-height');
   hs.min = hMin; hs.max = hMax; hs.value = state.height;
   $('#s-height-val').textContent = `${state.height} mm`;
+  sliderFill(hs); // Füllbalken zum neuen Bereich (HTML-Grundwerte gehören zum Eierbecher)
   markActiveProduct();
   renderPresetButtons();
   renderPatternBadges(); // Aktions-Badges an den Musterknöpfen hängen am Produkt („nur Vasen mit Gehämmert“)
@@ -1025,7 +1175,7 @@ function applyDepthRange(resetToDefault = false) {
   }
   // Set the value after changing the range: the previous pattern may have clamped it.
   el.value = state.depth;
-  $('#s-depth-val').textContent = `${state.depth.toFixed(1)} mm`;
+  $('#s-depth-val').textContent = `${dez(state.depth)} mm`;
   sliderFill(el);
 }
 
@@ -1042,22 +1192,24 @@ function renderFontRow() {
 }
 function markActiveFont() {
   $$('.font-chip').forEach((x) => {
-    x.classList.toggle('active', x.dataset.font === state.font);
+    aktiv(x, x.dataset.font === state.font);
     const ok = fontAllowsStyle(x.dataset.font, state.textStyle);
     x.disabled = !ok; x.title = ok ? (FONTS[x.dataset.font]?.label || '') : 'Diese Schrift ist zu fein für diesen Stil';
   });
   $$('.style-chip').forEach((x) => {
-    x.classList.toggle('active', x.dataset.style === state.textStyle);
+    aktiv(x, x.dataset.style === state.textStyle);
     const ok = fontAllowsStyle(state.font, x.dataset.style);
     x.disabled = !ok; if (!ok) x.title = 'Dieser Stil braucht eine kräftigere Schrift';
   });
   const st = TEXT_STYLES[state.textStyle] || TEXT_STYLES.gestanzt;
   $('#style-hint').textContent = `${st.label}: ${st.hint}`;
   $('#text-color-box').hidden = state.textStyle !== 'farbe';
+  farbschriftHinweis();
   // Schriftgröße = Großbuchstabenhöhe; Untergrenze je Schrift (feine Schriften brauchen mehr Höhe)
   const minCap = FONT_RULES[state.font]?.minCap ?? 5;
   const sl = $('#s-textsize'); sl.min = minCap;
-  if (state.textSize < minCap) { state.textSize = minCap; sl.value = minCap; $('#s-textsize-val').textContent = `${minCap} mm`; sliderFill(sl); }
+  if (state.textSize < minCap) { state.textSize = minCap; sl.value = minCap; $('#s-textsize-val').textContent = `${mmText(minCap)} mm`; }
+  sliderFill(sl); // auch ohne Klemmen: die Untergrenze hat sich geändert
 }
 function renderStyleRow() {
   // Farbschrift kostet extra (zweites Filament) — Betrag aus /api/pricing als Badge am Chip
@@ -1073,6 +1225,7 @@ function renderStyleRow() {
     markActiveFont();
     rebuild();
   }));
+  markActiveFont(); // die Reihe wurde neu aufgebaut → aktiven Stil (Standard „Gestanzt“) und gesperrte Kombinationen wieder markieren
 }
 
 /** Muster-Aufpreise als kleine Badges an den Musterknöpfen (Beträge aus /api/pricing, erst nach dem Laden) — dazu links
@@ -1104,13 +1257,14 @@ function switchToAktionPattern(pattern) {
 function initControls() {
   $$('.pattern-btn[data-pattern]').forEach((b) => b.addEventListener('click', () => {
     state.pattern = b.dataset.pattern;
-    $$('.pattern-btn').forEach((x) => x.classList.toggle('active', x === b));
+    $$('.pattern-btn[data-pattern]').forEach((x) => aktiv(x, x === b)); // nur Musterknöpfe — die Anmelde-Reiter (auth) tragen dieselbe Klasse
     $('#surface-sliders').classList.toggle('disabled', state.pattern === 'glatt');
     // Zickzack braucht ≥ 24 Facetten (sonst liest jede einzeln als Treppe)
     if (state.pattern === 'zickzack' && state.ribs < 24) {
       state.ribs = 24;
       $('#s-ribs').value = 24;
       $('#s-ribs-val').textContent = '24';
+      sliderFill($('#s-ribs'));
     }
     applyDepthRange(true); // neues Muster → passende Standardtiefe (Fjordwelle/Lamellen wirken erst richtig tief)
     rebuild();
@@ -1124,35 +1278,39 @@ function initControls() {
 
   const sizeChanged = () => { renderPrices(); rebuildSoon(); };
   bindSlider('#s-height', 'height', (v) => `${v} mm`, sizeChanged);
-  bindSlider('#s-width', 'width', (v) => `${Math.round(v * 100)} %`, sizeChanged);
+  bindSlider('#s-width', 'width', (v) => `${Math.round(v * 100)}\u00a0%`, sizeChanged);
 
   // Oberer Rand: Glatt · Muster bis Kante · Wulst (Vasen & Eierbecher; Voronoi-Vasen bleiben glatt)
   $$('.rim-btn').forEach((b) => b.addEventListener('click', () => {
     state.rim = RIMS[b.dataset.rim] ? b.dataset.rim : 'glatt';
-    $$('.rim-btn').forEach((x) => x.classList.toggle('active', x === b));
+    $$('.rim-btn').forEach((x) => aktiv(x, x === b));
     rebuild();
   }));
   bindSlider('#s-ribs', 'ribs', (v) => `${v}`, rebuildSoon);
-  bindSlider('#s-depth', 'depth', (v) => `${v.toFixed(1)} mm`, rebuildSoon);
+  bindSlider('#s-depth', 'depth', (v) => `${dez(v)} mm`, rebuildSoon);
   bindSlider('#s-twist', 'twist', (v) => v === 0 ? 'gerade' : `${v > 0 ? '+' : ''}${Math.round(v * 180)}°`, rebuildSoon);
   bindSlider('#s-flowwaves', 'flowWaves', (v) => `${v}×`, rebuildSoon);
 
   // Verlaufsart (wie das Muster über die Höhe fließt)
   $$('.flow-btn').forEach((b) => b.addEventListener('click', () => {
     state.flow = b.dataset.flow;
-    $$('.flow-btn').forEach((x) => x.classList.toggle('active', x === b));
+    $$('.flow-btn').forEach((x) => aktiv(x, x === b));
     $('#flowwaves-row').hidden = !(state.flow === 'fluss' || state.flow === 'zick');
     // Verlauf ohne Stärke ist unsichtbar → sanft eine Vorgabe setzen
     if (state.twist === 0 && state.flow !== 'spirale') {
       state.twist = 1;
       $('#s-twist').value = 1;
       $('#s-twist-val').textContent = '+180°';
+      sliderFill($('#s-twist'));
     }
     rebuild();
   }));
-  bindSlider('#s-textsize', 'textSize', (v) => `${v} mm`, rebuildTextSoon);
-  bindSlider('#s-textpos', 'textPos', (v) => `${Math.round(v * 100)} %`, rebuildTextSoon);
+  bindSlider('#s-textsize', 'textSize', (v) => `${mmText(v)} mm`, rebuildTextSoon);
+  bindSlider('#s-textpos', 'textPos', (v) => `${Math.round(v * 100)}\u00a0%`, rebuildTextSoon);
 
+  // Gravurschriften erst bei Bedarf: sobald jemand die Gravur ansteuert (Reiter, „Weiter: Gravur“, Häkchen, Feld), vorladen
+  document.addEventListener('click', (e) => { if (e.target.closest?.('.mtab[data-tab="gravur"], .m-next[data-next="gravur"], #c-gravur, .font-chip')) preloadFonts(['helvetiker', 'droid_sans', state.font]); }, true);
+  $('#i-text').addEventListener('focus', () => preloadFonts(['helvetiker', 'droid_sans', state.font]));
   $('#i-text').addEventListener('input', (e) => {
     state.text = e.target.value.slice(0, 30);
     updateTextMeta();
@@ -1194,7 +1352,7 @@ function initControls() {
     if (btn.dataset.wait) return; // Doppeltipp, während die Vorschau noch rechnet
     btn.dataset.wait = '1';
     try { await modelReady(); } finally { delete btn.dataset.wait; }
-    renderer.render(scene, camera);
+    zeichne();
     addToCart({
       config: designConfig(),
       color: state.color, // Farb-ID → Farbaufpreis & Bestellzeile
@@ -1217,15 +1375,13 @@ function initControls() {
 
   // Gravur als aktivierbares Extra (Preis kommt aus dem Admin)
   $('#gravur-price').textContent = fmtPlus(getPricing().gravur ?? 3);
+  // Ausschalten: die Gravur entfällt (Preis, Bestellung, Design-Code: state.text = ''), der getippte Text bleibt aber im Feld stehen —
+  // wieder einschalten holt ihn zurück (Preisvergleich mit/ohne Gravur ohne Neutippen)
   $('#c-gravur').addEventListener('change', (e) => {
     $('#gravur-options').hidden = !e.target.checked;
-    if (!e.target.checked) {
-      state.text = '';
-      $('#i-text').value = '';
-      rebuild();
-    } else {
-      $('#i-text').focus();
-    }
+    const text = e.target.checked ? $('#i-text').value.slice(0, 30) : '';
+    if (text !== state.text) { state.text = text; updateTextMeta(); rebuild(); }
+    if (e.target.checked) $('#i-text').focus();
   });
 
   // Untersetzer
@@ -1247,8 +1403,9 @@ function initControls() {
   const syncThemeBtn = () => {
     const dark = document.documentElement.classList.contains('dark');
     themeBtn.textContent = dark ? '☀️' : '🌙';
-    // Browser-Chrome (Adressleiste/Statusbar) mitfärben
-    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#17130f' : '#f4efe7'));
+    themeBtn.setAttribute('aria-pressed', String(dark)); // Name „Dunkles Design“ (index.html) + Zustand statt Mond/Sonne
+    // Browser-Chrome (Adressleiste/Statusbar) in der Farbe des Seitengrunds (studio.css --bg hell/dunkel)
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#20241e' : '#f8f6f0'));
   };
   themeBtn.addEventListener('click', () => {
     const dark = document.documentElement.classList.toggle('dark');
@@ -1260,27 +1417,30 @@ function initControls() {
 
 function syncControls() {
   markActivePreset();
-  $$('.pattern-btn').forEach((x) => x.classList.toggle('active', x.dataset.pattern === state.pattern));
+  $$('.pattern-btn[data-pattern]').forEach((x) => aktiv(x, x.dataset.pattern === state.pattern));
   $('#surface-sliders').classList.toggle('disabled', state.pattern === 'glatt');
   $('#s-height').value = state.height; $('#s-height-val').textContent = `${state.height} mm`;
   $('#s-ribs').value = state.ribs; $('#s-ribs-val').textContent = `${state.ribs}`;
-  $('#s-depth').value = state.depth; $('#s-depth-val').textContent = `${state.depth.toFixed(1)} mm`;
+  $('#s-depth').value = state.depth; $('#s-depth-val').textContent = `${dez(state.depth)} mm`;
   applyDepthRange();
   $('#s-twist').value = state.twist;
   $('#s-twist-val').textContent = state.twist === 0 ? 'gerade' : `${state.twist > 0 ? '+' : ''}${Math.round(state.twist * 180)}°`;
   $$('input[type=range]').forEach((el) => sliderFill(el));
-  $$('.flow-btn').forEach((x) => x.classList.toggle('active', x.dataset.flow === state.flow));
+  $$('.flow-btn').forEach((x) => aktiv(x, x.dataset.flow === state.flow));
   if (!RIMS[state.rim]) state.rim = 'glatt';
-  $$('.rim-btn').forEach((x) => x.classList.toggle('active', x.dataset.rim === state.rim));
+  $$('.rim-btn').forEach((x) => aktiv(x, x.dataset.rim === state.rim));
   markActiveFont();
   $('#flowwaves-row').hidden = !(state.flow === 'fluss' || state.flow === 'zick');
   $('#s-flowwaves').value = state.flowWaves;
   $('#s-flowwaves-val').textContent = `${state.flowWaves}×`;
 }
 
+/** Dateiname aus den sichtbaren Namen (Flasche, Voronoi, Fjordwelle …) statt interner Kennungen (skelett, koralle) */
+const dateiTeil = (t) => String(t || '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 function stlFilename(ext = 'stl') {
   const brand = content ? content.brand.name.toLowerCase() : 'formsam';
-  return `${brand}-${state.product}-${state.preset}-${state.pattern}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.${ext}`;
+  const form = state.preset === 'eigene' ? 'eigene-form' : PRODUCTS[state.product]?.presets[state.preset]?.label || state.preset;
+  return `${brand}-${state.product}-${dateiTeil(form)}-${dateiTeil(PATTERNS[state.pattern] || state.pattern)}${state.text ? '-' + state.text.replace(/[^a-z0-9äöüß]/gi, '_') : ''}.${ext}`;
 }
 
 function currentConfig() {
@@ -1299,11 +1459,11 @@ function designConfig() {
   return { ...currentConfig(), color: state.color };
 }
 
-/** Ein gespeichertes Design (aus Code/Link) in den Konfigurator laden */
-async function applyDesign(cfg, code) {
+/** Ein gespeichertes Design (aus Code/Link, Entwurf, Zurücksetzen) in den Konfigurator laden; opts.still = ohne Toast */
+async function applyDesign(cfg, code, opts = {}) {
   const product = cfg.product === 'eierbecher' ? 'eierbecher' : 'vase';
   // Design eines deaktivierten Produkts (Eierbecher-Code/-Liste, Schalter aus): nicht laden, nur Hinweis
-  if (!produktAktiv(product, getPricing())) { showToast(EIERBECHER_HINWEIS, 3500); return false; }
+  if (!produktAktiv(product, getPricing())) { if (!opts.still) showToast(EIERBECHER_HINWEIS, 3500); return false; }
   if (product !== state.product) setProduct(product);
   const prod = PRODUCTS[product];
   if (Array.isArray(cfg.customPoints) && cfg.customPoints.length >= 3) customByProduct[product] = cfg.customPoints.map((p) => [+p[0], +p[1]]);
@@ -1336,15 +1496,15 @@ async function applyDesign(cfg, code) {
   markActivePreset();
   if (preset === 'eigene') renderShapeEditor();
   syncControls(); markActiveFont();
-  $('#s-width').value = state.width; $('#s-width-val').textContent = `${Math.round(state.width * 100)} %`;
-  $('#s-textsize').value = state.textSize; $('#s-textsize-val').textContent = `${state.textSize} mm`;
-  $('#s-textpos').value = state.textPos; $('#s-textpos-val').textContent = `${Math.round(state.textPos * 100)} %`;
+  $('#s-width').value = state.width; $('#s-width-val').textContent = `${Math.round(state.width * 100)}\u00a0%`;
+  $('#s-textsize').value = state.textSize; $('#s-textsize-val').textContent = `${mmText(state.textSize)} mm`;
+  $('#s-textpos').value = state.textPos; $('#s-textpos-val').textContent = `${Math.round(state.textPos * 100)}\u00a0%`;
   $$('input[type=range]').forEach((el) => sliderFill(el));
   $('#i-text').value = state.text; $('#c-gravur').checked = !!state.text; $('#gravur-options').hidden = !state.text;
   $('#c-saucer').checked = state.saucer;
   rebuild();
   reframeAt = reqSeq; // das geladene Design einrahmen, sobald es berechnet ist (auch wenn die Kamera schon bewegt wurde)
-  showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Konfigurator bereit");
+  if (!opts.still) showToast(code ? `🔖 Design ${formatCode(code)} geladen` : "Dein Entwurf ist im Konfigurator bereit");
   renderPrices();
   // Vorschaubild des geladenen Codes nachliefern, falls es fehlt (vom Admin entfernt, älterer Code): der Server nimmt es nur für einen
   // leeren Platz an (das erste Bild gilt), ein vorhandenes bleibt unverändert
@@ -1352,7 +1512,7 @@ async function applyDesign(cfg, code) {
     const seq = reqSeq;
     modelReady().then(() => {
       if (seq !== reqSeq) return;   // inzwischen weiter gestaltet → das Bild passte nicht mehr zum Code
-      renderer.render(scene, camera);
+      zeichne();
       return uploadThumb(code, captureThumb());
     }).catch(() => {});
   }
@@ -1361,6 +1521,7 @@ async function applyDesign(cfg, code) {
 
 // Quadratisches Vorschaubild aus dem aktuellen Canvas (für den Warenkorb)
 function captureThumb() {
+  if (!renderer) return ''; // ohne 3D kein Vorschaubild (Warenkorb zeigt dann keins, uploadThumb lehnt '' ab)
   const src = renderer.domElement;
   const c = document.createElement('canvas');
   c.width = c.height = 260;
@@ -1410,6 +1571,7 @@ function saveView() {
 }
 
 async function fotoShooting() {
+  if (!renderer) return;
   const btn = $('#btn-foto');
   btn.disabled = true;
   const saved = saveView();
@@ -1421,8 +1583,13 @@ async function fotoShooting() {
     { scene: 'abend', angle: 0.25, zoom: 0.85, name: 'abend' },
     { scene: 'studio', angle: 0.6, zoom: 0.95, name: 'studio' },
   ];
+  // Fortschritt: die Szenen laden je bis zu 1,5 MB Umgebungslicht — der Knopf zählt mit, statt nur gesperrt dazustehen
+  const label = btn.textContent;
+  btn.setAttribute('aria-busy', 'true');
+  if (IS_MOBILE) showToast('Szenenbilder werden erstellt …', 4000);
   shotSetup(1200, 900);
-  for (const s of setups) {
+  for (const [n, s] of setups.entries()) {
+    btn.textContent = `▧ Szene ${n + 1} von ${setups.length} …`;
     await applyScene(s.scene);
     cupGroup.rotation.y = s.angle;
     placeCamera(s.zoom);
@@ -1434,10 +1601,12 @@ async function fotoShooting() {
   $('#foto-grid').innerHTML = shots.map((s) => `
     <a href="${s.url}" download="formsam-${state.product}-${s.name}.png"><img src="${s.url}" alt="Szene ${s.name}"></a>`).join('');
   $('#foto-modal').showModal();
+  btn.textContent = label; btn.removeAttribute('aria-busy');
   btn.disabled = false;
 }
 
 async function productShot(params, hex, extraProp) {
+  if (!renderer) return '/img/studio/fdm-collection.webp'; // ohne 3D: Kampagnenfoto statt Render
   const { geometry, info } = await buildModelOnce({ ...DEFAULTS, ...params, quality: 0.75 });
   const g = new THREE.Group();
   const m = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: hex, roughness: 0.62 }));
@@ -1531,8 +1700,9 @@ async function renderShowcase() {
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
-warmUp(); // Hintergrund-Thread lädt Geometrie-Code und Schriften, während die Seite noch Inhalte holt
+warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noch Inhalte holt (Gravurschriften erst bei Bedarf)
 (async () => {
+  initBedienhilfen();
   await loadContent();
   await initCart();
   fillShopInfo(); // Lieferzeit/Liefergebiet aus /api/pricing → shop in alle [data-lieferzeit]/[data-liefergebiet] (FAQ, Schritte, Trust-Zeilen)
@@ -1548,15 +1718,22 @@ warmUp(); // Hintergrund-Thread lädt Geometrie-Code und Schriften, während die
   renderPatternBadges();
   renderPrices();
   initControls();
+  initEntwurf();
   studioReady = true;
-  if (pendingStudioDesign) { const cfg = pendingStudioDesign; pendingStudioDesign = null; onStudioDesign(cfg); }
   // Startprodukt über setProduct() initialisieren (Slider-Bereiche, Tabs, Hinweise, Preise)
   state.product = START_PRODUCT === 'vase' ? 'eierbecher' : 'vase';
   setProduct(START_PRODUCT);
-  animate();
+  startConfig = entwurfDaten(); // Grundzustand (Ziel von „Zurücksetzen“)
+  // Vor dem Start angeklickter Entwurf (Formenwelt/Karten) gewinnt — erst nach setProduct(), das sonst Form und Höhe zurücksetzte;
+  // sonst den gesicherten Entwurf zurückholen, außer ein Design-Code steht in der Adresse (loadFromURL lädt ihn weiter unten)
+  if (pendingStudioDesign) { const cfg = pendingStudioDesign; pendingStudioDesign = null; onStudioDesign(cfg); }
+  else if (!/[?&#]d=/.test(location.search + location.hash)) entwurfWiederherstellen();
+  entwurfAn = true;
+  if (renderer) animate(); else zeigeOhne3D();
   initBuildIndicator();
   initKonfAktiv();
-  modelReady().then(() => $('#loading').classList.add('hidden'));
+  initPanelCta();
+  if (renderer) modelReady().then(() => $('#loading').classList.add('hidden'));
   await loadGallery();
   setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders
   initMobileShell({ product: state.product });
@@ -1564,7 +1741,7 @@ warmUp(); // Hintergrund-Thread lädt Geometrie-Code und Schriften, während die
     getConfig: designConfig,
     // Abgelehntes Design (deaktiviertes Produkt) als Fehler melden → der Code-Dialog zeigt den Hinweis statt zu schließen
     applyConfig: async (cfg, code) => { if (await applyDesign(cfg, code) === false) throw new Error(EIERBECHER_HINWEIS); },
-    getThumb: () => { renderer.render(scene, camera); return captureThumb(); },
+    getThumb: () => { zeichne(); return captureThumb(); },
     whenReady: modelReady,
     onListCode: (code) => openList(code),
   });
@@ -1576,7 +1753,7 @@ warmUp(); // Hintergrund-Thread lädt Geometrie-Code und Schriften, während die
   initLists({
     getDesign: async () => {
       await modelReady();
-      renderer.render(scene, camera);
+      zeichne();
       const config = designConfig();
       const code = await saveDesign(config);
       await uploadThumb(code, captureThumb());

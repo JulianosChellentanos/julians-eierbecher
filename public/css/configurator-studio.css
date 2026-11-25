@@ -16,3 +16,21 @@
 
 .dark .stage-print{background:color-mix(in srgb,#1a1e17 70%,transparent)}
 .dark .product-tab.active{background:var(--card);color:var(--ink)}
+
+/* Prüfung 11/2026 — Lesbarkeit und Erreichbarkeit; das abgenommene Erscheinungsbild bleibt sonst unverändert */
+/* Desktop: Preis und „In den Warenkorb“ haften unten im Panel, der Inhalt darüber scrollt (vorher rutschten sie bei Muster, Gravur
+   oder Größenzuschlag unter die Panelkante). Unterer Rand: die Leiste deckt das Panel-Padding mit ab, damit nichts darunter durchscheint;
+   scroll-padding-bottom (app.js, Höhe der Leiste) hält per Tastatur angesteuerte Regler über ihr. */
+@media(min-width:981px){.panel-cta{position:sticky;bottom:0;z-index:3;background:var(--card);margin-bottom:-24px;padding-bottom:24px}}
+@media(min-width:981px) and (max-width:1150px){.panel-cta{margin-bottom:-20px;padding-bottom:20px}}
+/* Waren- und Preisangaben (Produkthinweis, Mengenrabatt, Aufpreise, Hinweise unter dem Kaufknopf) mindestens 11 px statt 8–9 px */
+.panel .tiny{font-size:11px;line-height:1.55}
+.panel .note-box{font-size:11px;line-height:1.55}
+.panel .price-hint,.panel .price-size,.panel .price-unit{font-size:11px}
+/* Bühnentexte (Maße, Farbname, Szenenbilder) auf eigener halbtransparenter Fläche wie die Druck-Ampel: lesbar auf Holz, Café, Abend und
+   im Dunkelmodus; Dreh-Hinweis immer helle Schrift auf seiner dunklen Pille (var(--bg) wurde im Dunkelmodus dunkel auf dunkel) */
+.stage .stage-badge,.stage .stage-color{background:color-mix(in srgb,var(--card) 80%,transparent);backdrop-filter:blur(6px);padding:5px 10px;border-radius:30px;color:#4f5a40}
+.dark .stage .stage-badge,.dark .stage .stage-color{background:color-mix(in srgb,#1a1e17 74%,transparent);color:#e3e7d6}
+.stage .stage-hint,.dark .stage .stage-hint{color:#f6f5ed}
+@media(min-width:981px){.stage .stage-foto{background:color-mix(in srgb,var(--card) 80%,transparent);backdrop-filter:blur(6px);padding:6px 12px;border-radius:30px;color:#4a5540}
+.dark .stage .stage-foto{background:color-mix(in srgb,#1a1e17 74%,transparent);color:#e3e7d6}}
