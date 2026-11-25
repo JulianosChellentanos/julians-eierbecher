@@ -157,8 +157,10 @@ export function itemSub(it) {
   const icon = c.textStyle === 'farbe' ? '🎨' : c.textStyle === 'gehaemmert' ? '🔨' : c.textStyle === 'gestanzt' ? '🪙' : '✒️';
   // Randoption nur nennen, wenn sie vom Standard (glatt) abweicht („Wulstrand“ / „Musterkante“)
   const rim = c.rim && c.rim !== 'glatt' && RIMS[c.rim] ? ` · ${RIMS[c.rim]}` : '';
+  // Farbschrift: Schriftfarbe mit Namen (wie Rechnung und Mails), nie die interne Kennung
+  const schrift = c.textStyle === 'farbe' ? (colorByRef(c.textColor, null)?.name || it.textColorName || '') : '';
   return `${muster}${plus(q.muster)} · Höhe ${c.height}\u00a0mm${breite}${rim} · ${it.colorName}${plus(q.farbe)}` +
-    (c.text ? ` · ${icon} „${c.text}“ (+${fmt(q.gravur)}${q.farbschrift > 0 ? ` · Farbschrift +${fmt(q.farbschrift)}` : ''})` : '') +
+    (c.text ? ` · ${icon} „${c.text}“ (+${fmt(q.gravur)}${q.farbschrift > 0 ? ` · Farbschrift +${fmt(q.farbschrift)}` : ''})${schrift ? ` · Schriftfarbe ${schrift}` : ''}` : '') +
     (it.saucer ? ` · 🍽️ Untersetzer${plus(q.untersetzer)}` : '') +
     (q.groesse > 0 ? ` · XL-Format${plus(q.groesse)}` : '');
 }

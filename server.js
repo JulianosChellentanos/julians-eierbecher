@@ -2254,9 +2254,11 @@ function itemLabel(it, { mitAktion = false, mitAufpreis = true } = {}) {
   const c = it.config || {};
   const sur = surchargeList(it).filter((x) => x.key !== 'gravur').map((x) => x.label);
   const patt = { glatt: 'Glatt', rippen: 'Rippen', wellen: 'Wellen', zickzack: 'Zickzack', querwellen: 'Querwellen', lamellen: 'Lamellen', gehaemmert: 'Gehämmert', skelett: 'Voronoi', koralle: 'Fjordwelle' }[c.pattern] || c.pattern;
+  // Farbschrift: Schriftfarbe mit Namen (an der Bestellung, ältere Bestellungen über die Farbliste) — „3MF, 2 Filamente“ steht nur auf dem Druckzettel
+  const schriftfarbe = c.textStyle === 'farbe' ? (it.textColorName || colorByRef(c.textColor, null)?.name || '') : '';
   return `${it.product === 'vase' ? 'Vase' : 'Eierbecher'} „${PRESET_LABELS[c.preset] || c.preset || ''}“ · ${patt}` +
     ` · ${c.height} mm · ${it.colorName || ''}` +
-    (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${it.textColorName ? ' ' + it.textColorName : ''} – 3MF, 2 Filamente)` }[c.textStyle] || ''}` : '') +
+    (c.text ? ` · Gravur „${c.text}“${{ gehaemmert: ' (gehämmert)', gestanzt: ' (gestanzt)', kissen: ' (Kissen)', farbe: ` (Farbschrift${schriftfarbe ? `, Schriftfarbe ${schriftfarbe}` : ''})` }[c.textStyle] || ''}` : '') +
     (c.rim && c.rim !== 'glatt' && RIM_LABELS[c.rim] ? ` · ${RIM_LABELS[c.rim]}` : '') +
     (it.saucer ? ' · mit Untersetzer' : '') +
     (it.code ? ` · Design-Code ${it.code}` : '') +
@@ -3637,6 +3639,8 @@ async function handleCheckout(req, res) {
       // Aktion: uvp = Normalpreis (Preis vor der Aktion, Feldname historisch), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
       // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
       uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName ?? null, aktionId: l.aktionId ?? null,
+      // Farbschrift: Name der Schriftfarbe zum Bestellzeitpunkt (Rechnung, Mails, Admin — nicht die interne Kennung)
+      ...(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe' ? { textColorName: colorByRef(l.config.textColor, null)?.name || null } : {}),
       // Farbschrift (zweites Filament) kommt als 3MF mit zwei Teilen, sonst STL
       stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
