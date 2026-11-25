@@ -973,11 +973,16 @@ function initTabNext() {
 /**
  * Unterkante der Tab-Leiste im Fenster, wenn Bühne und Tabs angedockt sind (body.konf-stuck): die Leiste klebt bei
  * „var(--stage-h) + Abstand“ (style.css bzw. mobile.css); angedockt gilt --stage-h = --stage-h-stuck. Gemessen statt nachgebaut:
- * Abstand = aktueller Klebe-Abstand (computed top) − aktuelle Bühnenhöhe, dazu die angedockte Höhe aus einem unsichtbaren Messelement.
+ * Abstand = Klebe-Abstand (top) − aktuelle Bühnenhöhe, dazu die angedockte Höhe aus einem unsichtbaren Messelement. Mitten im
+ * Andock-Übergang (.mtabs transition: top) liefert computed top einen Zwischenwert — dann zählt der Zielwert des laufenden Übergangs
+ * (sonst landete „Weiter“ bei spät kippendem Andocken bis zu 84 px zu tief).
  */
 function tabsAngedocktUnten(tabs) {
   const mess = (h) => { const p = document.createElement('div'); p.style.cssText = `position:absolute;left:0;top:0;width:1px;visibility:hidden;pointer-events:none;height:${h}`; document.body.appendChild(p); const v = p.getBoundingClientRect().height; p.remove(); return v; };
-  const top = parseFloat(getComputedStyle(tabs).top);
+  const lauf = tabs.getAnimations?.().find((a) => a.transitionProperty === 'top' && a.playState !== 'finished');
+  const kf = lauf?.effect?.getKeyframes?.() || [];
+  const ziel = parseFloat(kf[kf.length - 1]?.top);
+  const top = Number.isFinite(ziel) ? ziel : parseFloat(getComputedStyle(tabs).top);
   const abstand = Number.isFinite(top) ? top - mess('var(--stage-h)') : 0;
   return mess('var(--stage-h-stuck)') + abstand + tabs.offsetHeight;
 }
