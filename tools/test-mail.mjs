@@ -137,9 +137,9 @@ function vorlagen() {
   const b = T.orderConfirmation({ order: ORDER(), settings: SET, baseUrl: BASE });
   check(/Mit dieser Bestätigung nehme ich dein Angebot an/.test(b.text) && /nehme ich dein Angebot an/.test(b.html), 'Bestätigung: Annahmesatz wie AGB § 3');
   check(b.text.includes(`innerhalb von ${T.ZAHLUNGSFRIST_TAGE} Tagen`) && T.ZAHLUNGSFRIST_TAGE === 14 && b.html.includes('innerhalb von 14 Tagen'), 'Bestätigung (Vorkasse): Zahlungsfrist 14 Tage (lib/lieferfrist.js)');
-  check(/§ 19 UStG/.test(b.text) && /§ 19 UStG/.test(b.html), 'Bestätigung: § 19-Hinweis bei Kleinunternehmer');
+  check(/§ 19 UStG/.test(nb(b.text)) && /§\u00a019 UStG/.test(b.html), 'Bestätigung: § 19-Hinweis bei Kleinunternehmer (geschütztes Leerzeichen)');
   const bu = T.orderConfirmation({ order: ORDER(), settings: { ...SET, company: { ...SET.company, kleinunternehmer: false } }, baseUrl: BASE });
-  check(/inkl\. 19 % MwSt\./.test(nb(bu.text)) && !/§ 19/.test(bu.text), 'Bestätigung: „inkl. 19 % MwSt.“ ohne Kleinunternehmerregelung');
+  check(/inkl\. 19 % MwSt\./.test(nb(bu.text)) && !/§ 19/.test(nb(bu.text)), 'Bestätigung: „inkl. 19 % MwSt.“ ohne Kleinunternehmerregelung');
   check(/inkl\. 19 % MwSt/.test(nb(T.orderConfirmation({ order: ORDER({ kleinunternehmer: false }), settings: SET, baseUrl: BASE }).text)), 'Bestätigung: Steuerstand an der Bestellung (order.kleinunternehmer) geht vor die Einstellung');
   check(b.text.includes(`${BASE}/?konto`) && b.html.includes(`href="${BASE}/?konto"`), 'Bestätigung (Konto-Bestellung): Link „Mein Konto“ öffnet das Konto (?konto)');
   check(b.html.includes('Mengenrabatt −10&nbsp;%'), 'HTML: „−10&nbsp;%“ bricht nicht um');
@@ -172,7 +172,7 @@ function vorlagen() {
   // Zahlungserinnerung
   const ze = T.zahlungserinnerung({ order: ORDER({ userId: null }), settings: SET, baseUrl: BASE, heute: new Date('2026-11-25T10:00:00Z') });
   check(/Erinnerung/.test(ze.subject) && /DE00 1111 2222 3333 4444 55/.test(ze.text) && /Verwendungszweck: FS-261125-ABC123/.test(ze.text) && /bis spätestens Mittwoch, 2\. Dezember 2026/.test(ze.text) &&
-    /storniere ich die Bestellung \(AGB § 8\)/.test(ze.text) && /44,82 €/.test(nb(ze.text)) && /Viele Grüße/.test(ze.text), 'Zahlungserinnerung: Betrag, Bankverbindung, Verwendungszweck, Nachfrist 7 Tage, Folge nach AGB § 8', ze.text.slice(0, 500));
+    /storniere ich die Bestellung \(AGB § 8\)/.test(nb(ze.text)) && /44,82 €/.test(nb(ze.text)) && /Viele Grüße/.test(ze.text), 'Zahlungserinnerung: Betrag, Bankverbindung, Verwendungszweck, Nachfrist 7 Tage, Folge nach AGB § 8', ze.text.slice(0, 500));
   check(!/OVJU/i.test(Object.values({ b, sk, sg, rk, s1, ze }).map((m) => m.text + m.html + m.subject).join('')), 'Marke: kein „OVJU“');
 }
 
@@ -414,7 +414,7 @@ async function shopTests() {
     await warte(() => delivered().filter((m) => m.subject.includes(a.orderId)).length >= 2);
     const conf = delivered().find((m) => m.subject.includes(a.orderId) && m.rcpts[0] === 'erika@formsam.example');
     const adm = delivered().find((m) => m.subject.includes(a.orderId) && m.rcpts.includes('admin@formsam.example'));
-    check(conf && /^Hallo Erika,/.test(conf.text) && /nehme ich dein Angebot an/.test(conf.text) && /innerhalb von 14 Tagen/.test(conf.text) && /§ 19 UStG/.test(conf.text) && conf.attachments.length === 2 && conf.auto === 'auto-generated',
+    check(conf && /^Hallo Erika,/.test(conf.text) && /nehme ich dein Angebot an/.test(conf.text) && /innerhalb von 14 Tagen/.test(conf.text) && /§ 19 UStG/.test(nb(conf.text)) && conf.attachments.length === 2 && conf.auto === 'auto-generated',
       'Bestellung: Bestätigung mit Anrede, Annahmesatz, Frist, § 19-Hinweis, Rechtstexten, Auto-Submitted', conf?.text.slice(0, 300));
     check(adm && adm.rcpts.join() === 'admin@formsam.example,zweit@formsam.example' && /erika@formsam\.example/.test(adm.replyTo), 'Admin-Kopie an beide Adressen der Liste, Reply-To = Kundin', adm && { rcpts: adm.rcpts, replyTo: adm.replyTo });
     await warte(() => mailHist(a.orderId).length >= 1);
