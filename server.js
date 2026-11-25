@@ -2885,9 +2885,15 @@ const server = http.createServer(async (req, res) => {
         if (!designs[code]) return send(res, 404, { ok: false, error: 'Design unbekannt' });
         const raw = (await readBody(req, 120 * 1024)).toString('utf8');
         const m = raw.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/);
-        if (!m) return send(res, 400, { ok: false, error: 'Nur JPEG (data-URL)' });
+        const jpeg = m ? Buffer.from(m[1], 'base64') : null;
+        if (!jpeg || jpeg.length < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8 || jpeg[2] !== 0xff) return send(res, 400, { ok: false, error: 'Nur JPEG (data-URL)' });
+        // Nur das erste Bild gilt: es entsteht aus derselben Konfiguration wie jedes spätere — so kann niemand das Vorschaubild
+        // eines fremden Codes (geteilte Listen) austauschen. 'wx' legt die Datei nur an, wenn es sie noch nicht gibt.
         await mkdir(THUMBS, { recursive: true });
-        await writeFile(file, Buffer.from(m[1], 'base64'));
+        try { await writeFile(file, jpeg, { flag: 'wx' }); } catch (err) {
+          if (err?.code === 'EEXIST') return send(res, 200, { ok: true, vorhanden: true });
+          throw err;
+        }
         return send(res, 200, { ok: true });
       }
       if (req.method === 'GET') {
