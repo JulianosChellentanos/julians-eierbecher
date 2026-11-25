@@ -75,7 +75,8 @@ Datenträger); dort sind alle Links absolut.
   Ohne Hoster nennt die Datenschutzerklärung nur „einen Hosting-Anbieter“; den Satz zum Vertrag zur Auftragsverarbeitung gibt
   es nur mit Häkchen „AV-Vertrag … abgeschlossen“ (ein geänderter Hoster nimmt das Häkchen im Formular weg, ein geleerter auf
   dem Server). Fehlt etwas, warnen die Karte „Rechtstexte“ und die Admin-Übersicht. Beim Update gilt ein schon eingetragener
-  Hoster einmalig als bestätigt, der Text ändert sich dort also nicht.
+  Hoster einmalig als bestätigt, der Text ändert sich dort also nicht — außer beim früheren stillen Standard (IONOS, vom
+  alten Code auf jedem Server gespeichert): dann ist das Häkchen aus, und Karte und Übersicht bitten um Prüfung je Server.
 - **Mail-Versand:** `eigen` = eigener Mailserver auf demselben gemieteten Server (Postfächer, Spamprüfung, Protokolle und
   Sicherungen je 14 Tage), `anbieter` = E-Mail-Anbieter (Name optional, Auftragsverarbeitung). Bestandsinstallationen stehen
   auf `anbieter`; auf dem Produktivserver (Stalwart) „Eigener Mailserver“ wählen.

@@ -315,12 +315,15 @@ const sanitizeShop = (raw) => pickText(plainObj(raw), SHOP_TEXT, DEFAULT_SETTING
  * Rechtsangaben: Hoster, Serverstandort und Name des Mail-Anbieters als Text (leer bleibt leer — kein stiller Hoster-Standard
  * mehr), avVertrag als Boolean (nur mit Hoster; wird der Hoster geleert, ist auch die Bestätigung weg), mailVersand
  * 'eigen' | 'anbieter'. Migration älterer Einstellungen ohne die neuen Felder: ein eingetragener Hoster gilt als bestätigt
- * (der Text der Datenschutzerklärung bleibt dort gleich), Mailversand wie bisher 'anbieter'.
+ * (der Text der Datenschutzerklärung bleibt dort gleich) — außer dem früheren stillen Standard (IONOS): den hat der alte Code
+ * bei jedem Start in settings.json geschrieben, er ist also kein Eintrag und muss je Server bestätigt werden (Hinweis in
+ * legalWarnings); Mailversand wie bisher 'anbieter'.
  */
+const ALTER_HOSTER_STANDARD = 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur';   // wie lib/legal.js
 function sanitizeLegal(raw) {
   const src = plainObj(raw);
   const out = pickText(src, LEGAL_TEXT, { hoster: '', serverOrt: '', mailAnbieter: '' });
-  out.avVertrag = !!out.hoster && (src.avVertrag === undefined || src.avVertrag === true);   // ohne Hoster keine Bestätigung
+  out.avVertrag = !!out.hoster && (src.avVertrag === undefined ? out.hoster !== ALTER_HOSTER_STANDARD : src.avVertrag === true);   // ohne Hoster keine Bestätigung
   out.mailVersand = MAIL_VERSAND.includes(src.mailVersand) ? src.mailVersand : DEFAULT_SETTINGS.legal.mailVersand;
   return out;
 }

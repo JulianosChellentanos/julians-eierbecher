@@ -33,7 +33,11 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
      Bitte im Prod-Admin prüfen und den AV-Vertrag mit 1blu im Kundenkonto abschließen, dann das Häkchen setzen.
    - Testserver: IONOS (AV-Vertrag im IONOS-Kundenkonto, Bereich Datenschutz).
    Bestehende Installationen mit eingetragenem Hoster gelten nach dem Update einmalig als bestätigt (der Text
-   ändert sich dort nicht) – also bewusst prüfen.
+   ändert sich dort nicht) – also bewusst prüfen. Ausnahme ist der frühere Standardwert „IONOS SE, Elgendorfer
+   Str. 57, 56410 Montabaur“: Den hat der alte Code auf jedem Server ungefragt gespeichert, er ist also kein Beleg
+   für einen echten Eintrag. Steht er noch drin, ist das Häkchen nach dem Update aus, der AV-Satz fehlt, und
+   Übersicht und Karte bitten um Prüfung. Auf dem Testserver (wirklich IONOS) genügt das Häkchen, auf dem
+   Produktivserver den richtigen Hoster eintragen.
 6. **Mail-Versand** (Rechtstexte → „Mail-Versand“): Auf dem Produktivserver „Eigener Mailserver auf diesem Server“
    (Stalwart, mx.formsam.com) einstellen. Dann beschreibt die Datenschutzerklärung den eigenen Mailserver beim
    Hoster mit Postfächern, Spamprüfung, Mailserver-Protokollen (14 Tage) und den Sicherungen der Postfächer und

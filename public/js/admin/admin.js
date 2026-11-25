@@ -1641,6 +1641,8 @@ async function mailResend(id) {
 // solange Pflichtangaben fehlen oder noch Platzhalter sind. Weitere Server-Hinweise (DATA.hinweise, u. a. aus lib/legal.js)
 // kommen dazu, wenn der eigene Check sie nicht schon abdeckt.
 // ---------------------------------------------------------------------------
+/** Früherer stiller Hoster-Standard: ältere Server haben ihn ungefragt gespeichert → muss je Server geprüft werden (wie server.js) */
+const ALTER_HOSTER_STANDARD = 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur';
 function fillCompany() {
   const s = DATA.settings, c = s.company || {}, sh = s.shop || {}, lg = s.legal || {};
   $('#c-name').value = c.name || ''; $('#c-owner').value = c.owner || ''; $('#c-street').value = c.street || '';
@@ -1652,8 +1654,8 @@ function fillCompany() {
   $('#c-klein').checked = !!c.kleinunternehmer;
   $('#sh-lieferzeit').value = sh.lieferzeit || ''; $('#sh-liefergebiet').value = sh.liefergebiet || '';
   $('#lg-hoster').value = lg.hoster || ''; $('#lg-serverort').value = lg.serverOrt || '';
-  // Ältere Server ohne die Felder: Hoster eingetragen = AV bestätigt, Mail-Versand über Anbieter (wie sanitizeLegal im Server)
-  $('#lg-av').checked = lg.avVertrag === undefined ? !!lg.hoster : lg.avVertrag === true;
+  // Ältere Server ohne die Felder: Hoster eingetragen = AV bestätigt (außer dem früheren Standard), Mail-Versand über Anbieter (wie sanitizeLegal im Server)
+  $('#lg-av').checked = lg.avVertrag === undefined ? !!lg.hoster && lg.hoster !== ALTER_HOSTER_STANDARD : lg.avVertrag === true;
   $('#lg-mailversand').value = lg.mailVersand === 'eigen' ? 'eigen' : 'anbieter'; $('#lg-mailanbieter').value = lg.mailAnbieter || '';
   renderPflicht();
 }
@@ -1667,6 +1669,7 @@ function renderLegalWarn() {
   const f = legalForm(), t = (v) => String(v || '').trim();
   const fehlt = [
     !t(f.hoster) && 'Hoster fehlt — die Datenschutzerklärung nennt dann nur „einen Hosting-Anbieter“.',
+    t(f.hoster) === ALTER_HOSTER_STANDARD && !f.avVertrag && 'Hoster ist noch der frühere Standardwert (IONOS) — bitte prüfen, ob dieser Server wirklich dort läuft; sonst den richtigen Hoster samt Serverstandort eintragen.',
     !t(f.serverOrt) && 'Serverstandort fehlt.',
     t(f.hoster) && !f.avVertrag && 'AV-Vertrag mit dem Hoster nicht bestätigt — die Datenschutzerklärung erwähnt ihn dann nicht. Vertrag abschließen (meist online im Kundenkonto des Hosters) und das Häkchen setzen.',
   ].filter(Boolean);

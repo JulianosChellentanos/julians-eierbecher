@@ -2,10 +2,12 @@
 //   node tools/test-recht.mjs            → Exit 0 = alles ok, 1 = Fehler
 // Startet server.js auf einem freien Port mit DATA_DIR/ORDERS_DIR unter tmp-tests/test-recht-<pid>/ (Mail aus, TRUST_PROXY=1)
 // und räumt danach auf. Geprüft: Widerrufsbelehrung nach Muster (Gestaltungshinweis 3, Ausschluss getrennt), Datenschutz je
-// Einstellung (Hoster/AV-Vertrag, Mailversand, Zugangs-Cookie, Sicherungen), Migration älterer Einstellungen, absolute Links im
-// Mail-Anhang, Canonical/og-Adressen der Startseite, robots.txt/sitemap.xml, Produkthinweise aus einer Quelle (Kasse, Häkchen,
-// Rechnung, order.json) und das Wartungstor (freie Rechtsseiten/Belege/Widerruf, ..%2f, Weiterleitungsziel, Cookie mit Ablauf,
-// Bremse, Secure hinter dem Proxy).
+// Einstellung (Hoster/AV-Vertrag, Mailversand, Zugangs-Cookie, Sicherungen), Migration älterer Einstellungen (auch vom früheren
+// stillen IONOS-Standard, mit Neustart), absolute Links im Mail-Anhang, Canonical/og-Adressen der Startseite,
+// robots.txt/sitemap.xml, Produkthinweise aus einer Quelle (Kasse, Häkchen, Rechnung, order.json) und das Wartungstor
+// (freie Rechtsseiten/Belege/Widerruf, ..%2f, Weiterleitungsziel auch mit Punktsegmenten, Cookie mit Ablauf, wachsende
+// Bremse, Secure hinter dem Proxy, API-503 ohne Retry-After, robots.txt nur kurz gültig).
+// Die Instanz läuft mit WARTUNG_BREMSE_S=1 (Grundpause der Bremse 1 s statt 30 s), damit die wachsende Pause prüfbar ist.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -19,6 +21,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = path.join(ROOT, 'tmp-tests', `test-recht-${process.pid}`);
 const DATA = path.join(DIR, 'data'), ORDERS = path.join(DIR, 'orders');
 const KEY = 'test-recht-admin';
+const BREMSE_S = 1;   // Grundpause der Wartungs-Bremse in dieser Instanz (Server-Standard 30 s)
 let pass = 0, fail = 0;
 const check = (cond, label, extra) => {
   if (cond) { pass++; console.log(`  ✓ ${label}`); } else { fail++; console.log(`  ✗ ${label}`, extra !== undefined ? JSON.stringify(extra).slice(0, 400) : ''); }
@@ -90,14 +93,19 @@ writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify({
   legal: { hoster: 'Alt-Hoster GmbH, Weg 1, 10115 Berlin', serverOrt: 'Berlin (Deutschland)' },
   mail: { enabled: false, publicUrl: 'https://shop.example.test' },
 }, null, 2));
-const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS, TRUST_PROXY: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
-let log = '';
-srv.stdout.on('data', (d) => { log += d; }); srv.stderr.on('data', (d) => { log += d; });
-const ende = (code) => { try { srv.kill(); } catch { /* schon weg */ } try { rmSync(DIR, { recursive: true, force: true }); } catch { /* egal */ } process.exit(code); };
+let srv = null, log = '';
+const ende = (code) => { try { srv?.kill(); } catch { /* schon weg */ } try { rmSync(DIR, { recursive: true, force: true }); } catch { /* egal */ } process.exit(code); };
 process.on('uncaughtException', (e) => { console.error('Abbruch:', e); console.error(log.slice(-2000)); ende(1); });
-let bereit = false;
-for (let i = 0; i < 100 && !bereit; i++) { try { bereit = (await fetch(`${BASE}/api/pricing`)).ok; } catch { await new Promise((r) => setTimeout(r, 150)); } }
-if (!bereit) { console.error('Server startet nicht:\n' + log); ende(1); }
+/** Server (neu) starten und warten, bis er antwortet */
+async function starten() {
+  if (srv) { const weg = new Promise((r) => srv.once('exit', r)); srv.kill(); await weg; }
+  srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', DATA_DIR: DATA, ORDERS_DIR: ORDERS, TRUST_PROXY: '1', WARTUNG_BREMSE_S: String(BREMSE_S) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  srv.stdout.on('data', (d) => { log += d; }); srv.stderr.on('data', (d) => { log += d; });
+  let bereit = false;
+  for (let i = 0; i < 100 && !bereit; i++) { try { bereit = (await fetch(`${BASE}/api/pricing`)).ok; } catch { await new Promise((r) => setTimeout(r, 150)); } }
+  if (!bereit) { console.error('Server startet nicht:\n' + log); ende(1); }
+}
+await starten();
 
 console.log('Migration älterer Einstellungen');
 let d = await admin('GET', '/api/admin/data');
@@ -251,6 +259,24 @@ r = await admin('POST', '/api/admin/settings', { wartung: { aktiv: false } }, { 
 check(r.status === 200 && (await req('GET', '/', null, { accept: 'text/html' })).status === 200, 'Wartung aus → Shop für alle');
 x = await req('GET', '/robots.txt');
 check(/Disallow: \/admin\n/.test(x.text), 'robots.txt nach der Wartung wieder normal');
+
+// --- Migration vom früheren stillen Standard: der alte Code hat IONOS bei jedem Start in settings.json geschrieben → kein
+// Beleg für einen Eintrag; nach dem Update ohne AV-Satz und mit Hinweis, bis es je Server bestätigt ist
+console.log('Migration: früherer Standard-Hoster (IONOS)');
+const IONOS_ALT = 'IONOS SE, Elgendorfer Str. 57, 56410 Montabaur';
+const st = JSON.parse(readFileSync(path.join(DATA, 'settings.json'), 'utf8'));
+st.legal = { hoster: IONOS_ALT, serverOrt: 'Berlin (Deutschland)' };
+writeFileSync(path.join(DATA, 'settings.json'), JSON.stringify(st, null, 2));
+await starten();
+d = await admin('GET', '/api/admin/data'); ds = await req('GET', '/datenschutz');
+check(d.json?.settings?.legal?.hoster === IONOS_ALT && d.json?.settings?.legal?.avVertrag === false, 'früherer Standard gilt nicht als bestätigt (avVertrag false)', d.json?.settings?.legal);
+check(/IONOS SE/.test(ds.text) && !/Vertrag zur Auftragsverarbeitung/.test(ds.text), 'Datenschutz: Hoster bleibt genannt, aber kein AV-Satz');
+const hwAlt = (d.json?.hinweise || []).filter((h) => /früheren Standardwert/.test(h));
+check(hwAlt.length === 1 && !HINWEIS_DOPPELT.test(hwAlt[0]) && !(d.json?.hinweise || []).some((h) => /^AV-Vertrag/.test(h)), 'Admin-Hinweis „früherer Standardwert … prüfen“ (wird in der Übersicht nicht ausgefiltert)', d.json?.hinweise);
+check(/früheren Standardwert/.test(log), 'Hinweis auch im Startprotokoll');
+await admin('POST', '/api/admin/settings', { legal: { avVertrag: true } });
+d = await admin('GET', '/api/admin/data'); ds = await req('GET', '/datenschutz');
+check(/IONOS SE verarbeitet diese Daten nur in meinem Auftrag/.test(ds.text) && !(d.json?.hinweise || []).some((h) => /früheren Standardwert|^AV-Vertrag/.test(h)), 'nach Bestätigung im Admin: AV-Satz, kein Hinweis mehr');
 
 console.log(`\n${pass} ok, ${fail} Fehler`);
 if (fail) console.log('Server-Log (Ende):\n' + log.slice(-1500));
