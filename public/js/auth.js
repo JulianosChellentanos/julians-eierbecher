@@ -63,12 +63,15 @@ function trackingHtml(o) {
  */
 function invoiceHtml(o) {
   if (!o.invoiceNo) return '';
+  // PDF-Fassung (Server ab Dezember 2026; ältere Antworten ohne …PdfUrl zeigen nur den HTML-Beleg)
+  // je Beleg eine Zeile (span = ein Eintrag der rechten Spalte): „🧾 Rechnung · PDF“
+  const pdf = (u, was) => (u ? ` · <a href="${esc(u)}" target="_blank" rel="noopener" title="${was} als PDF">PDF</a>` : '');
   const rechnung = o.invoiceUrl
-    ? `<a href="${esc(o.invoiceUrl)}" target="_blank" rel="noopener">🧾 Rechnung</a>`
+    ? `<span><a href="${esc(o.invoiceUrl)}" target="_blank" rel="noopener">🧾 Rechnung</a>${pdf(o.invoicePdfUrl, 'Rechnung')}</span>`
     : `<small title="Den Link zu deiner Rechnung ${esc(o.invoiceNo)} findest du in deiner Bestellbestätigung per E-Mail (Knopf „Rechnung ansehen“)">🧾 Rechnung per Mail</small>`;   // kurz: passt in die Zeile, Erklärung im title
   // Storniert mit ausgestellter Rechnung: Stornorechnung (Link wie bei der Rechnung, sonst nur die Nummer)
   const storno = !o.stornoNo ? ''
-    : o.stornoUrl ? ` <a href="${esc(o.stornoUrl)}" target="_blank" rel="noopener">↩ Storno</a>` : ` <small>↩ Storno ${esc(o.stornoNo)}</small>`;
+    : o.stornoUrl ? ` <span><a href="${esc(o.stornoUrl)}" target="_blank" rel="noopener">↩ Storno</a>${pdf(o.stornoPdfUrl, 'Stornorechnung')}</span>` : ` <small>↩ Storno ${esc(o.stornoNo)}</small>`;
   return rechnung + storno;
 }
 /** Zeile „↩️ Reklamation: Status · Art · Betrag“ — bei erledigtem Gutschein der Code (zum Kopieren), Link zur Gutschrift */
@@ -79,7 +82,7 @@ function reklaHtml(o) {
   if (r.art !== 'nachdruck' && r.betrag > 0) parts.push(money(r.betrag));
   // Link kommt fertig vom Server (mit Zugriffsschlüssel ?k=); ohne Link nur die Nummer — der Link steht dann in der Mail
   const link = !r.gutschriftNo ? ''
-    : r.gutschriftUrl ? ` · <a href="${esc(r.gutschriftUrl)}" target="_blank" rel="noopener">🧾 Gutschrift ${esc(r.gutschriftNo)}</a>`
+    : r.gutschriftUrl ? ` · <a href="${esc(r.gutschriftUrl)}" target="_blank" rel="noopener">🧾 Gutschrift ${esc(r.gutschriftNo)}</a>${r.gutschriftPdfUrl ? ` · <a href="${esc(r.gutschriftPdfUrl)}" target="_blank" rel="noopener" title="Gutschrift als PDF">PDF</a>` : ''}`
       : ` · 🧾 Gutschrift ${esc(r.gutschriftNo)} <small>(Link in meiner Mail an dich)</small>`;
   // Code nur bei Bestellungen dieses Kontos — bei Bestellungen, die über die E-Mail-Adresse zugeordnet sind, steht er in meiner Mail
   const code = r.status === 'erledigt' && r.art === 'gutschein' && r.gutscheinCode

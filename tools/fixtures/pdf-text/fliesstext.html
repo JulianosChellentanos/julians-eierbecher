@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Fließtext-Probe · formsam</title>
+<style>
+@font-face{font-family:'Fraunces';src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:400 700;font-display:swap}
+@font-face{font-family:'Inter';src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
+@page{size:A4;margin:18mm 16mm 20mm}
+body{margin:0;font-family:Inter,system-ui,sans-serif;font-size:10.5pt;line-height:1.5;color:#211d18}
+h1,h2{font-family:Fraunces,Georgia,serif;font-weight:600}
+h1{font-size:24pt;margin:0 0 4pt;line-height:1.15}
+h2{font-size:14pt;margin:16pt 0 5pt;line-height:1.25}
+h3{font-size:10.5pt;margin:10pt 0 3pt}
+p{margin:0 0 7pt}
+ul,ol{margin:0 0 7pt;padding-left:18pt}
+li{margin:0 0 2pt}
+li>ul,li>ol{margin:2pt 0 0}
+ol.alpha{list-style-type:lower-alpha}
+ol.roem{list-style-type:upper-roman}
+ul.ohne{list-style:none;padding-left:0}
+a{color:#9e4f2c}
+a.still{text-decoration:none}
+.lead{font-size:12pt;color:#6b6257}
+hr{border:0;border-top:1px solid #e6ddd0;margin:12pt 0}
+blockquote{margin:8pt 0 10pt;padding:4pt 10pt;border-left:3px solid #c86f4a;background:#f4efe8}
+blockquote p:last-child{margin-bottom:0}
+address{margin:0 0 7pt}
+.kasten{margin:8pt 0;padding:6pt 9pt;border:1px solid #e6ddd0;border-radius:4pt;break-inside:avoid}
+.gross{break-inside:avoid;border-left:2pt solid #e6ddd0;padding-left:9pt}
+table{width:100%;border-collapse:collapse;margin:6pt 0 10pt;font-size:9.5pt}
+th,td{padding:3pt 6pt;border-bottom:1px solid #e6ddd0;text-align:left;vertical-align:top}
+thead th{border-bottom:1.5pt solid #211d18}
+td.r,th.r{text-align:right;white-space:nowrap}
+.neu{break-before:page}
+.danach{break-after:page}
+.alt{page-break-before:always}
+.linie{padding-top:20pt;border-bottom:1px solid #6b6257}
+.klein{font-size:8.5pt;color:#6b6257}
+</style>
+</head>
+<body>
+<h1>Fließtext-Probe</h1>
+<p class="lead">Ein erfundenes Dokument, das alle Bausteine für mehrseitige Texte zeigt: Listen, Zitate, Tabellen über Seitengrenzen, Ausfüllzeilen und erzwungene Umbrüche.</p>
+<address>Erika Mustermann<br>Teststraße 1<br>12345 Musterstadt</address>
+
+<h2>1. Listen</h2>
+<p>Ungeordnete Listen mit drei Ebenen; die Zeichen wechseln von Punkt über Kreis zu Quadrat:</p>
+<ul>
+<li>Erste Ebene, ein kurzer Eintrag.</li>
+<li>Ein längerer Eintrag, der über mehrere Zeilen läuft, damit sichtbar wird, dass die Folgezeilen bündig unter dem Text stehen und nicht unter dem Aufzählungszeichen.
+<ul>
+<li>Zweite Ebene mit Kreis.</li>
+<li>Noch ein Eintrag auf der zweiten Ebene.
+<ul>
+<li>Dritte Ebene mit Quadrat.</li>
+<li>Und ein zweiter Eintrag.</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>Zurück auf der ersten Ebene.</li>
+</ul>
+<p>Nummerierte Listen mit Buchstaben und römischen Ziffern darunter:</p>
+<ol>
+<li>Die Vase wird nach deinen Angaben gedruckt.</li>
+<li>Vor dem Versand prüfen wir jedes Stück:
+<ol class="alpha">
+<li>Maße und Wandstärke,</li>
+<li>Oberfläche und Farbe,</li>
+<li>Dichtheit (nur bei Vasen für frische Blumen).</li>
+</ol>
+</li>
+<li value="7">Dieser Eintrag trägt die Nummer sieben.</li>
+<li>Und dieser die acht.</li>
+</ol>
+<ol class="roem" start="4">
+<li>Römisch vier.</li>
+<li>Römisch fünf.</li>
+</ol>
+<ul class="ohne">
+<li>Liste ohne Zeichen – erster Eintrag.</li>
+<li>Liste ohne Zeichen – zweiter Eintrag.</li>
+</ul>
+
+<h2>2. Zitat, Trennlinie und Links</h2>
+<blockquote><p>„Ein Zitat steht eingerückt, mit Linie links und hellem Grund. Es darf über mehrere Zeilen gehen und bleibt dabei schön zusammen.“</p><p class="klein">— Erika Mustermann, Teststraße 1</p></blockquote>
+<p>Links können unterstrichen sein, etwa <a href="https://shop.example/agb">die AGB unter shop.example/agb</a>, oder ohne Linie wie <a class="still" href="mailto:erika@example.org">erika@example.org</a>. Telefon: <a class="still" href="tel:+4930123456">+49 30 123456</a>.</p>
+<hr>
+<p>Nach der Trennlinie geht der Text weiter. Geschützte Leerzeichen halten zusammen, was zusammengehört: §&nbsp;312g Abs.&nbsp;1 BGB, Art.&nbsp;246a §&nbsp;1 EGBGB und 14&nbsp;Tage.</p>
+
+<h2>3. Langer Fließtext</h2>
+<p>Dieser Abschnitt besteht aus mehreren langen Absätzen, damit ein Seitenumbruch mitten in einen Absatz fällt. Am Seitenende und am Seitenanfang sollen dabei immer mindestens zwei Zeilen eines Absatzes stehen, nie nur eine einzelne. Wir drucken jede Vase einzeln auf Bestellung. Dafür verwenden wir einen pflanzenbasierten Kunststoff, der sich gut verarbeiten lässt und eine feine, matte Oberfläche ergibt. Die Druckzeit hängt von Höhe und Muster ab; eine große Vase braucht oft mehr als einen Tag.</p>
+<p>Nach dem Druck wird jedes Stück von Hand nachbearbeitet. Feine Fäden werden entfernt, der Boden wird geglättet, und bei Vasen für frische Blumen prüfen wir die Dichtheit mit Wasser. Erst wenn alles passt, verpacken wir die Vase in recyceltem Karton mit Papierpolster. Kunststofffolie verwenden wir nicht. Die Sendung geht mit einem Paketdienst auf den Weg, und du bekommst eine Nachricht mit der Sendungsnummer.</p>
+<p>Sollte doch einmal etwas beschädigt ankommen, melde dich bitte mit einem Foto. Wir drucken die Vase dann neu oder erstatten den Kaufpreis, ganz wie du möchtest. Dafür musst du nichts zurückschicken. Bei Fragen zu Maßen, Farben oder Mustern schreib uns gern vorher; wir antworten in der Regel am selben oder nächsten Werktag. Für größere Mengen, etwa als Tischschmuck für eine Feier, machen wir gern ein eigenes Angebot.</p>
+<p>Noch ein Absatz, um die Seite weiter zu füllen. Die Farben auf dem Bildschirm können leicht von der gedruckten Vase abweichen, weil jeder Bildschirm Farben etwas anders zeigt. Muster mit sehr feinen Linien wirken in der Hand oft ruhiger als in der Vorschau. Die angegebenen Maße sind Außenmaße; die Wandstärke liegt je nach Muster zwischen einem und zwei Millimetern.</p>
+<div class="kasten"><h3>Kleiner Kasten (bleibt zusammen)</h3><p style="margin:0">Dieser umrahmte Kasten hat break-inside: avoid. Passt er nicht mehr auf die Seite, beginnt er als Ganzes auf der nächsten. Er enthält drei bis vier Zeilen Text, damit die Wirkung sichtbar wird, wenn er nahe am Seitenende steht.</p></div>
+<p>Weiterer Text nach dem Kasten. Die Bestellung ist verbindlich, sobald du auf „Zahlungspflichtig bestellen“ klickst. Bis dahin kannst du alle Angaben im Warenkorb ändern. Nach dem Absenden bekommst du eine Bestätigung mit allen Angaben und den Vertragsbedingungen per E-Mail.</p>
+
+<h2>4. Tabelle über eine Seitengrenze</h2>
+<p>Die Kopfzeile dieser Tabelle steht in <strong>thead</strong> und wird auf der Folgeseite wiederholt.</p>
+<table>
+<thead><tr><th>Nr.</th><th>Muster</th><th>Farbe</th><th class="r">Höhe</th><th class="r">Preis</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Welle</td><td>Sand</td><td class="r">12 cm</td><td class="r">24,00 €</td></tr>
+<tr><td>2</td><td>Welle</td><td>Terrakotta</td><td class="r">16 cm</td><td class="r">29,00 €</td></tr>
+<tr><td>3</td><td>Rippe</td><td>Salbei</td><td class="r">20 cm</td><td class="r">34,00 €</td></tr>
+<tr><td>4</td><td>Rippe</td><td>Tinte</td><td class="r">24 cm</td><td class="r">39,00 €</td></tr>
+<tr><td>5</td><td>Waben</td><td>Sand</td><td class="r">12 cm</td><td class="r">26,00 €</td></tr>
+<tr><td>6</td><td>Waben</td><td>Terrakotta</td><td class="r">16 cm</td><td class="r">31,00 €</td></tr>
+<tr><td>7</td><td>Spirale, mit einer längeren Beschreibung, die in der Zelle umbricht</td><td>Salbei</td><td class="r">20 cm</td><td class="r">36,00 €</td></tr>
+<tr><td>8</td><td>Spirale</td><td>Tinte</td><td class="r">24 cm</td><td class="r">41,00 €</td></tr>
+<tr><td>9</td><td>Facette</td><td>Sand</td><td class="r">12 cm</td><td class="r">25,00 €</td></tr>
+<tr><td>10</td><td>Facette</td><td>Terrakotta</td><td class="r">16 cm</td><td class="r">30,00 €</td></tr>
+<tr><td>11</td><td>Facette</td><td>Salbei</td><td class="r">20 cm</td><td class="r">35,00 €</td></tr>
+<tr><td>12</td><td>Facette</td><td>Tinte</td><td class="r">24 cm</td><td class="r">40,00 €</td></tr>
+<tr><td>13</td><td>Gitter</td><td>Sand</td><td class="r">12 cm</td><td class="r">27,00 €</td></tr>
+<tr><td>14</td><td>Gitter</td><td>Terrakotta</td><td class="r">16 cm</td><td class="r">32,00 €</td></tr>
+<tr><td>15</td><td>Gitter</td><td>Salbei</td><td class="r">20 cm</td><td class="r">37,00 €</td></tr>
+<tr><td>16</td><td>Gitter</td><td>Tinte</td><td class="r">24 cm</td><td class="r">42,00 €</td></tr>
+<tr><td>17</td><td>Voronoi</td><td>Sand</td><td class="r">12 cm</td><td class="r">29,00 €</td></tr>
+<tr><td>18</td><td>Voronoi</td><td>Terrakotta</td><td class="r">16 cm</td><td class="r">34,00 €</td></tr>
+<tr><td>19</td><td>Voronoi</td><td>Salbei</td><td class="r">20 cm</td><td class="r">39,00 €</td></tr>
+<tr><td>20</td><td>Voronoi</td><td>Tinte</td><td class="r">24 cm</td><td class="r">44,00 €</td></tr>
+<tr><td>21</td><td>Koralle</td><td>Sand</td><td class="r">12 cm</td><td class="r">31,00 €</td></tr>
+<tr><td>22</td><td>Koralle</td><td>Terrakotta</td><td class="r">16 cm</td><td class="r">36,00 €</td></tr>
+<tr><td>23</td><td>Koralle</td><td>Salbei</td><td class="r">20 cm</td><td class="r">41,00 €</td></tr>
+<tr><td>24</td><td>Koralle</td><td>Tinte</td><td class="r">24 cm</td><td class="r">46,00 €</td></tr>
+</tbody>
+</table>
+
+<h2>5. Großer Block mit break-inside: avoid</h2>
+<div class="gross">
+<p>Dieser Block wünscht sich, nicht geteilt zu werden, ist aber zu lang für eine Seite. Er muss trotzdem umbrechen, und die Linie links läuft auf jeder Seite mit. Die folgenden Absätze wiederholen bewusst ähnliche Sätze, damit genug Text zusammenkommt.</p>
+<p>Erster Absatz im großen Block. Wir drucken jede Vase einzeln auf Bestellung und verwenden dafür einen pflanzenbasierten Kunststoff. Die Druckzeit hängt von Höhe und Muster ab. Nach dem Druck wird jedes Stück von Hand nachbearbeitet und geprüft.</p>
+<p>Zweiter Absatz im großen Block. Die Sendung geht mit einem Paketdienst auf den Weg, und du bekommst eine Nachricht mit der Sendungsnummer. Sollte etwas beschädigt ankommen, melde dich bitte mit einem Foto; wir drucken neu oder erstatten den Kaufpreis.</p>
+<p>Dritter Absatz im großen Block. Die Farben auf dem Bildschirm können leicht von der gedruckten Vase abweichen. Muster mit sehr feinen Linien wirken in der Hand oft ruhiger als in der Vorschau. Die angegebenen Maße sind Außenmaße.</p>
+<p>Vierter Absatz im großen Block. Bei Fragen zu Maßen, Farben oder Mustern schreib uns gern vorher; wir antworten in der Regel am selben oder nächsten Werktag. Für größere Mengen machen wir gern ein eigenes Angebot.</p>
+<p>Fünfter Absatz im großen Block. Die Bestellung ist verbindlich, sobald du auf „Zahlungspflichtig bestellen“ klickst. Bis dahin kannst du alle Angaben im Warenkorb ändern. Nach dem Absenden bekommst du eine Bestätigung per E-Mail.</p>
+<p>Sechster Absatz im großen Block. Wir drucken jede Vase einzeln auf Bestellung und verwenden dafür einen pflanzenbasierten Kunststoff. Die Druckzeit hängt von Höhe und Muster ab. Nach dem Druck wird jedes Stück von Hand nachbearbeitet und geprüft.</p>
+<p>Siebter Absatz im großen Block. Die Sendung geht mit einem Paketdienst auf den Weg, und du bekommst eine Nachricht mit der Sendungsnummer. Sollte etwas beschädigt ankommen, melde dich bitte mit einem Foto; wir drucken neu oder erstatten den Kaufpreis.</p>
+<p>Achter Absatz im großen Block. Die Farben auf dem Bildschirm können leicht von der gedruckten Vase abweichen. Muster mit sehr feinen Linien wirken in der Hand oft ruhiger als in der Vorschau. Die angegebenen Maße sind Außenmaße.</p>
+<p>Neunter Absatz im großen Block. Bei Fragen zu Maßen, Farben oder Mustern schreib uns gern vorher; wir antworten in der Regel am selben oder nächsten Werktag. Für größere Mengen machen wir gern ein eigenes Angebot.</p>
+<p>Zehnter Absatz im großen Block. Die Bestellung ist verbindlich, sobald du auf „Zahlungspflichtig bestellen“ klickst. Bis dahin kannst du alle Angaben im Warenkorb ändern. Nach dem Absenden bekommst du eine Bestätigung per E-Mail.</p>
+<p>Elfter Absatz im großen Block. Wir drucken jede Vase einzeln auf Bestellung und verwenden dafür einen pflanzenbasierten Kunststoff. Die Druckzeit hängt von Höhe und Muster ab. Nach dem Druck wird jedes Stück von Hand nachbearbeitet und geprüft.</p>
+<p>Zwölfter Absatz im großen Block. Die Sendung geht mit einem Paketdienst auf den Weg, und du bekommst eine Nachricht mit der Sendungsnummer. Sollte etwas beschädigt ankommen, melde dich bitte mit einem Foto; wir drucken neu oder erstatten den Kaufpreis.</p>
+<p>Dreizehnter Absatz im großen Block. Die Farben auf dem Bildschirm können leicht von der gedruckten Vase abweichen. Muster mit sehr feinen Linien wirken in der Hand oft ruhiger als in der Vorschau. Die angegebenen Maße sind Außenmaße.</p>
+<p>Vierzehnter Absatz im großen Block. Bei Fragen zu Maßen, Farben oder Mustern schreib uns gern vorher; wir antworten in der Regel am selben oder nächsten Werktag. Für größere Mengen machen wir gern ein eigenes Angebot.</p>
+<p>Fünfzehnter Absatz im großen Block. Die Bestellung ist verbindlich, sobald du auf „Zahlungspflichtig bestellen“ klickst. Bis dahin kannst du alle Angaben im Warenkorb ändern. Nach dem Absenden bekommst du eine Bestätigung per E-Mail.</p>
+<p>Sechzehnter Absatz im großen Block. Wir drucken jede Vase einzeln auf Bestellung und verwenden dafür einen pflanzenbasierten Kunststoff. Die Druckzeit hängt von Höhe und Muster ab. Nach dem Druck wird jedes Stück von Hand nachbearbeitet und geprüft.</p>
+<p>Siebzehnter Absatz im großen Block. Die Sendung geht mit einem Paketdienst auf den Weg, und du bekommst eine Nachricht mit der Sendungsnummer. Sollte etwas beschädigt ankommen, melde dich bitte mit einem Foto; wir drucken neu oder erstatten den Kaufpreis.</p>
+<p>Achtzehnter Absatz im großen Block. Die Farben auf dem Bildschirm können leicht von der gedruckten Vase abweichen. Muster mit sehr feinen Linien wirken in der Hand oft ruhiger als in der Vorschau. Die angegebenen Maße sind Außenmaße.</p>
+</div>
+<p class="danach">Dieser Absatz hat break-after: page – danach beginnt eine neue Seite.</p>
+
+<h2>6. Formular zum Ausfüllen</h2>
+<p>An: Erika Mustermann, Teststraße 1, 12345 Musterstadt, erika@example.org</p>
+<p>Hiermit teile ich mit, dass ich den Vertrag über den Kauf der folgenden Waren widerrufe:</p>
+<div class="linie"></div>
+<div class="linie"></div>
+<p class="klein">Bestellt am / erhalten am</p>
+<div class="linie"></div>
+<p class="klein">Name, Anschrift</p>
+<div class="linie"></div>
+<div class="linie"></div>
+<p class="klein">Datum, Unterschrift (nur bei Mitteilung auf Papier)</p>
+<section class="alt">
+<h2>7. Alte Schreibweise</h2>
+<p>Dieser Abschnitt beginnt wegen page-break-before: always auf einer neuen Seite.</p>
+<p class="klein">Ende der Probe.</p>
+</section>
+</body>
+</html>

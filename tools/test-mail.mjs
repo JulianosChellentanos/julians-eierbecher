@@ -26,6 +26,8 @@ function check(ok, label, detail) {
   return false;
 }
 const nb = (s) => String(s).replace(/ /g, ' ');
+// Bestätigung: Rechnung als PDF + AGB und Widerrufsbelehrung (PDF bei vollständigen Firmendaten) — server.js mailAnhaenge
+const mitBelegen = (m) => m?.attachments.length === 3 && /^formsam-Rechnung-.+\.pdf$/.test(m.attachments[0]) && m.attachments.slice(1).join() === 'formsam-AGB.pdf,formsam-Widerrufsbelehrung.pdf';
 
 // ---------------------------------------------------------------------------
 // Hilfen: MIME lesen, Fake-SMTP
@@ -516,7 +518,7 @@ async function shopTests() {
     await warte(() => delivered().filter((m) => m.subject.includes(a.orderId)).length >= 2);
     const conf = delivered().find((m) => m.subject.includes(a.orderId) && m.rcpts[0] === 'erika@formsam.example');
     const adm = delivered().find((m) => m.subject.includes(a.orderId) && m.rcpts.includes('admin@formsam.example'));
-    check(conf && /^Hallo Erika,/.test(conf.text) && /nehme ich dein Angebot an/.test(conf.text) && /innerhalb von 14 Tagen/.test(conf.text) && /§ 19 UStG/.test(nb(conf.text)) && conf.attachments.length === 2 && conf.auto === 'auto-generated',
+    check(conf && /^Hallo Erika,/.test(conf.text) && /nehme ich dein Angebot an/.test(conf.text) && /innerhalb von 14 Tagen/.test(conf.text) && /§ 19 UStG/.test(nb(conf.text)) && mitBelegen(conf) && conf.auto === 'auto-generated',
       'Bestellung: Bestätigung mit Anrede, Annahmesatz, Frist, § 19-Hinweis, Rechtstexten, Auto-Submitted', conf?.text.slice(0, 300));
     check(adm && adm.rcpts.join() === 'admin@formsam.example,zweit@formsam.example' && /erika@formsam\.example/.test(adm.replyTo), 'Admin-Kopie an beide Adressen der Liste, Reply-To = Kundin', adm && { rcpts: adm.rcpts, replyTo: adm.replyTo });
     await warte(() => mailHist(a.orderId).length >= 1);
@@ -601,7 +603,7 @@ async function shopTests() {
     r = await admin('POST', '/api/admin/mail-resend', { id: eConf.id });
     await warte(() => delivered().length > before);
     const again = delivered().at(-1);
-    check(r.json?.ok && again.subject.includes(a.orderId) && again.attachments.length === 2, '„Erneut“ auf zugestellte Bestätigung: neu erzeugt, mit Rechtstexten', r.json);
+    check(r.json?.ok && again.subject.includes(a.orderId) && mitBelegen(again), '„Erneut“ auf zugestellte Bestätigung: neu erzeugt, mit Rechnung und Rechtstexten', { r: r.json, anh: again?.attachments });
     const eWill = (await log()).find((e) => e.kind === 'freitext' && e.status === 'gesendet');
     check(eWill && eWill.resendable === false, 'Zugestellter Freitext: kein „Erneut“ (Inhalt nicht aufbewahrt)');
     // Storno nach Teil-Gutschrift: Betrag wie Stornorechnung
@@ -688,7 +690,7 @@ async function shopTests() {
     r = await admin('POST', '/api/admin/mail-resend', { id: ew.id });
     await warte(() => mailHist(w.orderId).length >= 1);
     const wm = delivered().find((m) => m.subject.includes(w.orderId) && m.rcpts[0] === 'wartet@formsam.example');
-    check(r.json?.ok && wm?.attachments.length === 2 && mailHist(w.orderId).some((n) => /→ wartet@/.test(n)), '„Jetzt senden“ nach Neustart: zugestellt mit Rechtstexten, Historie nachgezogen', r.json);
+    check(r.json?.ok && mitBelegen(wm) && mailHist(w.orderId).some((n) => /→ wartet@/.test(n)), '„Jetzt senden“ nach Neustart: zugestellt mit Rechtstexten, Historie nachgezogen', r.json);
     // Update von einer alten Outbox (Version 1): Der alte Code schrieb „E-Mail … →“ schon beim Einreihen; die wartende Mail wird
     // nach dem Update zugestellt → genau eine solche Zeile in der Historie
     await stop();

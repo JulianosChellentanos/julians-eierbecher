@@ -1547,36 +1547,181 @@ async function mailNeuBauen(e) {
   const orderId = mailOrderId(e);
   let order;
   try { order = await readOrder(orderId); } catch { throw new Error(`Bestellung ${orderId} nicht gefunden`); }
-  if (kind === 'admin-neu') return { to: adminEmpfaenger(), replyTo: antwortAn(order.customer?.email), ...adminNewOrder({ order, settings, baseUrl }) };
+  // Dieselben Anhänge wie beim ersten Versand (Beleg-PDFs, bei der Bestätigung die damals gespeicherten Rechtstext-PDFs)
+  if (kind === 'admin-neu') {
+    const attachments = await mailAnhaenge(order, kind);
+    return { to: adminEmpfaenger(), replyTo: antwortAn(order.customer?.email), ...adminNewOrder({ order, settings, baseUrl, anhaenge: attachments.map((a) => a.filename) }), attachments };
+  }
   // „Erneut“ einer zugestellten Zahlungserinnerung: dieselbe Tagesgrenze wie der Knopf im Drawer
   const um = kind === 'zahlungserinnerung' ? erinnertHeute(order) : '';
   const laeuft = kind === 'zahlungserinnerung' ? erinnerungLaeuft.get(orderId) : undefined;
   if (um || (laeuft !== undefined && laeuft !== e.id)) throw new Error(`Heute ist schon eine Zahlungserinnerung rausgegangen${um ? ` (um ${um} Uhr)` : ''} – eine je Tag`);
   const body = kind.startsWith('status:') ? { kind: 'status', status: kind.slice(7) }
     : kind.startsWith('reklamation:') ? { kind: 'reklamation', phase: kind.slice(12) } : { kind };
-  const attachments = kind === 'bestaetigung' ? await legalAttachments() : [];
+  const attachments = await mailAnhaenge(order, kind);
   const m = renderOrderMail(order, { ...body, anhaenge: attachments.map((a) => a.filename) });
   return { to: e.to || customerAddress(order), subject: m.subject, text: m.text, html: m.html, attachments };
 }
+
+// ---------------------------------------------------------------------------
+// PDF-Belege und PDF-Rechtstexte (lib/html-pdf.js: eigener Satz mit eingebetteten Schriften Inter/Fraunces, ohne Fremdpakete)
+// Lieber keine PDF als eine falsche: der Satz arbeitet streng (Zeichen ohne Glyphe, nicht unterstützter Aufbau, Selbstprüfung
+// → PdfError) — dann bleibt es beim Link auf den HTML-Beleg bzw. beim Rechtstext als HTML-Anhang. Eine PDF-Panne hält nie
+// eine Bestellung, eine Antwort oder eine Mail auf; protokolliert werden nur Code, Codepunkt und Bestellnummer (keine
+// Kundendaten). orders/<ID>/<art>.pdf entsteht einmal aus der gespeicherten HTML-Datei und wird danach nie verändert.
+// ---------------------------------------------------------------------------
+const BELEG_ARTEN = { rechnung: 'Rechnung', gutschrift: 'Gutschrift', storno: 'Stornorechnung' };
+const PDF_TYP = 'application/pdf';
+let pdfMod = null;
+let pdfWarned = false;
+/** lib/html-pdf.js dynamisch laden (wie lib/legal.js): fehlt das Modul oder ist es fehlerhaft, gibt es einfach keine PDFs */
+async function pdfModul() {
+  if (pdfMod) return pdfMod;
+  try {
+    const m = await import('./lib/html-pdf.js');
+    if (typeof m.belegPdf !== 'function' || typeof m.legalPdf !== 'function') throw new Error('belegPdf/legalPdf fehlen');
+    pdfMod = m;
+    pdfWarned = false;
+  } catch (err) {
+    if (!pdfWarned) { pdfWarned = true; console.warn(`⚠️  PDF-Satz nicht verfügbar (lib/html-pdf.js): ${err?.code || err?.name || 'Fehler'} – Belege nur als Link, Rechtstexte als HTML`); }
+    return null;
+  }
+  return pdfMod;
+}
+/** Protokoll einer gescheiterten PDF — nur Code, Codepunkt, Art und Bestellnummer (Meldung/e.context können Kundentext enthalten) */
+function pdfFehler(was, orderId, err) {
+  const cp = Number.isInteger(err?.codePoint) ? ` U+${err.codePoint.toString(16).toUpperCase().padStart(4, '0')}` : '';
+  console.warn(`📄 PDF ${was}${orderId ? ` ${orderId}` : ''} nicht erzeugt: ${err?.code || err?.name || 'Fehler'}${cp} – stattdessen Link bzw. HTML`);
+}
+/** Beleg-Datum als Erstellungsdatum der PDF (deterministisch: dieselbe Datei ergibt dieselben Bytes) — nur ISO-Zeit mit Z */
+function belegDatum(order, art) {
+  const r = order?.reklamation || {};
+  const v = art === 'rechnung' ? order?.invoiceAt || order?.completedAt || order?.createdAt
+    : art === 'gutschrift' ? r.resolvedAt || r.updatedAt : order?.storno?.at;
+  return typeof v === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?Z$/.test(v) ? v : undefined;
+}
+/** Dateiname: formsam-Rechnung-RE-2026-0042.pdf | formsam-Gutschrift-… | formsam-Stornorechnung-… (Nummer nur [A-Za-z0-9._-]) */
+function belegPdfName(order, art) {
+  const nr = art === 'rechnung' ? order?.invoiceNo : art === 'gutschrift' ? order?.reklamation?.gutschriftNo : order?.storno?.nr;
+  const s = String(nr || order?.orderId || '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 40);
+  return `formsam-${BELEG_ARTEN[art]}${s ? `-${s}` : ''}.pdf`;
+}
+/** Datei einmal anlegen, nie ersetzen (Temp-Datei 0600 + link): gibt es sie schon, bleibt sie → Inhalt der vorhandenen Datei */
+async function einmalSchreiben(file, buffer) {
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  try {
+    await writeFile(tmp, buffer, { mode: 0o600, flag: 'wx' });
+    try { await link(tmp, file); } catch (err) {
+      if (err?.code === 'EEXIST') return await readFile(file);
+      if (existsSync(file)) return await readFile(file);
+      await rename(tmp, file);   // Dateisystem ohne harte Links: die laufende Erzeugung ist je Datei ohnehin nur einmal unterwegs
+    }
+    return buffer;
+  } finally { await rm(tmp, { force: true }).catch(() => {}); }
+}
+const pdfLaeuft = new Map();       // '<ID>/<art>' → laufende Erzeugung (gleichzeitige Aufrufe teilen sie)
+const pdfGescheitert = new Map();  // '<ID>/<art>' → Stand der HTML-Datei, an dem der Satz scheiterte (nicht bei jedem Abruf neu rechnen)
 /**
- * AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) als HTML-Anhänge der Bestellbestätigung — so hat die Kundschaft
- * die Vertragsbedingungen auf einem dauerhaften Datenträger (§ 312f Abs. 2 BGB). Ohne lib/legal.js: keine Anhänge.
+ * PDF zu einem Beleg (art: rechnung | gutschrift | storno) → { buffer, filename } oder null. Liegt orders/<ID>/<art>.pdf schon
+ * vor, wird sie genommen; sonst entsteht sie EINMAL aus der gespeicherten <art>.html (Datum = Belegdatum) und bleibt danach,
+ * wie sie ist. Ohne HTML-Beleg oder wenn der Satz scheitert: null (dann gilt der Link auf die HTML-Fassung).
  */
-async function legalAttachments() {
-  const mod = await legalModule();
-  if (!mod) return [];
+function ensureBelegPdf(order, art) {
+  const id = String(order?.orderId || '');
+  if (!Object.hasOwn(BELEG_ARTEN, art) || !ORDER_ID_RE.test(id)) return Promise.resolve(null);
+  const key = `${id}/${art}`;
+  if (pdfLaeuft.has(key)) return pdfLaeuft.get(key);
+  const p = (async () => {
+    const filename = belegPdfName(order, art);
+    const file = path.join(ORDERS, id, `${art}.pdf`);
+    try { return { buffer: await readFile(file), filename }; } catch (err) { if (err?.code !== 'ENOENT') { pdfFehler(art, id, err); return null; } }
+    const htmlFile = path.join(ORDERS, id, `${art}.html`);
+    let html, stand;
+    try { const st = await stat(htmlFile); stand = `${st.size}:${st.mtimeMs}`; html = await readFile(htmlFile, 'utf8'); } catch { return null; }
+    if (pdfGescheitert.get(key) === stand) return null;
+    const mod = await pdfModul();
+    if (!mod) return null;
+    let buffer;
+    try { ({ buffer } = mod.belegPdf(html, { createdAt: belegDatum(order, art) })); } catch (err) {
+      if (pdfGescheitert.size >= 2000) pdfGescheitert.delete(pdfGescheitert.keys().next().value);
+      pdfGescheitert.set(key, stand);
+      pdfFehler(art, id, err);
+      return null;
+    }
+    // nicht speicherbar (z. B. Platte voll): die PDF taugt trotzdem als Anhang, beim nächsten Abruf wird sie neu gesetzt
+    try { buffer = await einmalSchreiben(file, buffer); } catch (err) { pdfFehler(`${art} (Speichern)`, id, err); }
+    return { buffer, filename };
+  })().catch((err) => { pdfFehler(art, id, err); return null; }).finally(() => pdfLaeuft.delete(key));
+  pdfLaeuft.set(key, p);
+  return p;
+}
+const RECHTSTEXTE = [['agb', 'formsam-AGB'], ['widerruf', 'formsam-Widerrufsbelehrung']];
+const rechtPdfCache = new Map();   // SHA-256 der Druckfassung → PDF bzw. null (gleiche Fassung → dieselben Bytes, ohne neu zu setzen)
+/** Rechtstext als PDF in der heute gültigen Fassung → Buffer oder null (z. B. INCOMPLETE: Firmendaten unvollständig) */
+async function rechtPdf(slug, orderId) {
+  const [lmod, pmod] = [await legalModule(), await pdfModul()];
+  if (!lmod || !pmod || typeof lmod.renderLegalPage !== 'function') return null;
+  const opts = { settings, baseUrl: baseUrlFor(settings), logoHtml: logoHTML(28) };
+  try {
+    // Schlüssel: Druckfassung + Firmendaten (die Pflichtangaben-Prüfung von legalPdf hängt an ihnen, auch wo der Text sie nicht nennt)
+    const key = sha256(`${slug}\n${JSON.stringify(settings.company || {})}\n${lmod.renderLegalPage(slug, { ...opts, forPdf: true })}`);
+    if (!rechtPdfCache.has(key)) {
+      let buf = null;
+      try { buf = pmod.legalPdf(slug, { ...opts, createdAt: lmod.LEGAL_STAND || undefined }).buffer; } catch (err) { pdfFehler(slug, orderId, err); }
+      if (rechtPdfCache.size >= 16) rechtPdfCache.delete(rechtPdfCache.keys().next().value);
+      rechtPdfCache.set(key, buf);
+    }
+    return rechtPdfCache.get(key);
+  } catch (err) { pdfFehler(slug, orderId, err); return null; }
+}
+/**
+ * AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) für die Bestellbestätigung — so hat die Kundschaft die
+ * Vertragsbedingungen auf einem dauerhaften Datenträger (§ 312f Abs. 2 BGB). Je Text: die beim Abschluss verschickte PDF
+ * (orders/<ID>/agb.pdf, widerruf.pdf — damit „Erneut“ den damaligen Stand schickt), sonst jetzt als PDF (speichern: beim
+ * Abschluss festhalten), sonst wie bisher als HTML. Ohne lib/legal.js: keine Anhänge.
+ */
+async function rechtsAnhaenge(order, { speichern = false } = {}) {
   const out = [];
-  for (const [slug, filename] of [['agb', 'formsam-AGB.html'], ['widerruf', 'formsam-Widerrufsbelehrung.html']]) {
+  const id = ORDER_ID_RE.test(String(order?.orderId || '')) ? order.orderId : '';
+  for (const [slug, name] of RECHTSTEXTE) {
     try {
-      const html = await mod.renderLegalPage(slug, { settings, baseUrl: baseUrlFor(settings), forMail: true });
-      if (typeof html === 'string') out.push({ filename, content: html, contentType: 'text/html; charset=utf-8' });
-    } catch (err) { console.error(`Anhang ${filename} fehlgeschlagen:`, err?.message || err); }
+      const file = id ? path.join(ORDERS, id, `${slug}.pdf`) : '';
+      let buf = null;
+      if (file) { try { buf = await readFile(file); } catch { /* noch keine gespeicherte Fassung */ } }
+      if (!buf) {
+        buf = await rechtPdf(slug, id);
+        if (buf && speichern && file) { try { buf = await einmalSchreiben(file, buf); } catch (err) { pdfFehler(`${slug} (Speichern)`, id, err); } }
+      }
+      if (buf) { out.push({ filename: `${name}.pdf`, content: buf, contentType: PDF_TYP }); continue; }
+      const mod = await legalModule();
+      const html = mod ? await mod.renderLegalPage(slug, { settings, baseUrl: baseUrlFor(settings), forMail: true }) : null;
+      if (typeof html === 'string') out.push({ filename: `${name}.html`, content: html, contentType: 'text/html; charset=utf-8' });
+    } catch (err) { console.error(`Anhang ${name} fehlgeschlagen:`, err?.code || err?.message || err); }
   }
   return out;
 }
 /**
+ * Anhänge einer Bestellmail — dieselben beim ersten Versand, bei „Erneut“ und beim Senden aus dem Drawer. kind wie im
+ * Versandprotokoll: bestaetigung = Rechnung (PDF) + AGB + Widerrufsbelehrung, admin-neu = Rechnung, status:storniert =
+ * Stornorechnung, reklamation:erledigt mit Gutschrift = Gutschrift. Fehlt eine Beleg-PDF, bleibt es beim Link in der Mail.
+ */
+async function mailAnhaenge(order, kind, { speichern = false } = {}) {
+  const out = [];
+  const beleg = async (art) => {
+    const b = await ensureBelegPdf(order, art);
+    if (b) out.push({ filename: b.filename, content: b.buffer, contentType: PDF_TYP });
+  };
+  try {
+    if (kind === 'bestaetigung' || kind === 'admin-neu') await beleg('rechnung');
+    if (kind === 'bestaetigung') out.push(...await rechtsAnhaenge(order, { speichern }));
+    if (kind === 'status:storniert' && order?.storno?.nr) await beleg('storno');
+    if (kind === 'reklamation:erledigt' && order?.reklamation?.gutschriftNo) await beleg('gutschrift');
+  } catch (err) { pdfFehler(kind, order?.orderId, err); }
+  return out;
+}
+/**
  * Mail zu einer Bestellung rendern (Admin: Vorschau & Versand). kind: bestaetigung | status | freitext | reklamation (+ phase) | zahlungserinnerung
- * anhaenge: Dateinamen der Rechtstexte, die mit der Bestätigung verschickt werden (nur Hinweistext in der Mail)
+ * anhaenge: Dateinamen der Anhänge (mailAnhaenge: Beleg-PDFs, Rechtstexte) — die Mail nennt nur, was wirklich anhängt
  */
 function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge = [] } = {}) {
   const baseUrl = baseUrlFor(settings);
@@ -1590,7 +1735,7 @@ function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge =
       if (REKLA_PHASE_OF[r.status] !== ph) {
         throw httpError(400, `Phase „${ph}“ passt nicht zum Status der Reklamation (${REKLA_STATUS[r.status] || r.status} → Mail „${REKLA_PHASE_OF[r.status] || '–'}“)`);
       }
-      return { key: `reklamation:${ph}`, kind: `reklamation:${ph}`, ...reklamationMail({ order, phase: ph, settings, baseUrl }) };
+      return { key: `reklamation:${ph}`, kind: `reklamation:${ph}`, ...reklamationMail({ order, phase: ph, settings, baseUrl, anhaenge }) };
     }
     case 'bestaetigung':
       return { key: 'bestaetigung', kind, ...orderConfirmation({ order, settings, baseUrl, anhaenge }) };
@@ -1598,7 +1743,7 @@ function renderOrderMail(order, { kind, status, phase, subject, text, anhaenge =
       const st = String(status || order.status || '');
       if (!STATUSES.includes(st)) throw httpError(400, 'Ungültiger Status');
       if (!statusMailAllowed(st)) throw httpError(400, `Für den Status „${STATUS_LABELS[st] || st}“ gibt es keine Mail-Vorlage`);
-      return { key: st, kind: `status:${st}`, ...orderStatus({ order, status: st, settings, baseUrl, storno: st === 'storniert' ? stornoMailInfo(order) : null }) };
+      return { key: st, kind: `status:${st}`, ...orderStatus({ order, status: st, settings, baseUrl, storno: st === 'storniert' ? stornoMailInfo(order) : null, anhaenge }) };
     }
     case 'zahlungserinnerung': {
       // Nur für offene Vorkasse mit Betrag — nach Zahlung oder Storno gibt es nichts zu erinnern
@@ -1629,15 +1774,18 @@ hooks.orderCompleted = async (order) => {
   const mc = mailSettings(settings.mail);
   const cust = customerAddress(order);
   if (isEmail(cust.email)) {
-    const attachments = await legalAttachments();   // AGB + Widerrufsbelehrung zum Aufbewahren
+    // Rechnung als PDF + AGB und Widerrufsbelehrung zum Aufbewahren (PDF, je Bestellung gespeichert; sonst HTML) — hier, nach der
+    // Antwort an die Kasse; scheitert eine PDF, geht die Mail trotzdem (ohne diese PDF, der Text nennt nur, was anhängt)
+    const attachments = await mailAnhaenge(order, 'bestaetigung', { speichern: true });
     const m = orderConfirmation({ order, settings, baseUrl, anhaenge: attachments.map((a) => a.filename) });
     const q = await queueOrderMail(order, 'bestaetigung', { to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: 'bestaetigung' });
     if (q === null) return;   // parallel schon bestätigt → auch keine zweite Admin-Kopie
   }
   const admins = adminEmpfaenger();
   if (mc.adminCopy && admins.length) {
-    const m = adminNewOrder({ order, settings, baseUrl });
-    await mailer.queue({ to: admins, replyTo: antwortAn(cust.email), subject: m.subject, text: m.text, html: m.html, kind: 'admin-neu', ref: order.orderId });
+    const attachments = await mailAnhaenge(order, 'admin-neu');   // Rechnung als PDF (schon erzeugt, aus orders/<ID>/rechnung.pdf)
+    const m = adminNewOrder({ order, settings, baseUrl, anhaenge: attachments.map((a) => a.filename) });
+    await mailer.queue({ to: admins, replyTo: antwortAn(cust.email), subject: m.subject, text: m.text, html: m.html, attachments, kind: 'admin-neu', ref: order.orderId });
   }
 };
 // Statuswechsel → Status-Mail (nur mit notify, aktivierter Automatik und passender Vorlage; je Status einmal)
@@ -1647,8 +1795,9 @@ hooks.statusChanged = async (order, prevStatus, { notify = true } = {}) => {
   if (order.mailsSent?.[status]) return;
   const cust = customerAddress(order);
   if (!isEmail(cust.email)) return;
-  const m = orderStatus({ order, status, settings, baseUrl: baseUrlFor(settings), storno: status === 'storniert' ? stornoMailInfo(order) : null });
-  await queueOrderMail(order, status, { to: cust, subject: m.subject, text: m.text, html: m.html, kind: `status:${status}` });
+  const attachments = await mailAnhaenge(order, `status:${status}`);   // Storno: Stornorechnung als PDF
+  const m = orderStatus({ order, status, settings, baseUrl: baseUrlFor(settings), storno: status === 'storniert' ? stornoMailInfo(order) : null, anhaenge: attachments.map((a) => a.filename) });
+  await queueOrderMail(order, status, { to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: `status:${status}` });
 };
 // Reklamation angelegt/eingegangen/erledigt/abgelehnt → Kundenmail (je Phase einmal: mailsSent['reklamation:<phase>'])
 hooks.reklamation = async (order, phase, { notify = true } = {}) => {
@@ -1657,8 +1806,9 @@ hooks.reklamation = async (order, phase, { notify = true } = {}) => {
   if (order.mailsSent?.[key]) return;
   const cust = customerAddress(order);
   if (!isEmail(cust.email)) return;
-  const m = reklamationMail({ order, phase, settings, baseUrl: baseUrlFor(settings) });
-  await queueOrderMail(order, key, { to: cust, subject: m.subject, text: m.text, html: m.html, kind: key });
+  const attachments = await mailAnhaenge(order, key);   // erledigt mit Gutschrift: Gutschrift als PDF
+  const m = reklamationMail({ order, phase, settings, baseUrl: baseUrlFor(settings), anhaenge: attachments.map((a) => a.filename) });
+  await queueOrderMail(order, key, { to: cust, subject: m.subject, text: m.text, html: m.html, attachments, kind: key });
 };
 // Widerruf eingegangen → Eingangsbestätigung an die angegebene Adresse (sofort, mit Inhalt, Datum/Uhrzeit, Referenz) und
 // Meldung an den Shop (adminTo, sonst Firmen-Adresse) — die Meldung geht unabhängig von „Kopie an den Shop“ raus,
@@ -1708,6 +1858,12 @@ function discountFor(product, qty) {
   for (const t of tiers) if (qty >= t.qty && t.off > off) off = t.off;
   return off;
 }
+/**
+ * Gravurtext ohne Steuer- und Formatzeichen (Cc: C0/C1, Cf: Bidi-Marken, Null-Breiten-Zeichen …, dazu U+2028/2029): Die
+ * Druckdatei kennt für sie keine Glyphe und lässt sie weg (textrelief.js) — Preis (priceItem, wie pricing.js), Bestellung und
+ * Belege (positionSauber) sehen so genau den gedruckten Text; nur unsichtbare Zeichen = keine Gravur, kein Aufpreis
+ */
+const gravurSichtbar = (t) => String(t ?? '').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '');
 /** Gravur-Regel (Spiegel von public/js/pricing.js und geometry.js): Die Geometrie schaltet die Gravur ab,
  * sobald die WIRKSAME Mustertiefe über 2,5 mm (Vase) bzw. 2,0 mm (Eierbecher) liegt — dann darf
  * auch kein Gravur-Aufpreis berechnet werden. Wirksam = Wunschtiefe, begrenzt durch die
@@ -1752,7 +1908,7 @@ function priceItem(item, aktionen = aktiveAktionen()) {
   if (!p) throw new Error('Unbekanntes Produkt');
   const qty = Math.max(1, Math.min(50, parseInt(item.qty, 10) || 1));
   const c = item.config || {};
-  const hasText = !!String(c.text || '').trim() && gravurAllowed(c, item.product);
+  const hasText = !!gravurSichtbar(c.text).trim() && gravurAllowed(c, item.product);
   const col = colorOfItem(item);
   const parts = {
     grund: euro(p.single),
@@ -2431,11 +2587,18 @@ function companyOrt(co) {
   const land = String(co.country || '').trim();
   return [[co.zip, co.city].filter(Boolean).join(' '), land && land !== 'Deutschland' ? land : ''].filter(Boolean).join(', ');
 }
+/** Text maskiert, Leerzeichen geschützt (Telefonnummer, IBAN) — bricht nie mitten in der Nummer um */
+const nbspAlle = (v) => esc(v).replace(/ /g, '&nbsp;');
+/**
+ * Geschützte Leerzeichen zwischen Zahl und Einheit („150&nbsp;mm“, „19&nbsp;%“, „14&nbsp;Tagen“, „50&nbsp;°C“) in fertig maskiertem
+ * Beleg-Text — nur neue Belege; der Satz und der Browser-Druck trennen Zahl und Einheit dann nicht mehr
+ */
+const einheitNbsp = (html) => String(html).replace(/(\d) (?=(?:mm|cm|%|€|°C|Stück|Werktag(?:en?)?|Tag(?:en?)?|Wochen?|Monat(?:en?)?)(?![\p{L}\d]))/gu, '$1&nbsp;');
 /** Absenderblock rechts im Kopf (zweispaltig, damit der Kopf flach bleibt): Marke, Inhaber (voller Name), Anschrift | Kontakt, Steuernummer/USt-IdNr. */
 function belegAbsender(co) {
   const adresse = [`<b>${esc(co.name || BRAND)}</b>`, esc(co.owner), esc(co.street), esc(companyOrt(co))].filter(Boolean);
   const kontakt = [
-    co.email ? esc(co.email) : '', co.phone ? `Tel. ${esc(co.phone)}` : '',
+    co.email ? esc(co.email) : '', co.phone ? `Tel.&nbsp;${nbspAlle(co.phone)}` : '',
     co.steuerNr ? `Steuernummer ${esc(co.steuerNr)}` : '', co.ustId ? `USt-IdNr. ${esc(co.ustId)}` : '',
   ].filter(Boolean);
   return `<div class="absender"><div>${adresse.join('<br>')}</div>${kontakt.length ? `<div class="kontakt">${kontakt.join('<br>')}</div>` : ''}</div>`;
@@ -2447,6 +2610,9 @@ function belegFuss(co) {
   const parts = [co.name || BRAND, co.owner, [co.street, companyOrt(co)].filter(Boolean).join(', '), co.email, publicHost()];
   return `<footer class="fuss">${parts.map((x) => String(x || '').trim()).filter(Boolean).map(esc).join(' · ')}</footer>`;
 }
+// Neue Belege: Positionstabelle mit <thead> (wiederholt sich im Druck/PDF auf Folgeseiten), Beträge rechtsbündig (.pos .r). Auf dem
+// Handy (≤ 640 px, nur Bildschirm) stehen die Positionen als Karten — Bezeichnung, darunter „Menge × Einzelpreis · Rabatt · Summe“,
+// nichts ragt über den Rand; den „@media screen“-Block übergeht der PDF-Satz (er setzt für den Druck)
 const BELEG_CSS = `
     @font-face{font-family:'Fraunces';src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:400 700;font-display:swap}
     @font-face{font-family:'Inter';src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
@@ -2457,7 +2623,7 @@ const BELEG_CSS = `
     .blatt{background:#fff;max-width:210mm;margin:0 auto;padding:15mm 15mm 11mm;border-radius:4px;box-shadow:0 1px 3px rgba(33,29,24,.08),0 14px 36px rgba(33,29,24,.08)}
     .leiste{max-width:210mm;margin:0 auto 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
     .leiste button{font:inherit;font-weight:600;padding:10px 22px;border-radius:999px;border:none;background:#211d18;color:#f4efe7;cursor:pointer}
-    .leiste a{color:#9e4f2c}
+    .leiste a{color:#9e4f2c}#pdf-hinweis{color:#6b6257}
     .kopf{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding-bottom:12px;border-bottom:1px solid #e6ddd0}
     .logo{display:block;height:34px;width:auto;margin-top:2px}
     .wortmarke{font-family:Fraunces,Georgia,serif;font-size:30px;line-height:1}
@@ -2466,7 +2632,7 @@ const BELEG_CSS = `
     .absender .kontakt{padding-top:1px}
     .anschrift{display:flex;justify-content:space-between;align-items:flex-start;gap:28px;margin:18px 0 14px}
     .empfaenger{min-width:0;font-size:13px}
-    .ruecksende{font-size:9px;color:#6b6257;border-bottom:1px solid #e6ddd0;padding-bottom:2px;margin-bottom:7px;white-space:nowrap}
+    .ruecksende{font-size:9px;color:#6b6257;border-bottom:1px solid #e6ddd0;padding-bottom:2px;margin-bottom:7px}
     table.meta{border-collapse:collapse;font-size:12px}
     .meta th{text-align:left;font-weight:400;color:#6b6257;padding:1px 16px 1px 0;white-space:nowrap;vertical-align:top}
     .meta td{text-align:right;padding:1px 0;font-weight:600;white-space:nowrap}
@@ -2479,6 +2645,7 @@ const BELEG_CSS = `
     .pos td{font-size:12px}
     .pos td small{font-size:10.5px}
     .r{text-align:right;white-space:nowrap}
+    .pos .r{text-align:right}
     table.summen{width:100%;max-width:470px;margin:0 0 0 auto;border-collapse:collapse}
     .summen td{padding:2px 7px;font-size:12.5px}
     .summen .grand td{font-weight:700;font-size:14.5px;border-top:1.5px solid #211d18;padding-top:6px}
@@ -2496,9 +2663,26 @@ const BELEG_CSS = `
     .fuss{margin-top:14px;padding-top:6px;border-top:1px solid #e6ddd0;font-size:9.5px;color:#6b6257;text-align:center}
     @media print{html{background:none}body{padding:0;font-size:12px}.blatt{max-width:none;padding:0;box-shadow:none;border-radius:0}.leiste{display:none}
       h1{font-size:22px}.empfaenger{font-size:12.5px}.pos td{font-size:11.5px}.pos td small{font-size:10px}.summen td{font-size:12px}.summen .grand td{font-size:14px}.dank{font-size:12px}}
-    @media (max-width:640px){.blatt{padding:18px}.kopf,.anschrift,.absender{flex-direction:column}.absender{gap:6px}.ruecksende{white-space:normal}.zahlung tr{display:flex;flex-wrap:wrap}}`;
-/** Komplettes Beleg-Dokument: Knopfleiste (nur Bildschirm) + Blatt mit Kopf, Inhalt und Fußzeile */
-function belegSeite({ title, co, body, css = '', leiste = '<button type="button" onclick="print()">Drucken / als PDF speichern</button>', logoHeight = 34 }) {
+    @media (max-width:640px){.blatt{padding:18px}.kopf,.anschrift,.absender{flex-direction:column}.absender{gap:6px}.zahlung tr{display:flex;flex-wrap:wrap}}
+    @media screen and (max-width:640px){.posten thead{display:none}.posten,.posten tbody{display:block}
+      .posten tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:7px 0;border-bottom:1px solid #e6ddd0}
+      .posten td{padding:0;border:0}.posten .nr{flex:0 0 1.2em}.posten .art{flex:1 1 calc(100% - 1.2em - 11px);min-width:0;overflow-wrap:anywhere}
+      .posten .menge{margin-left:calc(1.2em + 10px)}.posten .menge::after{content:' ×'}.posten .rabatt::before{content:'Rabatt '}.posten .leer{display:none}
+      .posten .summe{margin-left:auto;font-weight:600}}`;
+/**
+ * Komplettes Beleg-Dokument: Knopfleiste (nur Bildschirm) + Blatt mit Kopf, Inhalt und Fußzeile.
+ * pdf = Datei der PDF-Fassung (rechnung.pdf …): Leiste „Drucken“ + „PDF herunterladen“ — den Zugriffsschlüssel (?k=…) nimmt
+ * der Link aus der Adresse der Seite, in der gespeicherten Datei steht er nie; dl=1 → die Route schickt die Datei als Download.
+ * Leitet die Route mangels PDF hierher zurück (?pdf=0), steht statt des Links ein Hinweis aufs Drucken
+ */
+function belegSeite({ title, co, body, css = '', leiste = '<button type="button" onclick="print()">Drucken / als PDF speichern</button>', logoHeight = 34, pdf = '' }) {
+  if (pdf) {
+    leiste = `<button type="button" onclick="print()">Drucken</button> <a id="pdf-link" href="${esc(pdf)}">PDF herunterladen</a>`
+      + '<span id="pdf-hinweis" hidden>Für diesen Beleg gibt es keine PDF-Datei – über „Drucken“ kannst du ihn als PDF speichern.</span>'
+      + '<script>(function(){var a=document.getElementById(\'pdf-link\'),q=new URLSearchParams(location.search);'
+      + 'if(q.get(\'pdf\')===\'0\'){a.hidden=true;document.getElementById(\'pdf-hinweis\').hidden=false;return}'
+      + 'q.delete(\'pdf\');q.set(\'dl\',\'1\');a.search=\'?\'+q})()</script>';
+  }
   return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
   <style>${BELEG_CSS}${css}</style></head><body>
   <div class="leiste noprint">${leiste}</div>
@@ -2672,14 +2856,14 @@ function invoiceHTML(order) {
   const rows = order.lines.map((l, i) => {
     const note = [aktionText(l, settings), surchargeText(l, settings)].filter(Boolean).join(' · ');
     return `
-    <tr><td class="muted">${i + 1}</td><td>${esc(itemLabel(l, { mitAufpreis: false }))}${note ? `<br><small class="muted">${esc(note)}</small>` : ''}</td><td class="r">${l.qty}</td><td class="r">${money(l.unit)}</td>
-    <td class="r">${l.off ? '−' + l.off + ' %' : '—'}</td><td class="r">${money(l.line)}</td></tr>`;
+    <tr><td class="muted nr">${i + 1}</td><td class="art">${einheitNbsp(esc(itemLabel(l, { mitAufpreis: false })))}${note ? `<br><small class="muted">${einheitNbsp(esc(note))}</small>` : ''}</td><td class="r menge">${l.qty}</td><td class="r einzel">${money(l.unit)}</td>
+    <td class="r rabatt${l.off ? '' : ' leer'}">${l.off ? `−${l.off}&nbsp;%` : '—'}</td><td class="r summe">${money(l.line)}</td></tr>`;
   }).join('');
   // Ersparnis je betroffener Aktion („Aktion „Name“ −30 % auf Gehämmert: Ersparnis“) — informativ direkt unter der Zwischensumme,
   // als „in den Preisen enthalten“ gekennzeichnet (die Summen entstehen aus den reduzierten Zeilen; nach dem Gesamtbetrag läse
   // sie sich wie ein weiterer Abzug); ältere Bestellungen mit nur order.aktion: eine Zeile
   const aktionRow = aktionSummary(order, settings)
-    .map((a) => `<tr class="fein"><td>${esc(a.label)} <small>(in den Preisen enthalten)</small></td><td class="r">${esc(a.value)}</td></tr>`).join('');
+    .map((a) => `<tr class="fein"><td>${einheitNbsp(esc(a.label))} <small>(in den Preisen enthalten)</small></td><td class="r">${esc(a.value)}</td></tr>`).join('');
   // Guthaben (Gutschrift aus einer Reklamation) ist eine Anrechnung, kein Rabatt: Die Gutschrift hat das Entgelt der ersten
   // Rechnung (samt USt) schon gemindert — hier zählt es als Zahlung. Entgelt und USt beziehen sich deshalb auf den Betrag vor
   // dem Guthaben, danach „abzüglich Guthaben“ und „Zu zahlen“ (= order.total). Ältere Bestellungen ohne Kennzeichen: über den Code.
@@ -2687,14 +2871,14 @@ function invoiceHTML(order) {
   const entgelt = guth ? Math.round((order.total + guth.off) * 100) / 100 : order.total;
   const ust = ku ? null : ustAus(entgelt, satz);
   const ustRows = ust
-    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz} %</td><td class="r">${money(ust.ust)}</td></tr>` : '';
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz}&nbsp;%</td><td class="r">${money(ust.ust)}</td></tr>` : '';
   const guthRows = guth
     ? `<tr><td>abzüglich Guthaben „${esc(guth.code)}“${guth.gutschriftNo ? ` <small class="muted">(aus Gutschrift ${esc(guth.gutschriftNo)})</small>` : ''}</td><td class="r">−${money(guth.off)}</td></tr>
     <tr class="zahl"><td>Zu zahlen</td><td class="r">${money(order.total)}</td></tr>` : '';
   // § 34a UStDV (seit 2025): Hinweis, dass die Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG gilt
   const steuerNote = (ku
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
-    : `Alle Beträge in Euro inklusive ${satz} % Umsatzsteuer.`) +
+    ? 'Steuerbefreiung für Kleinunternehmer nach §&nbsp;19 Abs.&nbsp;1 UStG – es wird keine Umsatzsteuer berechnet.'
+    : `Alle Beträge in Euro inklusive ${satz}&nbsp;% Umsatzsteuer.`) +
     (guth ? ' Dein Guthaben wird wie eine Zahlung angerechnet: Es mindert weder den Gesamtbetrag noch die Versandkostenfreiheit.' : '');
   const bank = [['Kontoinhaber', co.owner || co.name], ['IBAN', co.iban], ['BIC', co.bic], ['Bank', co.bank], ['Verwendungszweck', order.orderId], ['Betrag', money(order.total)]]
     .filter(([, v]) => String(v || '').trim());
@@ -2707,8 +2891,8 @@ function invoiceHTML(order) {
       ? `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
       : order.paymentStatus === 'bezahlt'
         ? `Bezahlt per Überweisung${order.paidAt ? ` am ${esc(dateDE(order.paidAt))}` : ''}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
-        : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von ${ZAHLUNGSFRIST_TAGE} Tagen mit deiner Bestellnummer als Verwendungszweck:
-       <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
+        : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von ${ZAHLUNGSFRIST_TAGE}&nbsp;Tagen mit deiner Bestellnummer als Verwendungszweck:
+       <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${k === 'IBAN' ? nbspAlle(v) : esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
   // Leistungszeitpunkt (§ 14 Abs. 4 Nr. 6 UStG, Kalendermonat genügt nach § 31 Abs. 4 UStDV): schon versandt → Versanddatum,
   // sonst der voraussichtliche Liefermonat (Rechnungsdatum + längste Lieferzeit) — ausdrücklich als „voraussichtlich“
   const leistung = order.shippedAt
@@ -2728,7 +2912,7 @@ function invoiceHTML(order) {
     <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
   </section>
   <h1>Rechnung</h1>
-  <table class="pos"><tr><th>Pos.</th><th>Artikel (individuell 3D-gedruckt)</th><th class="r">Menge</th><th class="r">Einzelpreis</th><th class="r">Rabatt</th><th class="r">Summe</th></tr>${rows}</table>
+  <table class="pos posten"><thead><tr><th class="nr">Pos.</th><th class="art">Artikel (individuell 3D-gedruckt)</th><th class="r menge">Menge</th><th class="r einzel">Einzelpreis</th><th class="r rabatt">Rabatt</th><th class="r summe">Summe</th></tr></thead><tbody>${rows}</tbody></table>
   <table class="summen">
     <tr><td>Zwischensumme</td><td class="r">${money(order.subtotal)}</td></tr>
     ${aktionRow}
@@ -2740,9 +2924,9 @@ function invoiceHTML(order) {
   </table>
   <p class="steuer">${steuerNote}</p>
   <div class="zahlung">${payNote}</div>
-  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${esc(lieferzeitText(settings))}. ${esc(fristBeginnKurz(order.payment))}</p>
-  <p class="klein">Produkthinweise: ${esc(produktHinweise(order.lines).join(' '))}</p>`;
-  return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body });
+  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${einheitNbsp(esc(lieferzeitText(settings)))}. ${einheitNbsp(esc(fristBeginnKurz(order.payment)))}</p>
+  <p class="klein">Produkthinweise: ${einheitNbsp(esc(produktHinweise(order.lines).join(' ')))}</p>`;
+  return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body, pdf: 'rechnung.pdf' });
 }
 
 // ---------------------------------------------------------------------------
@@ -2759,11 +2943,11 @@ function creditNoteHTML(order) {
   const { kleinunternehmer: ku, satz } = order.invoiceNo ? steuerDerRechnung(order) : steuerJetzt();
   const ust = ku ? null : ustAus(betrag, satz);
   const vatNote = ku
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
-    : `Im Gutschriftbetrag enthaltene USt (${satz} %): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
+    ? 'Steuerbefreiung für Kleinunternehmer nach §&nbsp;19 Abs.&nbsp;1 UStG – es wird keine Umsatzsteuer berechnet.'
+    : `Im Gutschriftbetrag enthaltene USt (${satz}&nbsp;%): ${money(ust.ust)} (netto ${money(ust.netto)}).`;
   const how = {
     gutschein: `Gutschrift als Gutschein-Code <b>${esc(r.gutscheinCode || '')}</b> – einlösbar in der Kasse des Shops im Feld „Gutscheincode“, ohne Mindestbestellwert und auch während einer Aktion. Ist die Bestellung kleiner, bleibt der Rest auf dem Code.`,
-    ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${esc(maskIban(r.iban))}` : ''} innerhalb von 5 Werktagen.`,
+    ueberweisung: `Erstattung per Überweisung${r.iban ? ` auf IBAN ${nbspAlle(maskIban(r.iban))}` : ''} innerhalb von 5&nbsp;Werktagen.`,
     paypal: `Erstattung über PayPal auf das Zahlungskonto der Bestellung${r.refundId ? ` (Referenz ${esc(r.refundId)})` : ''}.`,
   }[r.art] || esc(REKLA_ART[r.art] || '');
   const ref = order.invoiceNo ? `Rechnung ${esc(order.invoiceNo)} vom ${esc(dateDE(order.completedAt || order.createdAt))} · Bestellung ${esc(order.orderId)}` : `Bestellung ${esc(order.orderId)} vom ${esc(dateDE(order.createdAt))}`;
@@ -2781,15 +2965,15 @@ function creditNoteHTML(order) {
     <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
   </section>
   <h1>Gutschrift <span class="muted" style="font-size:.62em">(Rechnungskorrektur)</span></h1>
-  <table class="pos"><tr><th>Position</th><th class="r">Betrag</th></tr>
-    <tr><td>Gutschrift zu ${ref}<br><small class="muted">Grund: ${esc(r.grund || '—')}</small></td><td class="r">${money(betrag)}</td></tr></table>
+  <table class="pos"><thead><tr><th>Position</th><th class="r">Betrag</th></tr></thead><tbody>
+    <tr><td>Gutschrift zu ${ref}<br><small class="muted">Grund: ${esc(r.grund || '—')}</small></td><td class="r">${money(betrag)}</td></tr></tbody></table>
   <table class="summen">
     <tr class="grand"><td>Gutschriftbetrag</td><td class="r">${money(betrag)}</td></tr>
   </table>
   <p class="steuer">${vatNote}</p>
   <div class="zahlung"><b>Art der Erstattung:</b> ${how}</div>
   <p class="dank">Diese Gutschrift bezieht sich auf die oben genannte Rechnung bzw. Bestellung${order.invoiceNo ? ' und mindert deren Betrag entsprechend' : ''}. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
-  return belegSeite({ title: `Gutschrift (Rechnungskorrektur) ${r.gutschriftNo || ''} · ${BRAND}`, co, body });
+  return belegSeite({ title: `Gutschrift (Rechnungskorrektur) ${r.gutschriftNo || ''} · ${BRAND}`, co, body, pdf: 'gutschrift.pdf' });
 }
 
 // ---------------------------------------------------------------------------
@@ -2862,9 +3046,9 @@ function stornoHTML(order) {
     ['Bestellnummer', esc(order.orderId)],
   ];
   const ustRows = ust
-    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">−${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz} %</td><td class="r">−${money(ust.ust)}</td></tr>` : '';
+    ? `<tr class="fein"><td>darin Nettobetrag</td><td class="r">−${money(ust.netto)}</td></tr><tr class="fein"><td>darin Umsatzsteuer ${satz}&nbsp;%</td><td class="r">−${money(ust.ust)}</td></tr>` : '';
   const vatNote = ku
-    ? 'Steuerbefreiung für Kleinunternehmer nach § 19 Abs. 1 UStG – es wird keine Umsatzsteuer berechnet.'
+    ? 'Steuerbefreiung für Kleinunternehmer nach §&nbsp;19 Abs.&nbsp;1 UStG – es wird keine Umsatzsteuer berechnet.'
     : `Die in Rechnung ${esc(order.invoiceNo)} ausgewiesene Umsatzsteuer wird in dieser Höhe berichtigt.`;
   const bezahlt = order.paymentStatus === 'bezahlt';
   // 0 € zu zahlen (Gutschein/Guthaben deckte alles): kein Geld zu erstatten, nur ein Guthaben wird wieder frei
@@ -2883,9 +3067,9 @@ function stornoHTML(order) {
     <table class="meta">${meta.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
   </section>
   <h1>Stornorechnung</h1>
-  <table class="pos"><tr><th>Position</th><th class="r">Betrag</th></tr>
+  <table class="pos"><thead><tr><th>Position</th><th class="r">Betrag</th></tr></thead><tbody>
     <tr><td>Stornierung der Rechnung ${esc(order.invoiceNo)} vom ${esc(rechnungVom)} · Bestellung ${esc(order.orderId)}<br><small class="muted">Die Bestellung wurde storniert.</small></td><td class="r">−${money(entgelt)}</td></tr>
-    ${gutschrift ? `<tr><td>bereits gutgeschrieben mit Gutschrift ${esc(r.gutschriftNo)}</td><td class="r">${money(gutschrift)}</td></tr>` : ''}</table>
+    ${gutschrift ? `<tr><td>bereits gutgeschrieben mit Gutschrift ${esc(r.gutschriftNo)}</td><td class="r">${money(gutschrift)}</td></tr>` : ''}</tbody></table>
   <table class="summen">
     <tr class="grand"><td>Stornobetrag</td><td class="r">−${money(betrag)}</td></tr>
     ${ustRows}
@@ -2893,7 +3077,7 @@ function stornoHTML(order) {
   <p class="steuer">${vatNote}</p>
   <div class="zahlung">${zahlung}</div>
   <p class="dank">Diese Stornorechnung hebt die Rechnung ${esc(order.invoiceNo)} auf. Bei Fragen antworte einfach auf meine E-Mail.</p>`;
-  return belegSeite({ title: `Stornorechnung ${st.nr || ''} · ${BRAND}`, co, body });
+  return belegSeite({ title: `Stornorechnung ${st.nr || ''} · ${BRAND}`, co, body, pdf: 'storno.pdf' });
 }
 /**
  * Beim Wechsel auf „storniert“ (unter der Bestellsperre, vor writeOrder): Stornorechnung zu einer ausgestellten Rechnung
@@ -3245,9 +3429,27 @@ const kasseHash = (items, couponCode) => sha256(JSON.stringify({ items, coupon: 
 function paypalPendingAufraeumen(now = Date.now()) {
   for (const [id, e] of paypalPending) if (now - e.at > PAYPAL_PENDING_TTL) paypalPending.delete(id);
 }
-/** Kundendaten aus der Kasse: nur die bekannten Felder, ohne Steuerzeichen, mit Längengrenzen (Notiz darf Zeilenumbrüche haben) */
+/**
+ * Unsichtbare Formatzeichen (Unicode Cf: Bidi-Marken und -Einbettungen, Null-Breiten-Zeichen, weiches Trennzeichen, BOM …) entfernen
+ * — sie kommen beim Kopieren aus Kontakten mit, sind auf Belegen unsichtbar und könnten die Leserichtung verdrehen
+ */
+const ohneFormatzeichen = (v) => String(v ?? '').replace(/\p{Cf}+/gu, '');
+/**
+ * Gravurtext und Farbname einer Position für Bestellung und Belege. Gravur = gravurSichtbar: ohne Steuer- und Formatzeichen,
+ * die auch die Druckdatei weglässt, und nie gekürzt — die Länge begrenzt schon die Prüfung (lib/eingaben.js TEXT_MAX 40 wie
+ * Design-Codes und Listen; das Kassenfeld hat 30), Beleg und Druckdatei tragen so denselben Text. Farbname ohne Steuerzeichen.
+ */
+const positionsText = (v) => ohneFormatzeichen(v).replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ');
+function positionSauber(l) {
+  const config = l.config && typeof l.config.text === 'string' ? { ...l.config, text: gravurSichtbar(l.config.text) } : l.config;
+  return { config, colorName: typeof l.colorName === 'string' ? positionsText(l.colorName).trim().slice(0, 80) : l.colorName };
+}
+/**
+ * Kundendaten aus der Kasse: nur die bekannten Felder, ohne Steuerzeichen (C0/C1) und unsichtbare Formatzeichen, mit
+ * Längengrenzen (Notiz darf Zeilenumbrüche haben) — auf Rechnung und PDF stehen so nur sichtbare Zeichen
+ */
 function kundeAus(raw) {
-  const clip = (v, n, nl = false) => String(v ?? '').replace(nl ? /[^\S\n]+|[\x00-\x08\x0b-\x1f\x7f]+/g : /[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, n);
+  const clip = (v, n, nl = false) => ohneFormatzeichen(v).replace(nl ? /[^\S\n]+|[\x00-\x08\x0b-\x1f\x7f-\x9f]+/g : /[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ').trim().slice(0, n);
   return {
     name: clip(raw?.name, 120), email: clip(raw?.email, 254).toLowerCase(),
     street: clip(raw?.street, 200), zip: clip(raw?.zip, 20), city: clip(raw?.city, 120),
@@ -3761,10 +3963,11 @@ async function handleCheckout(req, res) {
     paypalOrderId: paypalCap ? ppId : null,
     customer,
     lines: totals.lines.map((l, i) => ({
-      product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
+      // Gravur und Farbname ohne Steuer-/Formatzeichen (positionSauber); stlFile unten nach dem Text, wie ihn der Browser hatte
+      product: l.product, qty: l.qty, saucer: !!l.saucer, config: positionSauber(l).config,
       // Design-Code der Zeile (Warenkorb schickt ihn mit) — für Druckzettel, Admin, Rechnung und Nachbestellung; nur in Normalform
       code: typeof l.code === 'string' && /^[A-Z0-9]{4,20}$/.test(normalizeCode(l.code)) ? normalizeCode(l.code) : null,
-      color: l.color, colorName: l.colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
+      color: l.color, colorName: positionSauber(l).colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
       // Aktion: uvp = Normalpreis (Preis vor der Aktion, Feldname historisch), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
       // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
       uvp: l.uvp, aktionProzent: l.aktionProzent, aktionBetrag: l.aktionBetrag, aktionName: l.aktionName ?? null, aktionId: l.aktionId ?? null,
@@ -3929,7 +4132,7 @@ async function handleComplete(req, res, id, url) {
     try { order = await readOrder(id); } catch { order = null; }
     const z = orderZugriff(req, url, order, kasseOffen);
     if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
-    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
+    if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoicePdfUrl: orderFileUrl(order, 'rechnung.pdf'), invoiceNo: order.invoiceNo });
     // Guthaben (Reservierung einer offenen Kasse gilt nur GUTHABEN_RESERVIERUNG_MS) bzw. Gutschein mit Höchstzahl (eigene parallele
     // Kassen zählen beim Anlegen nicht mit): inzwischen anderweitig eingelöst → nicht abschließen (keine Rechnung), als abgebrochen
     // stornieren. Geprüft hier (früh, ohne Upload-Prüfung) und noch einmal unmittelbar vor der Rechnungsnummer (siehe unten).
@@ -3968,7 +4171,8 @@ async function handleComplete(req, res, id, url) {
     await writeOrder(order);
   } finally { release(); }
   console.log(`📦 Bestellung ${id} – ${order.lines.length} Position(en), ${money(order.total)}, ${order.payment} (${order.customer.name})`);
-  send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
+  // invoicePdfUrl: PDF-Fassung (entsteht beim ersten Abruf bzw. mit der Bestätigungsmail; scheitert sie → Weiterleitung auf die HTML-Fassung)
+  send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoicePdfUrl: orderFileUrl(order, 'rechnung.pdf'), invoiceNo: order.invoiceNo });
   await runHook('orderCompleted', order);
 }
 
@@ -4190,13 +4394,16 @@ const server = http.createServer(async (req, res) => {
             orderId: o.orderId, createdAt: o.createdAt, status: o.status || 'neu',
             total: o.total, invoiceNo: o.invoiceNo, trackingNo: o.trackingNo || '', carrier: o.carrier || '',
             invoiceUrl: o.invoiceNo && links ? orderFileUrl(o, 'rechnung.html') : null,
+            invoicePdfUrl: o.invoiceNo && links ? orderFileUrl(o, 'rechnung.pdf') : null,
             // Stornobeleg (Rechnung aufgehoben) — Nummer immer, Link wie bei der Rechnung
             stornoNo: o.storno?.nr || '', stornoUrl: o.storno?.nr && links ? orderFileUrl(o, 'storno.html') : null,
+            stornoPdfUrl: o.storno?.nr && links ? orderFileUrl(o, 'storno.pdf') : null,
             paidAt: o.paidAt || null, shippedAt: o.shippedAt || null,
             pieces: (o.lines || []).reduce((s, l) => s + (l.qty || 0), 0),
             reklamation: r ? {   // ohne IBAN/Grund/Notiz
               ...publicRekla(r), gutscheinCode: links ? (r.gutscheinCode || '') : '', gutscheinPerMail: !links && !!r.gutscheinCode,
               gutschriftUrl: r.gutschriftNo && links ? orderFileUrl(o, 'gutschrift.html') : null,
+              gutschriftPdfUrl: r.gutschriftNo && links ? orderFileUrl(o, 'gutschrift.pdf') : null,
             } : null,
             // Zeitleiste fürs Konto — nur echte Statuswechsel mit Zeitpunkt; interne Notizen (Admin/Automatik/Mail) bleiben hier
             history: (o.history || []).filter((h) => h && h.by !== 'mail')
@@ -5091,8 +5298,11 @@ const server = http.createServer(async (req, res) => {
         if (!orderIdOk(body.orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
         let order;
         try { order = await readOrder(body.orderId); } catch { return send(res, 404, { ok: false, error: 'Bestellung unbekannt' }); }
-        // Bestätigung erneut: wieder mit AGB + Widerrufsbelehrung als Anhang (Vorschau nennt sie nur)
-        const attachments = body.kind === 'bestaetigung' ? await legalAttachments() : [];
+        // Dieselben Anhänge wie beim automatischen Versand (Bestätigung: Rechnung + Rechtstexte, Storno-/Reklamationsmail: Beleg-PDF);
+        // die Vorschau nennt sie nur
+        const art = body.kind === 'status' ? `status:${String(body.status || order.status || '')}`
+          : body.kind === 'reklamation' ? `reklamation:${String(body.phase || '')}` : String(body.kind || '');
+        const attachments = await mailAnhaenge(order, art);
         const m = renderOrderMail(order, { ...body, anhaenge: attachments.map((a) => a.filename) });
         const cust = customerAddress(order);
         if (p === '/api/admin/mail-preview') return send(res, 200, { ok: true, subject: m.subject, html: m.html, text: m.text, to: cust.email, kind: m.kind });
@@ -5257,6 +5467,28 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/admin' || p === '/admin/') p = '/admin.html';   // wie /admin.html ausliefern (gzip, ETag)
 
+    // PDF-Fassung eines Belegs (/orders/<ID>/rechnung|gutschrift|storno.pdf) — Schlüssel wie bei der HTML-Fassung. Entsteht beim
+    // ersten Abruf aus der gespeicherten HTML-Datei und bleibt danach unverändert; lässt sie sich nicht setzen → 302 auf die HTML-Fassung
+    // (mit pdf=0: neue Belegseiten zeigen dann statt des PDF-Links einen Hinweis). dl=1 (Link „PDF herunterladen“) → als Download
+    const mPdf = p.match(/^\/orders\/([^/]+)\/(rechnung|gutschrift|storno)\.pdf$/);
+    if (mPdf) {
+      let order = null;
+      if (ORDER_ID_RE.test(mPdf[1])) { try { order = await readOrder(mPdf[1]); } catch { order = null; } }
+      const z = orderZugriff(req, url, order, dateiOffen);
+      if (z === 'gesperrt') return sendBelegFehler(res, 429);
+      if (z !== 'ok' || !existsSync(path.join(ORDERS, mPdf[1], `${mPdf[2]}.html`))) return sendBelegFehler(res, 404);
+      const kopf = { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow' };
+      const pdf = await ensureBelegPdf(order, mPdf[2]);
+      if (!pdf) {
+        const q = new URLSearchParams(url.search);
+        q.delete('dl'); q.set('pdf', '0');
+        res.writeHead(302, { ...kopf, Location: `/orders/${encodeURIComponent(mPdf[1])}/${mPdf[2]}.html?${q}` });
+        return res.end();
+      }
+      const art = url.searchParams.get('dl') === '1' ? 'attachment' : 'inline';
+      res.writeHead(200, { ...kopf, 'Content-Type': PDF_TYP, 'Content-Length': pdf.buffer.length, 'Content-Disposition': `${art}; filename="${pdf.filename}"` });
+      return res.end(req.method === 'HEAD' ? undefined : pdf.buffer);
+    }
     if (p.startsWith('/orders/')) {
       // Nur Rechnung/Gutschrift (Links in Mails/Konto) und Modelldateien — order.json mit Kundendaten, interner Notiz und
       // Historie wird nie ausgeliefert. Zugriff mit ?k=<accessKey>, Admin-Header oder (Altbestand ohne Schlüssel) allein
@@ -5354,6 +5586,8 @@ loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummer
     console.log('Rechtsseiten: lib/legal.js geladen');
     try { for (const h of m.legalWarnings?.(settings) || []) console.warn(`⚠️  Rechtsseiten: ${h}`); } catch { /* nur Hinweise */ }
   });
+  // PDF-Satz früh laden: ein fehlendes/fehlerhaftes lib/html-pdf.js steht gleich im Protokoll (dann Belege als Link, Rechtstexte als HTML)
+  pdfModul().then((m) => { if (m) console.log('PDF-Belege: lib/html-pdf.js geladen'); });
   // Outbox laden: wartende Zustellungen aus der Zeit vor dem Neustart sofort weiterverarbeiten
   mailer.resume().catch((e) => console.error('✉️  Outbox konnte nicht geladen werden:', e?.message || e));
 }));
