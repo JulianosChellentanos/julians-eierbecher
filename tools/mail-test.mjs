@@ -445,13 +445,14 @@ async function smoke() {
     list = await mailer.list();
     check(ok.ok && list[0].status === 'gesendet' && list[0].sentAt && list[0].attempts === 1 && !list[0].resendable && list[0].messageId, 'send(): gesendet, sentAt, Nachricht nicht mehr gespeichert', list[0]);
     const fileJson = JSON.parse(readFileSync(path.join(dir, 'mail-outbox.json'), 'utf8'));
-    check(fileJson.entries.find((e) => e.id === ok.id).msg === null && fileJson.entries.find((e) => e.id === d.id).msg?.html === '<p>Grüße</p>', 'Datei: Text/HTML nur bei nicht gesendeten Einträgen');
+    const msgOf = (id) => { try { return JSON.parse(readFileSync(path.join(dir, 'mail-outbox', `${id}.json`), 'utf8')); } catch { return null; } };
+    check(fileJson.entries.every((e) => !('msg' in e)) && !msgOf(ok.id) && msgOf(d.id)?.html === '<p>Grüße</p>', 'Datei: Inhalt nur bei nicht zugestellten Einträgen, als eigene Datei (mail-outbox/<id>.json)');
 
     const r1 = await mailer.resend(d.id);
     list = await mailer.list();
     check(r1.ok && list.find((e) => e.id === d.id).status === 'gesendet', 'resend() eines deaktivierten Eintrags nach Einrichtung → gesendet', r1);
     const r2 = await mailer.resend(ok.id);
-    check(!r2.ok && /nicht mehr gespeichert/.test(r2.error), 'resend() ohne gespeicherte Nachricht → klare Meldung', r2);
+    check(!r2.ok && /nicht aufbewahrt|nicht mehr gespeichert/.test(r2.error), 'resend() einer zugestellten Mail ohne Neuerzeugung → klare Meldung', r2);
     check(!(await mailer.resend('gibtsnicht')).ok, 'resend() unbekannte ID → ok:false');
 
     srv.opts.failMail = 5;
@@ -483,7 +484,7 @@ async function smoke() {
     srv.opts.failMail = 1;
     const q3 = await mailer.queue(msg({ subject: 'Erneut waehrend wartet' }));
     const rr = await mailer.resend(q3.id);
-    check(q3.status === 'wartet' && !rr.ok && /läuft noch/.test(rr.error), 'resend() während „wartet“ (Zustellung läuft) → abgelehnt', rr);
+    check(q3.status === 'wartet' && !rr.ok && /läuft gerade/.test(rr.error), 'resend() während ein Versuch läuft → abgelehnt', rr);
     await mailer.whenIdle();
     const q3e = (await mailer.list()).find((e) => e.id === q3.id);
     const delivered = srv.sessions.filter((s) => s.data && decodeWords(parseMime(s.data).headers.subject || '') === 'Erneut waehrend wartet').length;
@@ -530,7 +531,7 @@ async function smoke() {
     const re = (await mailer2.list()).find((e) => e.id === 'resume1');
     check(re?.status === 'gesendet' && re.attempts === 2, 'Neustart: „wartet“-Eintrag wird weiter zugestellt', re);
     const re2 = JSON.parse(readFileSync(file, 'utf8')).entries.find((e) => e.id === 'resume2');
-    check(re2?.status === 'fehler' && /Neustart/.test(re2.error), 'Neustart: erschöpfter „wartet“-Eintrag steht als „fehler“ in der Datei', re2);
+    check(re2?.status === 'fehler' && re2.endgueltig, 'Neustart: erschöpfter „wartet“-Eintrag steht als „fehler“ (endgültig) in der Datei', re2);
 
     // test(): Dialog + Testmail
     const tr = await mailer2.test({ host: '127.0.0.1', port: srv.port, secure: 'none', user: srv.opts.user, pass: '' }, 'julian@example.com');
@@ -612,7 +613,7 @@ async function smoke() {
     check(altB.text.includes('Rechnung: https://formsam.de/orders/FS-260910-A1B2C3/rechnung.html\n') && !altB.html.includes('?k='), 'Bestätigung einer Bestellung ohne Schlüssel (Altbestand): Rechnungslink wie bisher ohne ?k=');
     const mitKey = Object.entries(all).filter(([, v]) => `${v.text}${v.html}`.includes(SAMPLE_KEY)).map(([k]) => k).sort();
     check(mitKey.join() === ['bestaetigung', 'bestaetigungGast', 'bestaetigungPaypal', 'reklamation-erledigt-gutschein', 'reklamation-erledigt-paypal', 'reklamation-erledigt-ueberweisung'].join(), 'Schlüssel nur in Mails mit Beleg-Link (Bestätigung, Gutschrift) — nicht in Status-, Admin-, Freitext-Mails', mitKey);
-    check(b.subject === 'Deine Bestellung FS-260910-A1B2C3 bei formsam – danke!' && all.willkommen.subject === 'Willkommen bei formsam, Mia!' && all.passwort.subject === 'Dein neues Passwort für formsam' && all.nachricht.subject === 'Kurze Rückfrage <zur Farbe>', 'Betreffzeilen mit formsam (Bestellung, Willkommen, Passwort)', [b.subject, all.willkommen.subject, all.passwort.subject]);
+    check(b.subject === 'Deine Bestellung FS-260910-A1B2C3 bei formsam – danke!' && all.willkommen.subject === 'Willkommen bei formsam – schön, dass du da bist!' && all.passwort.subject === 'Dein neues Passwort für formsam' && all.nachricht.subject === 'Kurze Rückfrage <zur Farbe>', 'Betreffzeilen mit formsam (Bestellung, Willkommen ohne Namen, Passwort)', [b.subject, all.willkommen.subject, all.passwort.subject]);
     check(b.text.includes('Gedruckt wird erst, wenn du bestellst – deine Stücke entstehen für dich, sobald deine Zahlung da ist.') && b.text.includes('Lieferzeit: 3–5 Werktage. Die Frist beginnt am Tag nach deinem Überweisungsauftrag an deine Bank.') && b.html.includes('Lieferzeit: 3–5 Werktage. Die Frist beginnt am Tag nach deinem Überweisungsauftrag an deine Bank.') && !/ca\. 3|ab Zahlungseingang/.test(b.text + b.html), 'Bestätigung (Vorkasse): „Gedruckt wird erst, wenn du bestellst“ + Lieferzeit aus settings.shop, Fristbeginn wie AGB § 7 (ohne „ca.“)');
     const nurVase = T.orderConfirmation({ order: sampleOrder({ payment: 'paypal', paymentStatus: 'bezahlt', lines: [sampleOrder().lines[0]] }), settings, baseUrl });
     check(nurVase.text.includes('Gedruckt wird erst, wenn du bestellst – deine Vase entsteht jetzt für dich.') && nurVase.text.includes('Lieferzeit: 3–5 Werktage. Die Frist beginnt am Tag nach Vertragsschluss, also am Tag nach deiner Bestellung.'), 'Bestätigung (PayPal, eine Vase): „deine Vase entsteht jetzt für dich“, Fristbeginn wie AGB § 7');
@@ -630,7 +631,7 @@ async function smoke() {
     const sto = all['status-storniert'];
     check(sto.html.includes('Zurück zum Konfigurator') && sto.text.includes('Zurück zum Konfigurator: https://formsam.de/') && !sto.text.includes('Bestellung im Konto ansehen'), 'Status storniert: Text wie HTML-Knopf („Zurück zum Konfigurator“)');
     const stoB = T.orderStatus({ order: sampleOrder({ status: 'storniert', storno: { nr: 'GS-2026-0007', at: '2026-09-27T10:00:00Z' } }), status: 'storniert', settings, baseUrl });
-    check(stoB.html.includes(`storno.html?k=${SAMPLE_KEY}`) && stoB.text.includes('Stornobeleg GS-2026-0007') && /RE-2026-0042 ist damit aufgehoben/.test(stoB.text), 'Status storniert mit Stornorechnung: Link mit Schlüssel');
+    check(stoB.html.includes(`storno.html?k=${SAMPLE_KEY}`) && stoB.text.includes('Stornorechnung GS-2026-0007') && /RE-2026-0042 ist damit aufgehoben/.test(stoB.text), 'Status storniert mit Stornorechnung: Link mit Schlüssel');
     const gut = T.orderConfirmation({ order: sampleOrder({ coupon: { code: 'GS-AB12-CD34', off: 5.75, guthaben: true } }), settings, baseUrl });
     check(/Guthaben GS-AB12-CD34: −5,75 €/.test(nb(gut.text)) && !/Gutschein GS-AB12-CD34/.test(gut.text), 'Bestätigung mit Guthaben: „Guthaben“ statt „Gutschein“');
     check(/automatisch erstattet|erstattet/.test(all.adminPaypal.text) && all.adminPaypal.text.includes('5O190127TN364715T') && T.adminPaypalKasse({ p: { id: 'X', erstattet: false, fehler: 'Auth' }, settings, baseUrl }).subject.startsWith('⚠️'), 'Admin-Meldung PayPal ohne Bestellung (erstattet / bitte handeln)');
@@ -727,6 +728,11 @@ function render() {
     'email-bestaetigen': T.emailBestaetigung({ user: { name: 'Mia Müller', email: 'mia@example.com' }, link: `${baseUrl}/?verify=abc123def456`, settings, baseUrl }),
     'admin-paypal-ohne-bestellung': T.adminPaypalKasse({ p: { id: '5O190127TN364715T', amount: '29.80', currency: 'EUR', capturedAt: '2026-09-27T10:00:00Z', grund: 'Zahlung nicht bestätigt (Betrag weicht von der Bestellung ab)', erstattet: false, fehler: 'PayPal-Zugangsdaten fehlen', customer: { name: 'Mia Müller', email: 'mia@example.com' } }, settings, baseUrl }),
     'status-storniert-stornobeleg': T.orderStatus({ order: sampleOrder({ status: 'storniert', storno: { nr: 'GS-2026-0007', at: '2026-09-27T10:00:00Z' } }), status: 'storniert', settings, baseUrl }),
+    // nach Teil-Gutschrift: Erstattung = Gezahltes − Gutschrift (wie die Stornorechnung)
+    'status-storniert-nach-gutschrift': T.orderStatus({ order: sampleOrder({ status: 'storniert', paymentStatus: 'bezahlt', storno: { nr: 'GS-2026-0008', at: '2026-09-27T10:00:00Z' } }), status: 'storniert', settings, baseUrl, storno: { gutschrift: 10, gutschriftNo: 'GS-2026-0005' } }),
+    'status-bezahlt-gast': T.orderStatus({ order: sampleOrder({ userId: null, status: 'bezahlt' }), status: 'bezahlt', settings, baseUrl }),
+    zahlungserinnerung: T.zahlungserinnerung({ order: sampleOrder({ userId: null }), settings, baseUrl }),
+    'bestaetigung-null-betrag': T.orderConfirmation({ order: sampleOrder({ coupon: { code: 'GS-AB12-CD34', off: 57.5, guthaben: true }, total: 0 }), settings, baseUrl }),
   };
   for (const st of Object.keys(T.STATUS_MAIL)) {
     out[`status-${st}`] = T.orderStatus({

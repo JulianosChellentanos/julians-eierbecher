@@ -176,6 +176,7 @@ function show(pane) {
   if (pane === 'colors') renderColors();
   if (pane === 'aktionen') aktionen.forEach((_, i) => akRefresh(i));   // Status-Chips/Countdown sofort frisch (Ticker läuft sonst nur sekündlich)
   if (pane === 'mail') loadMailLog();
+  if (pane === 'dash' || pane === 'mail') loadMailProbleme();   // nicht zugestellte Mails: Hinweis in der Übersicht + Zähler
   if (location.hash.replace('#', '').split('/')[0] !== pane) history.replaceState(null, '', `#${pane}`);
   const tab = $(`#tabbar [data-pane="${pane}"]`);
   if (tab) tab.scrollIntoView({ block: 'nearest', inline: 'center' });
@@ -584,6 +585,11 @@ function renderDrawer() {
           ? `<button class="ghost mini" onclick="mailPreview('${esc(o.orderId)}','status')">👁 Vorschau Status-Mail</button>`
           : `<button class="ghost mini" onclick="mailPreview('${esc(o.orderId)}','bestaetigung')">👁 Vorschau Bestellbestätigung</button>`}
       </div>
+      ${kannErinnern(o) ? `<div class="row" style="margin-top:8px">
+        <button class="ghost mini" onclick="zahlungErinnern('${esc(o.orderId)}')">💶 Zahlungserinnerung senden</button>
+        <button class="ghost mini" onclick="mailPreview('${esc(o.orderId)}','zahlungserinnerung')">👁 Vorschau</button>
+        <small class="muted">${o.mailsSent?.zahlungserinnerung ? `zuletzt erinnert ${fmtDT(o.mailsSent.zahlungserinnerung)}` : erinnerungFrueh(o) ? `Zahlungsfrist läuft noch bis ${fmtDate(zahlungsfristBis(o))} – die Erinnerung nennt dieses Datum` : `mit Nachfrist von 7 Tagen · höchstens einmal am Tag`}</small>
+      </div>` : ''}
     </div>`;
 }
 
@@ -664,12 +670,34 @@ async function saveNote(id) {
 }
 
 // --- E-Mail-Aktionen (Endpoints kommen mit der E-Mail-Integration; bis dahin freundlicher Hinweis)
+/** Nach einem Versand die Bestellung nachladen — der Server vermerkt Zustellung bzw. Fehler in Historie und mailsSent */
+async function bestellungNachladen(id) {
+  try { const rr = await api(`/api/admin/order/${encodeURIComponent(id)}`); if (rr.ok && rr.order) applyOrder(rr.order); } catch { /* Login ist offen */ }
+}
+/** Zahlungserinnerung: offene Vorkasse mit Betrag, Kasse abgeschlossen, nicht storniert (Server prüft dasselbe) */
+const kannErinnern = (o) => o.payment !== 'paypal' && o.paymentStatus !== 'bezahlt' && st(o) !== 'storniert' && (o.total || 0) > 0 && !kasseAbgebrochen(o);
+// Zahlungsfrist (AGB § 8): 14 Tage nach Vertragsschluss (Bestätigung = completedAt). Die Erinnerung nennt 7 Tage ab heute, aber nie
+// ein Datum davor — wie zahlungserinnerungBis in lib/mail-templates.js
+const zahlungsfristBis = (o) => { const t = Date.parse(o.completedAt || o.createdAt); return Number.isFinite(t) ? t + 14 * 864e5 : 0; };
+const erinnerungFrueh = (o) => zahlungsfristBis(o) > Date.now() + 7 * 864e5;
+async function zahlungErinnern(id) {
+  const o = DATA.orders.find((x) => x.orderId === id);
+  if (!o) return;
+  const frist = erinnerungFrueh(o) ? `die Zahlungsfrist bis ${fmtDate(zahlungsfristBis(o))} (sie läuft noch)` : 'eine Nachfrist von 7 Tagen';
+  if (!confirm(`Zahlungserinnerung für ${id} (${money(o.total)}) an ${custEmail(o)} senden?\nSie nennt Bankverbindung und ${frist}.`)) return;
+  const r = await api('/api/admin/mail-send', { method: 'POST', body: JSON.stringify({ orderId: id, kind: 'zahlungserinnerung' }) });
+  if (r.notReady) return notReady();
+  if (!r.ok) { toast(r.error || 'Senden fehlgeschlagen', 'err', 5000); return bestellungNachladen(id); }
+  toast('Zahlungserinnerung gesendet', 'ok');
+  bestellungNachladen(id);
+}
 async function mailAction(id, kind) {
   const o = DATA.orders.find((x) => x.orderId === id);
   if (kind === 'status' && !canStatusMail(st(o))) return toast(`Für den Status „${stLabel(st(o))}“ gibt es keine Mail-Vorlage — dafür gibt es die Bestellbestätigung.`, 'info');
   if (!confirm(`${kind === 'bestaetigung' ? 'Bestellbestätigung' : `Status-Mail „${stLabel(st(o))}“`} an ${custEmail(o)} senden?`)) return;
   const r = await api('/api/admin/mail-send', { method: 'POST', body: JSON.stringify({ orderId: id, kind, status: st(o) }) });
   if (r.notReady) return notReady();
+  bestellungNachladen(id);
   if (!r.ok) return toast(r.error || 'Senden fehlgeschlagen', 'err', 5000);
   toast('E-Mail gesendet', 'ok');
 }
@@ -686,6 +714,7 @@ async function mailPreview(id, kind, extra = {}) {
   sendBtn.onclick = async () => {
     const s = await api('/api/admin/mail-send', { method: 'POST', body: JSON.stringify({ orderId: id, kind, status: st(o), ...extra }) });
     if (s.notReady) return notReady();
+    bestellungNachladen(id);
     if (!s.ok) return toast(s.error || 'Senden fehlgeschlagen', 'err');
     $('#dlg-preview').close(); $('#dlg-mail').close();
     toast('E-Mail gesendet', 'ok');
@@ -701,8 +730,7 @@ function openFreitext(id) {
   const vorname = String(DATA.settings.company?.owner || '').trim().split(/\s+/)[0];
   const gruss = vorname ? `${vorname} von formsam` : 'formsam';
   $('#dlg-mail-text').value = '';
-  const f = custName(o).trim().split(/\s+/)[0];
-  $('#dlg-mail-hint').textContent = `Anrede („${f ? `Hallo ${f},` : 'Hallo!'}“) und Gruß („Viele Grüße, ${gruss}“) fügt die Vorlage selbst ein.`;
+  $('#dlg-mail-hint').textContent = 'Anrede („Hallo …,“ mit dem Vornamen) und Gruß („Viele Grüße, ' + gruss + '“) fügt die Vorlage selbst ein.';
   $('#dlg-mail').showModal();
 }
 async function mailFreitext(mode) {
@@ -712,6 +740,7 @@ async function mailFreitext(mode) {
   if (mode === 'preview') return mailPreview(id, 'freitext', { subject, text });
   const r = await api('/api/admin/mail-send', { method: 'POST', body: JSON.stringify({ orderId: id, kind: 'freitext', subject, text }) });
   if (r.notReady) return notReady();
+  bestellungNachladen(id);
   if (!r.ok) return toast(r.error || 'Senden fehlgeschlagen', 'err', 5000);
   $('#dlg-mail').close();
   toast('E-Mail gesendet', 'ok');
@@ -1606,7 +1635,9 @@ function mailPreset(k) {
   const p = MAIL_PRESETS[k];
   $('#m-host').value = p.host; $('#m-port').value = p.port; $('#m-secure').value = p.secure;
   $('#m-host').placeholder = k === 'allinkl' ? 'w01234ab.kasserver.com' : 'smtp.example.de';
-  $('#m-hint').innerHTML = p.hint; $('#m-hint').hidden = false;
+  // Das gespeicherte Passwort geht nur an den gespeicherten Server (Server prüft das) — für den neuen bitte eintragen
+  $('#m-hint').innerHTML = p.hint + (DATA?.settings?.mail?.passSet && !$('#m-pass').value ? ' <b>Bitte das Passwort für diesen Server eintragen</b> — das gespeicherte gilt nur für den bisherigen.' : '');
+  $('#m-hint').hidden = false;
   setDirty(true);
 }
 function mailForm() {
@@ -1656,10 +1687,18 @@ async function loadMailLog() {
   const entries = r.entries || [];
   const mailOn = r.config ? !!r.config.active : !!DATA.settings.mail?.enabled;
   // Zustände aus lib/mailer.js (gesendet/fehler/wartet/deaktiviert) — Fehler mit Meldung, Rest mit Erklärung
-  const state = (e) => (e.status === 'failed' || e.status === 'fehler' ? `❌ ${esc(e.error || 'Fehler')}`
-    : { sent: '✅ gesendet', gesendet: '✅ gesendet', wartet: '⏳ wird erneut versucht', deaktiviert: '⏸ nicht gesendet — Versand aus' }[e.status] || esc(e.status || ''));
-  // „Erneut“ nicht, während ein Wiederholungsversuch läuft, und nicht bei deaktiviertem Versand (liefert nur denselben Fehler)
-  const canResend = (e) => e.status !== 'wartet' && !(e.status === 'deaktiviert' && !mailOn);
+  const state = (e) => (e.status === 'failed' || e.status === 'fehler' ? `❌ ${e.endgueltig ? 'nicht zugestellt: ' : ''}${esc(e.error || 'Fehler')}`
+    : e.status === 'wartet' ? `⏳ nächster Versuch ${e.nextAt ? fmtDT(e.nextAt) : 'gleich'}`
+      : { sent: '✅ gesendet', gesendet: '✅ gesendet', deaktiviert: '⏸ nicht gesendet — Versand aus' }[e.status] || esc(e.status || ''));
+  // „Erneut“ nur, wo es klappt: nicht Zugestelltes aus dem Speicher (wartend: ohne die Wartezeit), Zugestelltes nur, wenn der Server
+  // es neu erzeugen kann (resendable) — nicht bei ausgeschaltetem Versand. Sonst der Weg über die Bestellung.
+  const canResend = (e) => e.resendable && !(e.status === 'deaktiviert' && !mailOn);
+  const knopf = (e) => {
+    if (canResend(e)) return `<button class="ghost mini" onclick="mailResend('${esc(e.id)}','${esc(e.status)}')">${e.status === 'wartet' ? '↻ Jetzt senden' : '↻ Erneut'}</button>`;
+    const oid = e.orderId || e.ref;
+    return DATA.orders.some((o) => o.orderId === oid) && e.status !== 'deaktiviert' && !/^admin-/.test(e.kind || '')
+      ? `<button class="link" onclick="openOrder('${esc(oid)}')" title="Mail in der Bestellung neu senden">→ Bestellung</button>` : '';
+  };
   $('#mail-log').innerHTML = `<thead><tr><th>Zeit</th><th>An</th><th>Betreff</th><th>Art</th><th>Bezug</th><th>Status</th><th></th></tr></thead><tbody>` +
     entries.map((e) => `<tr>
       <td data-l="Zeit"><small>${fmtDT(e.sentAt || e.createdAt)}</small></td>
@@ -1668,7 +1707,7 @@ async function loadMailLog() {
       <td data-l="Art"><span class="badge">${esc(e.kind || '')}</span></td>
       <td data-l="Bezug">${mailRef(e.ref)}</td>
       <td data-l="Status"><span title="${esc(e.error || '')}">${state(e)}</span>${e.attempts > 1 ? ` <small class="muted">(${e.attempts}×)</small>` : ''}</td>
-      <td>${canResend(e) ? `<button class="ghost mini" onclick="mailResend('${esc(e.id)}')">↻ Erneut</button>` : ''}</td>
+      <td>${knopf(e)}</td>
     </tr>`).join('') + '</tbody>' + (!entries.length ? '<tr><td colspan="7" class="empty">Noch keine E-Mails versendet.</td></tr>' : '');
 }
 /** Bezug eines Protokolleintrags: Bestellnummer (öffnet den Drawer) oder Kundenkonto (Willkommen/Passwort) */
@@ -1678,11 +1717,47 @@ function mailRef(ref) {
   const u = USERS.find((x) => x.id === ref);
   return u ? `<small>👤 ${esc(u.name)}</small>` : `<small class="muted">${esc(ref)}</small>`;
 }
-async function mailResend(id) {
+async function mailResend(id, status) {
+  if (status === 'gesendet' && !confirm('Diese E-Mail ist schon zugestellt. Noch einmal senden? (Sie wird aus der Bestellung neu erzeugt.)')) return;
   const r = await api('/api/admin/mail-resend', { method: 'POST', body: JSON.stringify({ id }) });
   if (r.notReady) return notReady();
-  toast(r.ok ? 'E-Mail erneut gesendet' : (r.error || 'Fehler'), r.ok ? 'ok' : 'err');
-  loadMailLog();
+  toast(r.ok ? 'E-Mail gesendet' : (r.error || 'Fehler'), r.ok ? 'ok' : 'err', r.ok ? 3200 : 6000);
+  if (PANE === 'mail') loadMailLog();
+  loadMailProbleme();
+  if (CUR) bestellungNachladen(CUR);
+}
+// ---------------------------------------------------------------------------
+// Nicht zugestellte Mails — Hinweis in der Übersicht (wie Pflichtangaben) und Zähler am Bereich E-Mail
+//   GET /api/admin/mail-probleme → { fehler: [Einträge, endgültig gescheitert, 30 Tage], wartet: n }; „Ausblenden“ quittiert
+// ---------------------------------------------------------------------------
+let MAIL_PROBLEME = null;
+async function loadMailProbleme() {
+  let r;
+  try { r = await api('/api/admin/mail-probleme'); } catch { return; }
+  MAIL_PROBLEME = r.ok ? r : null;
+  renderMailProbleme();
+}
+function renderMailProbleme() {
+  const box = $('#dash-mail'), cnt = $('#nav-cnt-mail');
+  const f = MAIL_PROBLEME?.fehler || [], w = MAIL_PROBLEME?.wartet || 0;
+  if (cnt) cnt.textContent = f.length || '';
+  if (!box) return;
+  box.hidden = !f.length && !w;
+  if (box.hidden) { box.innerHTML = ''; return; }
+  const ref = (e) => (DATA.orders.some((o) => o.orderId === (e.orderId || e.ref)) ? ` · <button class="link" onclick="openOrder('${esc(e.orderId || e.ref)}')">${esc(e.orderId || e.ref)}</button>` : '');
+  const items = f.slice(0, 6).map((e) => `<li><b>${esc(e.subject)}</b> an ${esc(e.to)}${ref(e)}<br><small>${fmtDT(e.createdAt)} · ${esc(e.error || 'Fehler')}</small>
+      ${e.resendable ? `<button class="ghost mini" onclick="mailResend('${esc(e.id)}','${esc(e.status)}')">↻ Erneut</button>` : ''}
+      <button class="ghost mini" onclick="mailQuittieren('${esc(e.id)}')" title="Aus der Übersicht nehmen — im Versandprotokoll bleibt sie">Ausblenden</button></li>`).join('');
+  box.innerHTML = `<div class="pf-text"><span class="pf-title">✉️ ${f.length ? `${f.length === 1 ? 'Eine E-Mail' : `${f.length} E-Mails`} nicht zugestellt` : 'E-Mails warten auf Zustellung'}</span>
+      ${items ? `<ul>${items}</ul>` : ''}${f.length > 6 ? `<p class="pf-why">+ ${f.length - 6} weitere im Versandprotokoll</p>` : ''}
+      ${w ? `<p class="pf-why">⏳ ${w === 1 ? 'Eine Mail wartet' : `${w} Mails warten`} auf einen weiteren Versuch — der Mailserver war nicht erreichbar. Der Shop versucht es bis zu 31 Stunden lang automatisch.</p>` : ''}
+      ${f.length ? '<p class="pf-why">Diese Mails sind nicht angekommen. „Erneut“ schickt sie noch einmal — oder in der Bestellung neu senden.</p>' : ''}</div>
+    <button class="acc" onclick="show('mail')">Zum Versandprotokoll</button>`;
+}
+async function mailQuittieren(id) {
+  const r = await api('/api/admin/mail-quittieren', { method: 'POST', body: JSON.stringify({ id }) });
+  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  loadMailProbleme();
 }
 
 // ---------------------------------------------------------------------------
@@ -2045,6 +2120,7 @@ async function load() {
   const [pane, id] = location.hash.replace('#', '').split('/');
   show(pane || 'dash');
   if (PANE !== 'dash') loadWiderrufe();   // Übersicht lädt sie selbst (show) — sonst für Zähler und Drawer-Karte
+  if (PANE !== 'dash' && PANE !== 'mail') loadMailProbleme();   // Zähler „E-Mail“ (nicht zugestellte Mails)
   if (id) openOrder(id);
 }
 document.addEventListener('DOMContentLoaded', () => {

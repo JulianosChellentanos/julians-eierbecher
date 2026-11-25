@@ -326,4 +326,6 @@ export async function initAuth() {
     showInfo('Melde dich an – dann bestätige ich deine E-Mail-Adresse.');
     $('#auth-modal').showModal();
   }
+  // „Bestellung im Konto ansehen“ aus den Mails: ?konto öffnet das Konto (abgemeldet erst die Anmeldung)
+  if (!vt && new URLSearchParams(location.search).has('konto')) { clearParam('konto'); openAccount(); }
 }
