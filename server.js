@@ -1120,8 +1120,10 @@ function colorOfItem(item) {
 /**
  * Stückpreis: uvp = Grundpreis + Untersetzer + Gravur + Farbschrift + Muster-Aufpreis + Farbaufpreis + Größe;
  * unit = uvp abzüglich Aktionsprozent (wenn eine Aktion für Produkt + Oberfläche gilt); dieselbe Formel rechnet der Client
- * in pricing.js (unitParts/unitPrice). parts = Aufschlüsselung in € (0 = nicht zutreffend).
- * Während einer Aktion ohne „mengenrabatt“ entfällt der Mengenrabatt (off = 0).
+ * in pricing.js (unitParts/unitPrice, Zeile: linePrice). parts = Aufschlüsselung in € (0 = nicht zutreffend).
+ * Während einer Aktion ohne „mengenrabatt“ entfällt der Mengenrabatt (off = 0) — aber mit einer Aktion zahlt niemand mehr als
+ * ohne: ist der Normalpreis der Zeile mit Mengenrabatt nicht teurer als der Aktionspreis (z. B. 3 Vasen bei −10 % ohne
+ * Mengenrabatt), gilt für diese Zeile der Normalpreis mit Mengenrabatt und keine Aktion (aktionProzent 0, aktionName null).
  * aktionen = Ergebnis von aktiveAktionen() (computeTotals wertet sie einmal je Anfrage aus, damit alle Zeilen denselben Stand sehen);
  * für die Zeile gilt die erste passende (aktionFuer) — aktionName/aktionId nennen sie, null ohne Aktion.
  */
@@ -1142,12 +1144,20 @@ function priceItem(item, aktionen = aktiveAktionen()) {
     groesse: volumeSurcharge(item.product, c, p.single),
   };
   const uvp = Math.round(Object.values(parts).reduce((s, v) => s + v, 0) * 100) / 100;
-  // Erste laufende Aktion, die für Produkt und Oberfläche dieser Zeile gilt (null = voller Preis)
-  const aktion = aktionFuer(item, aktionen);
+  // Erste laufende Aktion, die für Produkt und Oberfläche dieser Zeile gilt (null = voller Preis) — nur, wenn sie die Zeile
+  // gegenüber dem Normalpreis mit Mengenrabatt wirklich günstiger macht (gleiche Rechnung wie linePrice() in pricing.js)
+  const staffel = discountFor(item.product, qty);
+  let aktion = aktionFuer(item, aktionen);
+  if (aktion) {
+    const unitA = Math.round(uvp * (1 - aktion.prozent / 100) * 100) / 100;
+    const lineA = Math.round(unitA * qty * (1 - (aktion.mengenrabatt ? staffel : 0) / 100) * 100) / 100;
+    const lineN = Math.round(uvp * qty * (1 - staffel / 100) * 100) / 100;
+    if (!(lineA < lineN - 0.004)) aktion = null;
+  }
   const aktionProzent = aktion ? aktion.prozent : 0;
   const unit = Math.round(uvp * (1 - aktionProzent / 100) * 100) / 100;
   const aktionBetrag = Math.round((uvp - unit) * 100) / 100;
-  const off = aktionProzent > 0 && !aktion.mengenrabatt ? 0 : discountFor(item.product, qty);
+  const off = aktionProzent > 0 && !aktion.mengenrabatt ? 0 : staffel;
   const lineFull = unit * qty;
   const line = Math.round(lineFull * (1 - off / 100) * 100) / 100;
   // color = aufgelöste Farb-ID (Fallback über den Namen), sonst die vom Client gesendete ID
@@ -1156,12 +1166,17 @@ function priceItem(item, aktionen = aktiveAktionen()) {
 }
 /**
  * Summen einer Bestellung: Zeilen (priceItem), Zwischensumme, Gutschein, Versand, Gesamt.
- * aktionen = [{ id, name, prozent, ersparnis, produkte, muster }] für jede Aktion, die mindestens eine Zeile reduziert hat
- * (Ersparnis = Σ je Zeile max(0, Normalpreis mit Staffel − Zeilenpreis), informativ; Mails und Beleg zeigen nur Ersparnis > 0),
- * sortiert nach Ersparnis absteigend; aktion = aktionen[0] || null.
- * Gutschein während einer Aktion: nur mit coupon.mitAktion — sonst coupon null und couponError mit lesbarer Meldung
- * (genannt wird die Aktion mit der größten Ersparnis); Mindestbestellwert nicht erreicht → coupon null mit couponError;
- * unbekannter/inaktiver Code → coupon null ohne couponError (allgemeine Meldung im Client).
+ * aktionen = [{ id, name, prozent, ersparnis, produkte, muster }] für jede Aktion, die mindestens eine Zeile günstiger gemacht hat
+ * (Ersparnis = Σ je Zeile Normalpreis mit Staffel − Zeilenpreis, nur Aktionen mit Ersparnis > 0), sortiert nach Ersparnis
+ * absteigend; aktion = aktionen[0] || null.
+ * Gutschein während einer Aktion: nur mit coupon.mitAktion — gesperrt wird er nur, wenn eine Aktion in DIESER Bestellung etwas
+ * spart (sonst coupon null und couponError mit lesbarer Meldung, genannt wird die Aktion mit der größten Ersparnis);
+ * Mindestbestellwert nicht erreicht → coupon null mit couponError; unbekannter/inaktiver Code → coupon null ohne couponError
+ * (allgemeine Meldung im Client).
+ * Versand (AGB § 6): frei, wenn der Warenwert nach Aktion und Mengenrabatt (subtotal) die Freigrenze erreicht — gemessen VOR
+ * Gutschein und Guthaben, damit ein Gutschein eine Bestellung nie teurer macht. Ein Rabatt-Gutschein mindert nur den Warenwert
+ * (off ≤ subtotal); ein Guthaben ist ein Zahlungsmittel und deckt auch den Versand (off ≤ subtotal + shipping).
+ * total = subtotal + shipping − coupon.off (≥ 0; 0 = nichts zu zahlen). Spiegel im Client: cart.js totals()/checkoutTotals().
  */
 function computeTotals(items, couponCode) {
   const aks = aktiveAktionen();
@@ -1178,12 +1193,15 @@ function computeTotals(items, couponCode) {
   }
   const aktionen = aks.filter((a) => ersparnisJe.has(a.id))
     .map((a) => ({ id: a.id, name: a.name, prozent: a.prozent, ersparnis: Math.round(ersparnisJe.get(a.id) * 100) / 100, produkte: a.produkte, muster: a.muster || [] }))
+    .filter((a) => a.ersparnis > 0)
     .sort((x, y) => y.ersparnis - x.ersparnis);
   const aktion = aktionen[0] || null;
+  // Versand am Warenwert vor Gutschein/Guthaben; Freigrenze ≤ 0 = immer versandkostenfrei (wie AGB § 6 und pricing.js versandText)
+  const ship = settings.pricing.shipping || {};
+  const shipping = items.length === 0 ? 0 : (subtotal >= euro(ship.freeFrom) ? 0 : euro(ship.flat));
   // Gutschein
   let coupon = null;
   let couponError = null;
-  let afterCoupon = subtotal;
   if (couponCode) {
     const c = settings.coupons.find((x) => x.active && String(x.code || '').trim().toLowerCase() === String(couponCode).trim().toLowerCase());
     // Mindestbestellwert nicht (mehr) erreicht — z. B. Menge im Warenkorb verringert: mit Meldung statt still ohne Gutschein
@@ -1197,16 +1215,16 @@ function computeTotals(items, couponCode) {
       } else if (aktion && !c.mitAktion) {
         couponError = `Gutschein „${c.code}“ ist nicht mit der Aktion „${aktion.name}“ kombinierbar.`;
       } else {
-        const off = c.type === 'fixed' ? Math.min(rest ?? c.value, c.value, subtotal) : subtotal * c.value / 100;
+        const wert = euro(c.value);
+        // Guthaben: bis zum Rest, höchstens Warenwert + Versand (Zahlungsmittel); Rabatt: höchstens der Warenwert, Prozent ≤ 100
+        const off = rest !== null ? Math.min(rest, wert, Math.round((subtotal + shipping) * 100) / 100)
+          : c.type === 'fixed' ? Math.min(wert, subtotal) : subtotal * Math.min(100, wert) / 100;
         // guthaben: Anrechnung eines Guthabens (Gutschrift) — die Rechnung weist das Entgelt dann ohne diesen Abzug aus (USt!)
         coupon = { code: c.code, type: c.type, value: c.value, off: Math.round(off * 100) / 100, ...(isGuthaben(c) ? { guthaben: true } : {}) };
-        afterCoupon = Math.round((subtotal - coupon.off) * 100) / 100;
       }
     }
   }
-  const ship = settings.pricing.shipping;
-  const shipping = items.length === 0 ? 0 : (afterCoupon >= ship.freeFrom ? 0 : ship.flat);
-  const total = Math.round((afterCoupon + shipping) * 100) / 100;
+  const total = Math.max(0, Math.round((subtotal + shipping - (coupon?.off || 0)) * 100) / 100);
   return { lines, subtotal, coupon, couponError, shipping, total, aktion, aktionen };
 }
 function money(v) {
@@ -1475,7 +1493,8 @@ function trackCouponUse(order) {
   if (!couponUse.has(code)) couponUse.set(code, new Map());
   couponUse.get(code).set(id, {
     off: Number(order.coupon.off) || 0,
-    fest: !!order.completedAt || !!order.invoiceNo || order.paymentStatus === 'bezahlt',
+    // bezahlt zählt nur mit echtem Betrag (PayPal) — eine Bestellung über 0 € (Guthaben deckt alles) hält es bis zum Abschluss nur fest
+    fest: !!order.completedAt || !!order.invoiceNo || (order.paymentStatus === 'bezahlt' && Number(order.total) > 0),
     at: Date.parse(order.createdAt) || Date.now(),
   });
 }
@@ -2121,6 +2140,11 @@ function pruefeKasse(data, { garantie = null } = {}) {
   if (!customer.name || !isEmail(customer.email) || !customer.street || !customer.zip || !customer.city) {
     return { status: 400, error: 'Bitte Adresse vollständig ausfüllen', customer };
   }
+  // PLZ wie das Kassenfeld (pattern [0-9]{4,5}); Zahlart nur Vorkasse oder PayPal (alles andere wäre still als Vorkasse angelegt worden)
+  if (!/^[0-9]{4,5}$/.test(customer.zip)) return { status: 400, error: 'Bitte eine gültige Postleitzahl angeben (4 oder 5 Ziffern).', customer };
+  if (data.payment !== undefined && data.payment !== null && !['vorkasse', 'paypal'].includes(data.payment)) {
+    return { status: 400, error: 'Unbekannte Zahlungsart – bitte Überweisung (Vorkasse) oder PayPal wählen.', customer };
+  }
   const items = data?.items;
   if (!Array.isArray(items) || !items.length) return { status: 400, error: 'Warenkorb ist leer', customer };
   if (items.length > MAX_POSITIONEN) return { status: 400, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.`, customer };
@@ -2142,7 +2166,10 @@ function pruefeKasse(data, { garantie = null } = {}) {
     return { status: 409, code: 'preis', total: totals.total, customer, error: 'Die Kasse ist nicht mehr aktuell – bitte lade die Seite neu und prüf den Betrag.' };
   }
   if (Math.abs(exp - totals.total) > 0.005) {
-    return { status: 409, code: 'preis', total: totals.total, customer, error: `Der Preis hat sich gerade geändert: Gesamt jetzt ${money(totals.total)}. Bitte prüf die Kasse und bestätige noch einmal.` };
+    // Kassen-Tab von vor der Versandregel „Freigrenze vor Gutschein/Guthaben“ (cart.js ohne kasseStand 2) rechnet den Versand anders
+    // und käme mit „Preise neu laden“ nicht weiter — er muss die Seite neu laden
+    const veraltet = !(Number(data.kasseStand) >= 2);
+    return { status: 409, code: 'preis', total: totals.total, customer, error: veraltet ? 'Die Kasse ist nicht mehr aktuell – bitte lade die Seite neu und prüf den Betrag.' : `Der Preis hat sich gerade geändert: Gesamt jetzt ${money(totals.total)}. Bitte prüf die Kasse und bestätige noch einmal.` };
   }
   return { customer, items, totals };
 }
@@ -2423,6 +2450,8 @@ async function handleCheckout(req, res) {
     customer,
     lines: totals.lines.map((l, i) => ({
       product: l.product, qty: l.qty, saucer: !!l.saucer, config: l.config,
+      // Design-Code der Zeile (Warenkorb schickt ihn mit) — für Druckzettel, Admin, Rechnung und Nachbestellung; nur in Normalform
+      code: typeof l.code === 'string' && /^[A-Z0-9]{4,20}$/.test(normalizeCode(l.code)) ? normalizeCode(l.code) : null,
       color: l.color, colorName: l.colorName, unit: l.unit, off: l.off, line: l.line, parts: l.parts,
       // Aktion: uvp = Normalpreis (Preis vor der Aktion, Feldname historisch), Prozent und Ersparnis je Stück — 0 wenn die Zeile nicht reduziert war;
       // aktionName/aktionId = die Aktion, die für diese Zeile galt (bei mehreren gleichzeitigen je Zeile verschieden)
@@ -2439,6 +2468,12 @@ async function handleCheckout(req, res) {
     invoiceNo: null, filesComplete: false,
     trackingNo: '', adminNote: '',
   };
+  // Nichts zu zahlen (Gutschein/Guthaben deckt alles): gilt sofort als bezahlt — keine Überweisung über 0,00 €, der Druck kann starten
+  if (!paypalCap && order.total <= 0) {
+    order.paymentStatus = 'bezahlt';
+    order.paidAt = createdAt;
+    order.history = [{ at: createdAt, status: 'neu', note: 'Bestellung eingegangen', by: 'system' }, { at: createdAt, status: 'neu', note: 'Nichts zu zahlen – Betrag durch Gutschein/Guthaben beglichen', by: 'system' }];
+  }
   await writeOrder(order);
   // accessKey: Upload und Abschluss schicken ihn als x-order-key mit (Links auf Rechnung/Modelle tragen ihn als ?k=)
   send(res, 200, { ok: true, orderId, accessKey: order.accessKey, itemCount: order.lines.length, total: order.total });
@@ -2477,7 +2512,7 @@ async function handleComplete(req, res, id, url) {
     if (order.completedAt) return send(res, 200, { ok: true, invoiceUrl: orderFileUrl(order, 'rechnung.html'), invoiceNo: order.invoiceNo });
     // Guthaben: die Reservierung einer nicht abgeschlossenen Kasse gilt nur GUTHABEN_RESERVIERUNG_MS — wurde der Betrag seitdem
     // anderweitig eingelöst, wird diese Bestellung nicht mehr abgeschlossen (keine Rechnung), sondern als abgebrochen storniert
-    const gc = order.coupon && order.paymentStatus !== 'bezahlt' && order.status !== 'storniert' ? couponByCode(order.coupon.code) : null;
+    const gc = order.coupon && !(order.paymentStatus === 'bezahlt' && Number(order.total) > 0) && order.status !== 'storniert' ? couponByCode(order.coupon.code) : null;
     if (gc && isGuthaben(gc) && couponRest(gc, { ohne: order.orderId }) + 0.005 < euro(order.coupon.off)) {
       setOrderStatus(order, 'storniert', `Kasse abgebrochen: Guthaben „${gc.code}“ wurde inzwischen anderweitig eingelöst`, 'system');
       await writeOrder(order);
@@ -2880,6 +2915,8 @@ const server = http.createServer(async (req, res) => {
       const k = pruefeKasse(data);
       if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}) });
       const t = k.totals;
+      // 0 € (Gutschein/Guthaben deckt alles): PayPal nimmt keine Zahlung über 0,00 € an — die Kasse bestellt dann ohne Zahlung
+      if (!(t.total > 0)) return send(res, 400, { ok: false, error: 'Es ist nichts zu zahlen – bitte bestell über „Zahlungspflichtig bestellen“ ohne PayPal.' });
       const token = await paypalToken();
       const r = await fetch(`${paypalBase()}/v2/checkout/orders`, {
         method: 'POST',

@@ -1,9 +1,10 @@
 // formsam — Unit-Test für den Bezugspreis nach § 11 PAngV (public/js/pricing.js: referenzpreis, aktionProzentGueltig, linePrice)
-// und den Versandhinweis am Preis (§ 6 PAngV: versandText/versandHTML/ustText)
+// und den Versandhinweis am Preis (§ 6 PAngV: versandText/versandHTML/ustText), dazu die Kassenregeln aus pricing.js:
+// Aktion nie teurer als der Normalpreis mit Mengenrabatt, Versandfreigrenze vor Gutschein/Guthaben (summen), Mengenrabatt-Hinweis
 // Aufruf: node tools/test-referenzpreis.mjs   (ohne Server, ohne Abhängigkeiten — pricing.js ist reine Rechnung)
 import {
   setPricing, setColors, referenzpreis, aktionProzentGueltig, linePrice, unitParts, referenzText, referenzTextZeile,
-  versandText, versandHTML, ustText,
+  versandText, versandHTML, ustText, summen, discountTeaser,
 } from '../public/js/pricing.js';
 
 const TAG = 864e5;
@@ -59,10 +60,11 @@ console.log('1) Keine Vor-Aktion → Tiefstpreis = Normalpreis, Prozent = Aktion
     'Warenkorb ×2 (Aktion ohne Mengenrabatt): line 42,34, Streichpreis 44,82 (damals −10 %), Ersparnis 2,48, Badge −6 %', lp);
   check(near(lp.ersparnis, 2.48), 'Ersparnis gegenüber dem Normalpreis mit Staffel (wie order.aktionen auf dem Server): 2,48', lp.ersparnis);
   check(referenzTextZeile(44.82, 2).replace(/\s/g, ' ') === 'Niedrigster Preis der letzten 30 Tage für 2 Stück: 44,82 €', 'Kennzeichnung der Zeile „… für 2 Stück: 44,82 €“', referenzTextZeile(44.82, 2));
-  // ×3: 24,90 × 3 × 0,85 = 63,49 < 63,51 (Aktion) → die Zeile ist teurer als vorher → kein Streichpreis, keine Ersparnis
+  // ×3: 24,90 × 3 × 0,85 = 63,49 < 63,51 (Aktion) → mit Aktion wäre die Zeile teurer → Normalpreis mit Mengenrabatt, keine Aktion,
+  // kein Streichpreis, keine Ersparnis
   const l3 = linePrice(vase('glatt', { qty: 3 }));
-  check(near(l3.line, 63.51) && l3.lineRef === null && l3.ersparnisRef === 0 && l3.refProzent === 0 && l3.ersparnis === 0,
-    'Warenkorb ×3: 63,51 ≥ 63,49 (damals −15 %) → kein Streichpreis, kein Badge, keine Ersparnis', l3);
+  check(near(l3.line, 63.49) && l3.off === 15 && l3.aktionProzent === 0 && l3.aktionId === null && l3.lineRef === null && l3.ersparnisRef === 0 && l3.refProzent === 0 && l3.ersparnis === 0,
+    'Warenkorb ×3: Aktion 63,51 ≥ 63,49 → Normalpreis 63,49 (−15 %), keine Aktion, kein Streichpreis, keine Ersparnis', l3);
   const l1 = linePrice(vase('glatt'));
   check(near(l1.lineRef, 24.9) && l1.refProzent === 15 && near(l1.ersparnisRef, 3.73), '×1: Streichpreis 24,90, Badge −15 %, Ersparnis 3,73', l1);
   const lr = referenzpreis(vase('lamellen'));
@@ -195,12 +197,14 @@ console.log('6) Ohne Historie (älterer Server): aktueller Stand, laufende Aktio
 
 console.log('7) Zeilen-Streichpreis ab 2 Stück: Aktion −5 % ohne / −15 % mit Mengenrabatt, Einträge ohne Staffel');
 {
-  // −5 % ohne Mengenrabatt: 2 Stück kosten 47,30 € (23,65 × 2) statt vorher 44,82 € → kein Zeilen-Streichpreis
+  // −5 % ohne Mengenrabatt: 2 Stück kosten mit Aktion 47,30 € (23,65 × 2), ohne 44,82 € → es gilt der Normalpreis mit Mengenrabatt
   const A = aktion('ak-a', 5, S, NOW + 3 * TAG);
   szenario([A], [snap(NOW - 60 * TAG, { aktionen: [A] })]);
   const lp = linePrice(vase('glatt', { qty: 2 }));
-  check(near(lp.line, 47.3) && lp.lineRef === null && lp.ersparnisRef === 0 && lp.ersparnis === 0, '−5 % ohne Mengenrabatt ×2: 47,30 > 44,82 → kein Streichpreis, keine Ersparnis', lp);
-  check(lp.ref && lp.ref.prozent === 5, 'Stückpreis-Bezug bleibt (Konfigurator zeigt −5 % je Stück)', lp.ref);
+  check(near(lp.line, 44.82) && lp.off === 10 && lp.aktionProzent === 0 && lp.lineRef === null && lp.ersparnisRef === 0 && lp.ersparnis === 0 && lp.ref === null,
+    '−5 % ohne Mengenrabatt ×2: 47,30 > 44,82 → Normalpreis 44,82 (−10 %), keine Aktion, kein Streichpreis', lp);
+  const r1 = referenzpreis(vase());
+  check(r1 && r1.prozent === 5 && near(linePrice(vase()).line, 23.65), 'Stückpreis-Bezug bleibt (Konfigurator zeigt −5 % je Stück, 1 Stück 23,65)', r1);
   // −15 % MIT Mengenrabatt: 21,17 × 2 × 0,9 = 38,11 gegen 44,82 → Ersparnis 6,71, Badge −15 %
   const M = aktion('ak-m', 15, S, NOW + 3 * TAG, { mengenrabatt: true });
   szenario([M], [snap(NOW - 60 * TAG, { aktionen: [M] })]);
@@ -242,10 +246,50 @@ console.log('8) Versandhinweis am Preis (§ 6 PAngV) und USt.-Hinweis (§ 19 USt
   szenario([], undefined, { shipping: { flat: 0, freeFrom: 0 }, shop: { kleinunternehmer: true } });
   check(versandText() === 'Versandkostenfrei' && /Versandkostenfrei/.test(versandHTML({ kurz: true })), 'Versand 0 € → „Versandkostenfrei“');
   check(ustText() === 'Endpreis, keine USt. nach § 19 UStG', 'Kleinunternehmer → „Endpreis, keine USt. nach § 19 UStG“');
+  // Freigrenze 0 € = immer versandkostenfrei (so rechnet auch der Server, computeTotals: Warenwert ≥ 0)
   szenario([], undefined, { shipping: { flat: 5.5, freeFrom: 0 } });
-  check(nb(versandText()) === 'zzgl. 5,50 € Versand', 'ohne Freigrenze: „zzgl. 5,50 € Versand“', versandText());
+  check(versandText() === 'Versandkostenfrei' && summen(10).shipping === 0, 'Freigrenze 0 € → „Versandkostenfrei“, Versand 0 wie im Server', versandText());
+  szenario([], undefined, { shop: { kleinunternehmer: false } });
+  check(ustText() === 'inkl. MwSt.', 'Regelbesteuerung → „inkl. MwSt.“', ustText());
   setPricing(null);
   check(versandText() === '' && versandHTML() === '', 'ohne Preise leer');
+}
+
+console.log('9) Aktion nie teurer als ohne (Normalpreis mit Mengenrabatt), Mengenrabatt-Hinweis, Cent-Rundung');
+{
+  // −10 % ohne Mengenrabatt: ×1 Aktion 22,41; ×2 gleich teuer (44,82 = 44,82) → keine Aktion; ×3/×4 Normalpreis mit Staffel billiger
+  const A = aktion('ak-a', 10, S, NOW + 3 * TAG);
+  szenario([A], [snap(NOW - 60 * TAG, { aktionen: [A] })]);
+  const z = [1, 2, 3, 4].map((qty) => linePrice(vase('glatt', { qty })));
+  check(near(z[0].line, 22.41) && z[0].aktionProzent === 10 && z[0].ersparnis > 0, '×1: Aktionspreis 22,41', z[0]);
+  check(near(z[1].line, 44.82) && z[1].aktionProzent === 0 && z[1].off === 10, '×2: Aktion spart nichts (44,82 = 44,82) → Normalpreis, keine Aktion', z[1]);
+  check(near(z[2].line, 63.49) && near(z[3].line, 84.66) && z[2].aktionProzent === 0 && z[3].aktionProzent === 0, '×3/×4: 63,49 bzw. 84,66 statt 67,23/89,64 mit Aktion', [z[2].line, z[3].line]);
+  // Aktion mit Mengenrabatt: immer günstiger → Aktion gilt
+  const M = aktion('ak-m', 10, S, NOW + 3 * TAG, { mengenrabatt: true });
+  szenario([M], [snap(NOW - 60 * TAG, { aktionen: [M] })]);
+  const m3 = linePrice(vase('glatt', { qty: 3 }));
+  check(near(m3.line, 57.15) && m3.aktionProzent === 10 && m3.off === 15, 'Aktion −10 % mit Mengenrabatt ×3: 57,15 (Aktion + −15 %)', m3);
+  // Mengenrabatt-Hinweis nennt die Bedingung „gleiche“ (gilt je Design)
+  szenario([], undefined);
+  check(discountTeaser('vase').replace(/\u00a0/g, ' ') === 'ab 2 gleichen Vasen −10 % · ab 3 −15 %', 'Hinweis „ab 2 gleichen Vasen −10 % · ab 3 −15 %“', discountTeaser('vase'));
+  // Preise mit 3 Nachkommastellen: jeder Bestandteil auf Cent wie euro() im Server (24,999 → 25,00; Gravur 2,555 → 2,56)
+  szenario([], undefined, { products: { vase: { single: 24.999, discounts: STAFFEL } }, gravur: 2.555 });
+  const tx = linePrice(vase('rippen', { config: { pattern: 'rippen', height: 150, width: 1, text: 'A' } }));
+  check(near(tx.unit, 27.56) && near(tx.line, 27.56), 'Grundpreis 24,999 + Gravur 2,555 → 25,00 + 2,56 = 27,56 (wie der Server)', tx);
+}
+
+console.log('10) Versandfreigrenze vor Gutschein/Guthaben (summen, wie computeTotals im Server)');
+{
+  szenario([], undefined);
+  check(summen(39.2).shipping === 0 && near(summen(39.2).total, 39.2), 'Warenwert 39,20 → versandfrei, 39,20', summen(39.2));
+  const p10 = summen(39.2, 3.92);
+  check(p10.shipping === 0 && near(p10.total, 35.28), 'Rabatt 10 % (3,92) → Versand bleibt frei, 35,28 statt 40,18', p10);
+  const g = summen(44.82, 10);
+  check(g.shipping === 0 && near(g.total, 34.82), 'Guthaben 10 € auf 44,82 → versandfrei, zu zahlen 34,82 (Guthaben voll 10 € wert)', g);
+  const klein = summen(24.9, 29.8);
+  check(klein.shipping === 4.9 && klein.total === 0, 'Guthaben deckt Ware + Versand (24,90 + 4,90) → 0,00 € zu zahlen', klein);
+  check(summen(0, 0, 0).shipping === 0, 'leerer Warenkorb → kein Versand');
+  check(near(summen(30).total, 34.9) && summen(30).shipping === 4.9, 'unter der Freigrenze → 4,90 € Versand');
 }
 
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);

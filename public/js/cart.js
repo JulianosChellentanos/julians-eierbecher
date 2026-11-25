@@ -10,7 +10,7 @@ import { reloadPricing } from './aktion.js';
 import {
   setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
   volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp, linePrice,
-  aktionFor, aktionScopeLabel, onAktionEnde, referenzTextZeile, aktionProzentGueltig,
+  aktionFor, aktionScopeLabel, onAktionEnde, referenzTextZeile, aktionProzentGueltig, summen,
 } from './pricing.js';
 
 export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp };
@@ -99,8 +99,7 @@ function saveCart() {
 function totals() {
   const lines = cart.map((it) => linePrice(it));
   const subtotal = Math.round(lines.reduce((s, l) => s + l.line, 0) * 100) / 100;
-  const ship = pricing().shipping;
-  const shipping = cart.length === 0 ? 0 : (subtotal >= ship.freeFrom ? 0 : ship.flat);
+  const { shipping, total } = summen(subtotal, 0, cart.length);   // Versand wie computeTotals() im Server (pricing.js)
   const byId = new Map();
   cart.forEach((it, i) => {
     const l = lines[i];
@@ -114,8 +113,10 @@ function totals() {
   });
   const aktionen = [...byId.values()].sort((x, y) => y.ersparnis - x.ersparnis);
   const mitRef = lines.some((l) => l.aktionProzent > 0 && l.lineRef != null);   // mindestens ein Streichpreis → Fußnote
-  return { subtotal, shipping, total: Math.round((subtotal + shipping) * 100) / 100, aktionen, aktion: aktionen[0] || null, mitRef };
+  return { subtotal, shipping, total, aktionen, aktion: aktionen[0] || null, mitRef };
 }
+/** Regelbesteuerung (/api/pricing → shop.kleinunternehmer false): „inkl. MwSt.“ unter dem Gesamtbetrag in Warenkorb und Kasse */
+const mwstZeile = (cls) => (pricing()?.shop?.kleinunternehmer === false ? `<small class="${cls}">inkl. MwSt.</small>` : '');
 /** Zeilen „🔥 Herbstaktion −30 % auf Gehämmert · du sparst 3,98 €“ je betroffener Aktion für Warenkorb & Kasse
  *  (informativ — die Summen sind schon reduziert). § 11 PAngV: „du sparst“ nur gegenüber dem 30-Tage-Tiefstpreis
  *  (ersparnisRef), die Prozentzahl nur, wenn sie für die ganze Aktion stimmt; ohne beides nur „Aktionspreise“. */
@@ -257,6 +258,7 @@ function renderCart() {
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
     ${t.shipping > 0 ? `<small>Noch ${fmt(pricing().shipping.freeFrom - t.subtotal)} bis zum Gratisversand</small>` : ''}
     <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>
+    ${mwstZeile('ct-ref')}
     ${t.mitRef ? `<small class="ct-ref">${REF_FUSSNOTE}</small>` : ''}` : '';
   // Kasse erst, wenn alles bestellbar ist: keine aus dem Shop genommene Farbe, höchstens MAX_POSITIONEN Positionen (ältere Warenkörbe)
   const sperre = farbFehler() ? 'Eine Farbe in deinem Warenkorb gibt es gerade nicht – bitte die markierte Position ändern.' : cart.length > MAX_POSITIONEN ? ZU_VIELE : '';
@@ -304,14 +306,19 @@ const gueltigerCoupon = () => (coupon && coupon.sig === cartSig() ? coupon : nul
 // die Zahlung schon der ersten zugeordnet) — { sig, orderId, accessKey, paypalOrderId }
 let offeneKasse = null;
 
+/** Kasse: Versandfreigrenze am Warenwert VOR Gutschein/Guthaben, danach der Abzug laut Server (pricing.js summen, wie computeTotals) */
 function checkoutTotals() {
   const t = totals();
   const coupon = gueltigerCoupon();
   if (!coupon) return t;
-  const after = Math.round((t.subtotal - coupon.off) * 100) / 100;
-  const ship = pricing().shipping;
-  const shipping = after >= ship.freeFrom ? 0 : ship.flat;
-  return { ...t, shipping, total: Math.round((after + shipping) * 100) / 100 };
+  return { ...t, ...summen(t.subtotal, coupon.off, cart.length) };
+}
+/** Nichts zu zahlen (Gutschein/Guthaben deckt alles): ohne PayPal bestellen — PayPal nimmt keine Zahlung über 0,00 € an */
+function zahlartFuerBetrag(t) {
+  const nullBetrag = cart.length > 0 && t.total <= 0;
+  const pp = !!pricing().paypal?.enabled;
+  $('#pay-paypal-row').hidden = !pp || nullBetrag;
+  if (nullBetrag && $('#pay-paypal')?.checked) { $('#pay-vorkasse').checked = true; $('#pay-vorkasse').dispatchEvent(new Event('change')); }
 }
 
 /**
@@ -333,7 +340,10 @@ function renderCheckoutSummary() {
     ${coupon ? `<div><span>${coupon.guthaben ? '💳 Guthaben' : '🎟️ Gutschein'} „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
     <div><span>Versand</span><b>${t.shipping === 0 ? 'kostenlos' : fmt(t.shipping)}</b></div>
     <div class="ct-grand"><span>Gesamt</span><b>${fmt(t.total)}</b></div>
+    ${mwstZeile('co-ref')}
+    ${cart.length && t.total <= 0 ? `<small class="co-ref">Nichts zu zahlen – dein ${coupon?.guthaben ? 'Guthaben' : 'Gutschein'} deckt den Gesamtbetrag.</small>` : ''}
     ${t.mitRef ? `<small class="co-ref">${REF_FUSSNOTE}</small>` : ''}`;
+  zahlartFuerBetrag(t);
 }
 
 async function applyCoupon() {
@@ -380,7 +390,7 @@ function openCheckout() {
     }
   }
   const pp = pricing().paypal?.enabled;
-  $('#pay-paypal-row').hidden = !pp;
+  $('#pay-paypal-row').hidden = !pp || checkoutTotals().total <= 0;
   if (!pp) $('#pay-vorkasse').checked = true;
   $('#checkout-modal').showModal();
   // Das PayPal-SDK (www.paypal.com) lädt erst, wenn PayPal als Zahlungsart gewählt ist — nicht schon beim Öffnen der Kasse
@@ -454,6 +464,8 @@ function kassenDaten(payment, paypalOrderId = null) {
     items: cartPayload(), payment, paypalOrderId, couponCode: gueltigerCoupon()?.code || null,
     beschaffenheit: $('#co-beschaffenheit')?.checked === true, mitSchluessel: true,
     expectedTotal: checkoutTotals().total,
+    // Rechenstand dieser Kasse: 2 = Versandfreigrenze vor Gutschein/Guthaben — ältere Tabs bittet der Server bei Abweichung ums Neuladen
+    kasseStand: 2,
   };
 }
 /**
@@ -474,6 +486,7 @@ async function submitOrder(payment, paypalOrderId = null) {
   try {
     prog.textContent = 'Bestellung wird angelegt …';
     const body = kassenDaten(payment, paypalOrderId);
+    const nichtsZuZahlen = payment !== 'paypal' && body.expectedTotal <= 0;
     // Dieselbe Kasse (Warenkorb, Adresse, Zahlart, Gutschein) wie beim letzten, abgebrochenen Versuch → dort fortsetzen
     const sig = JSON.stringify({ ...body, expectedTotal: null });
     let r;
@@ -523,9 +536,13 @@ async function submitOrder(payment, paypalOrderId = null) {
     const { lieferzeit } = shopInfo();
     const frist = pricing()?.shop?.fristBeginn?.[payment === 'paypal' ? 'paypal' : 'vorkasse']
       || (payment === 'paypal' ? 'Die Frist beginnt am Tag nach Vertragsschluss, also am Tag nach deiner Bestellung.' : 'Die Frist beginnt am Tag nach deinem Überweisungsauftrag an deine Bank.');
+    // Nichts zu zahlen: keine Überweisung — die Frist beginnt wie bei PayPal am Tag nach der Bestellung
+    const fristOhneZahlung = pricing()?.shop?.fristBeginn?.paypal || 'Die Frist beginnt am Tag nach Vertragsschluss, also am Tag nach deiner Bestellung.';
     $('#confirm-pay-hint').textContent = payment === 'paypal'
       ? `Deine Zahlung ist eingegangen, ich starte jetzt den Druck. Lieferzeit: ${lieferzeit}. ${frist}`
-      : `Alle Zahlungsdaten (IBAN & Betrag) findest du auf deiner Rechnung. Sobald dein Geld da ist, starte ich den Druck. Lieferzeit: ${lieferzeit}. ${frist}`;
+      : nichtsZuZahlen
+        ? `Es ist nichts zu zahlen – dein Gutschein bzw. Guthaben deckt den Gesamtbetrag. Ich starte jetzt den Druck. Lieferzeit: ${lieferzeit}. ${fristOhneZahlung}`
+        : `Alle Zahlungsdaten (IBAN & Betrag) findest du auf deiner Rechnung. Sobald dein Geld da ist, starte ich den Druck. Lieferzeit: ${lieferzeit}. ${frist}`;
     $('#confirm-modal').showModal();
     refreshOrders(); // Bestellhistorie im Konto aktualisieren
   } catch (err) {
