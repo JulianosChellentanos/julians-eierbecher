@@ -83,8 +83,9 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
 
 ## Getroffene Annahmen – bitte prüfen
 
-- **Liefergebiet nur Deutschland** (`settings.shop.liefergebiet`). Achtung: Das PLZ-Feld der Kasse lässt auch
-  4-stellige PLZ (Österreich/Schweiz) zu. Lieferst du ins Ausland, Liefergebiet und Versandkosten anpassen.
+- **Liefergebiet nur Deutschland** (`settings.shop.liefergebiet`). Kasse, Konto-Adresse und Server verlangen dann eine
+  5-stellige PLZ (`plzFehler`); steht im Liefergebiet mehr als „Deutschland“, sind 4–5 Ziffern erlaubt (Österreich/Schweiz).
+  Lieferst du ins Ausland, Liefergebiet und Versandkosten anpassen.
 - **Rücksendekosten trägt die Kundschaft** („Sie tragen die unmittelbaren Kosten der Rücksendung der Waren.“).
   Willst du sie übernehmen, den Satz in `widerruf()` gegen „Wir tragen die Kosten der Rücksendung der Waren.“ tauschen.
 - **Alle Vasen gelten als individuell angefertigt** (§ 312g Abs. 2 Nr. 1 BGB – kein Widerrufsrecht). Das ist
@@ -106,7 +107,9 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
   ausgeschlossen, jeder Widerruf wird geprüft (Kasse, FAQ, AGB § 10, Seite „Widerruf“; die Eingangsbestätigung per
   Mail kündigt keine Rücksendung/Erstattung an, sondern die Prüfung).
 - **Vertragsschluss** so, wie der Shop arbeitet: „Zahlungspflichtig bestellen“ (bzw. Zahlung bei PayPal) = Angebot,
-  die sofortige Bestellbestätigung mit Rechnung = Annahme.
+  die sofortige Bestellbestätigung mit Rechnung = Annahme. Sie bringt Rechnung, AGB und Widerrufsbelehrung (mit
+  Muster-Widerrufsformular) als PDF-Anhang mit – die Vertragsbestätigung auf einem dauerhaften Datenträger (§ 312f Abs. 2
+  BGB); Einzelheiten und Rückfälle unter „Hilfen im Code“.
 - **Kein Widerrufsrecht von dir** außer in zwei klaren Fällen: Design technisch nicht druckbar, Gravur rechtswidrig.
 - **Haftung und Gewährleistung** rein gesetzlich, keine Einschränkung, keine Garantie.
 - **Produkteigenschaften** (PLA, 50 °C, Trockenblumen, Voronoi, Standfestigkeit, Schichtlinien) stehen als
@@ -178,7 +181,8 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
   kommt aus `ZAHLUNGSFRIST_TAGE` in `lib/lieferfrist.js`; die Nachfrist der Erinnerung aus `NACHFRIST_TAGE`.
 - **Datenschutz – Speicherdauer im Betrieb:** Inhalte nicht zugestellter Mails löscht der Shop spätestens nach 90 Tagen
   (Abschnitt „E-Mails“). Nie abgeschlossene Kassen: Druckdateien nach 48 Stunden (bei knappem Speicher nach 1 Stunde),
-  die angefangene Bestellung nach 14 Tagen (Abschnitt „Bestellung“). Missbrauchsbremsen zählen IP-Adressen (IPv6 als
+  die angefangene Bestellung nach 14 Tagen (Abschnitt „Bestellung“). Das gilt für unbearbeitete Kassen; eine im Admin
+  stornierte oder bearbeitete räumt der Shop nicht auf – deshalb rät der Admin davon ab (ein Storno ginge ohne Kundenmail). Missbrauchsbremsen zählen IP-Adressen (IPv6 als
   /64-Netz) nur im Arbeitsspeicher, höchstens einen Tag (Abschnitt „Wenn du die Website aufrufst“). Das Konto lässt sich
   unter „Mein Konto“ selbst löschen; eine Datenauskunft erstellst du im Admin unter Kunden (Datenexport als JSON) und
   schickst sie per Mail (Abschnitt „Kundenkonto“).
@@ -191,8 +195,8 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
 | Kleinunternehmer an/aus | Preissätze in AGB § 6 und „Versand & Zahlung“, Hinweis im Impressum, USt.-Hinweis am Preis im Shop, in Warenkorb, Kasse und Bestellbestätigung („inkl. MwSt.“ bzw. „keine USt. nach § 19 UStG“) – Rechnung, Gutschrift und Storno folgen dem Steuerstatus der Bestellung (`order.steuer`) |
 | PayPal an/aus (mit Client-ID) | AGB § 3 und § 8, Datenschutz (Kurzfassung, Zahlung, Bestellung, Empfänger), „Versand & Zahlung“, Lieferfristbeginn |
 | Versandkosten / Freigrenze | AGB § 6, „Versand & Zahlung“ (auch „kostenlos“ oder „ohne Freigrenze“), Versandhinweis am Preis im Shop |
-| Lieferzeit / Liefergebiet | AGB § 7, „Versand & Zahlung“ |
-| Firmendaten, Telefon, USt-IdNr. | Impressum, Datenschutz, AGB § 2, Widerrufsbelehrung, Muster-Formular, Fußzeile |
+| Lieferzeit / Liefergebiet | AGB § 7, „Versand & Zahlung“, PLZ-Prüfung in Kasse und Konto (Deutschland: 5 Ziffern) |
+| Firmendaten, Telefon, USt-IdNr. | Impressum, Datenschutz, AGB § 2, Widerrufsbelehrung, Muster-Formular, Fußzeile, PDF-Anhänge der Bestätigung (als PDF erst mit Inhaber, vollständiger Anschrift und E-Mail, sonst HTML) |
 | Hoster / Serverstandort / AV-Vertrag (Häkchen) | Datenschutz (Hosting, Kurzfassung, Empfänger; ohne Hoster neutraler Text + Admin-Warnung) |
 | Mail-Versand (eigener Mailserver / Anbieter + Name) | Datenschutz (E-Mails, Speicherdauer, Sicherungen, Empfänger) |
 | Öffentliche Shop-URL | Adresse der Widerrufsfunktion, HTTPS-Hinweis, Canonical/og der Startseite und Rechtsseiten, robots.txt, sitemap.xml, AGB § 1 |
@@ -216,9 +220,15 @@ PayPal gilt – genau wie im Shop – erst als angeboten, wenn „aktiv“ **und
 - `renderLegalPage(slug, { settings, baseUrl, forPdf: true, logoHtml })` – schlichte Druckfassung (A4, Text wie `forMail`,
   absolute Links, `logoHtml` = fertiges Inline-SVG) als Vorlage für den eigenen PDF-Satz (`legalPdf` in `lib/html-pdf.js`).
   Die Bestellbestätigung verschickt AGB und Widerrufsbelehrung (mit Muster-Widerrufsformular) so als PDF (`formsam-AGB.pdf`,
-  `formsam-Widerrufsbelehrung.pdf`) – „dauerhafter Datenträger“ nach § 312f Abs. 2 BGB; der verschickte Stand liegt je Bestellung
-  in `orders/<ID>/agb.pdf` und `widerruf.pdf`. Fehlen Pflichtangaben unter „Mein Unternehmen“ (Inhaber, vollständige Anschrift ohne
-  Platzhalter, gültige E-Mail), gibt es keine PDF und der Anhang geht wie früher als HTML mit (README „Rechnungen und Rechtstexte als PDF“).
+  `formsam-Widerrufsbelehrung.pdf`), dazu die Rechnung (`formsam-Rechnung-<Nummer>.pdf`) – „dauerhafter Datenträger“ nach
+  § 312f Abs. 2 BGB. Der verschickte Stand der Rechtstexte liegt je Bestellung in `orders/<ID>/agb.pdf` und `widerruf.pdf`
+  (nicht öffentlich abrufbar); „Erneut“ im Versandprotokoll schickt genau diesen damaligen Stand, auch wenn sich Texte oder
+  Firmendaten seither geändert haben. Rückfälle: Fehlen Pflichtangaben unter „Mein Unternehmen“ (Inhaber, vollständige Anschrift
+  ohne Platzhalter Musterstraße/00000/Musterstadt, gültige E-Mail), gehen AGB und Widerrufsbelehrung als HTML mit (`forMail`),
+  die Rechnung trotzdem als PDF. Scheitert der PDF-Satz einer Datei (z. B. ein Zeichen ohne Glyphe), geht der Rechtstext als
+  HTML mit bzw. fehlt die Rechnungs-PDF (dann bleibt der Knopf „Rechnung ansehen“). Der Mailtext nennt nur, was wirklich anhängt. Im Startprotokoll steht „PDF-Belege: lib/html-pdf.js geladen“; „📄 PDF … nicht erzeugt“ heißt
+  Rückfall (README „Rechnungen und Rechtstexte als PDF“). Wer die Rechtstexte ändert, muss an den PDFs nichts tun: Neue
+  Bestellungen bekommen automatisch die neue Fassung.
 - `legalWarnings(settings)` – Liste fehlender oder vorläufiger Pflichtangaben (Platzhalter-Anschrift, fehlende
   Telefonnummer, Hoster/Serverstandort fehlt, AV-Vertrag nicht bestätigt, öffentliche Adresse fehlt …); steht im
   Startlog und als Hinweis in der Admin-Übersicht.
