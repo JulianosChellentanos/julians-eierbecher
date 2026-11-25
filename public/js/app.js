@@ -95,18 +95,20 @@ async function loadContent() {
   // Matt zuerst, dann Glanz/Metallic — mit Finish-Effekt auf dem Swatch; Aufpreis als kleines Badge
   const order = { matt: 0, glanz: 1, metall: 2 };
   colors.sort((a, b) => (order[a.finish || 'matt'] ?? 0) - (order[b.finish || 'matt'] ?? 0));
+  // Farbangaben aus den Einstellungen (Admin) nur maskiert bzw. als geprüfter Farbwert ins HTML
   $('#swatches').innerHTML = colors.map((c) => {
     const sur = Math.max(0, Number(c.aufpreis) || 0);
+    const fin = escAttr(c.finish || 'matt'), hex = cssHex(c.hex);
     return `
-    <button class="swatch sw-${c.finish || 'matt'}" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}" data-finish="${c.finish || 'matt'}"
-      style="--sw:${c.hex}" title="${c.name}${(c.finish || 'matt') !== 'matt' ? ' · ' + FINISH_LABEL[c.finish] : ''}${sur > 0 ? ' · ' + fmtPlus(sur) + ' je Stück' : ''}"><span></span>${sur > 0 ? `<i class="sur sur-sw">${fmtPlus(sur)}</i>` : ''}</button>`;
+    <button class="swatch sw-${fin}" data-id="${escAttr(c.id)}" data-hex="${hex}" data-name="${escAttr(c.name)}" data-finish="${fin}"
+      style="--sw:${hex}" title="${escAttr(c.name)}${(c.finish || 'matt') !== 'matt' ? ' · ' + escAttr(FINISH_LABEL[c.finish]) : ''}${sur > 0 ? ' · ' + fmtPlus(sur) + ' je Stück' : ''}"><span></span>${sur > 0 ? `<i class="sur sur-sw">${fmtPlus(sur)}</i>` : ''}</button>`;
   }).join('');
   $$('#swatches .swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
   setColor(colors[0]);
   // Schriftfarbe (Stil „Farbschrift“): gleiche Palette, zweites Filament
   $('#text-swatches').innerHTML = colors.map((c) => `
-    <button class="swatch sw-${c.finish || 'matt'}" data-id="${c.id}" data-hex="${c.hex}" data-name="${c.name}" data-finish="${c.finish || 'matt'}"
-      style="--sw:${c.hex}" title="${c.name}"><span></span></button>`).join('');
+    <button class="swatch sw-${escAttr(c.finish || 'matt')}" data-id="${escAttr(c.id)}" data-hex="${cssHex(c.hex)}" data-name="${escAttr(c.name)}" data-finish="${escAttr(c.finish || 'matt')}"
+      style="--sw:${cssHex(c.hex)}" title="${escAttr(c.name)}"><span></span></button>`).join('');
   $$('#text-swatches .swatch').forEach((b) => b.addEventListener('click', () => { setTextColor(b.dataset.id); rebuild(); }));
   setTextColor(state.textColor || 'tiefschwarz', true);
 }
@@ -137,6 +139,8 @@ function applyProduktSchalter() {
 
 /** HTML-sichere Attribut-Werte */
 const escAttr = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** Farbwert für style-Attribute: nur #rgb/#rrggbb, sonst neutrales Grau */
+const cssHex = (h) => (typeof h === 'string' && h.length <= 7 && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(h) ? h : '#cccccc');
 /** Streichpreis nach § 11 PAngV: niedrigster Preis der letzten 30 Tage, gekennzeichnet per title/aria-label (enge Stellen) */
 function refStrikeHTML(ref, cls = 'uvp') {
   const t = escAttr(referenzText(ref.tiefst));

@@ -143,8 +143,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Seitenaufrufe außerhalb der App-Shell (unbekannte Adressen, /gibts/nicht …): unter der eigenen Adresse ans Netz — der Server
+  // antwortet mit seiner 404-Seite; nie stillschweigend den Shop zeigen. Offline → Offline-Seite.
+  if (isNavigation && path !== '/' && path !== '/index.html') {
+    event.respondWith(fetch(request).catch(() => offlineResponse()));
+    return;
+  }
+
   if (isNavigation || SWR_PATHS.includes(path) || startsWithAny(path, SWR_PREFIXES)) {
-    // Navigationen auf die App-Shell "/" normalisieren, Query-Strings ignorieren
+    // Navigationen auf die App-Shell "/" normalisieren (nur / und /index.html, mit beliebiger Query wie ?d=, ?l=, ?verify=)
     const key = isNavigation ? new Request('/', { headers: request.headers }) : request;
     event.respondWith(networkFirst(key, { fallback: isNavigation ? 'shell' : null }));
     return;

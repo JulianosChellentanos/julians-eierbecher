@@ -89,7 +89,8 @@ function stepsHtml(o) {
 
 function renderButton() {
   const btn = $('#account-btn');
-  btn.innerHTML = `👤 <span class="ab-txt">${currentUser ? currentUser.name.split(' ')[0] : 'Anmelden'}</span>`;
+  // Name kommt vom Konto (frei eingegeben) → maskiert; ältere Konten können noch < > im Namen haben
+  btn.innerHTML = `👤 <span class="ab-txt">${esc(currentUser ? String(currentUser.name || '').trim().split(/\s+/)[0] : 'Anmelden')}</span>`;
   btn.classList.toggle('logged-in', !!currentUser);
 }
 
@@ -262,14 +263,22 @@ export function openAccount() {
   $('#account-modal').showModal();
 }
 
+let addrMsgTimer = 0;
 async function saveAddress() {
-  await fetch('/api/auth/address', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-    body: JSON.stringify({ street: $('#acc-street').value, zip: $('#acc-zip').value, city: $('#acc-city').value }),
-  });
-  currentUser.address = { street: $('#acc-street').value, zip: $('#acc-zip').value, city: $('#acc-city').value };
+  clearTimeout(addrMsgTimer);   // ein älteres „Gespeichert“ darf eine neue Meldung nicht wegräumen
+  const address = { street: $('#acc-street').value.trim(), zip: $('#acc-zip').value.trim(), city: $('#acc-city').value.trim() };
+  let r = null;
+  try {
+    const res = await fetch('/api/auth/address', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }, body: JSON.stringify(address),
+    });
+    r = await res.json().catch(() => null);
+  } catch { r = { ok: false, error: 'Keine Verbindung zum Shop – bitte Internetverbindung prüfen.' }; }
+  // Server prüft Längen (Straße 120, PLZ 10, Ort 80) — Meldung statt „Gespeichert“
+  if (!r?.ok) { $('#acc-addr-msg').textContent = `⚠️ ${r?.error || 'Das hat gerade nicht geklappt.'}`; return; }
+  currentUser.address = address;
   $('#acc-addr-msg').textContent = '✅ Gespeichert';
-  setTimeout(() => $('#acc-addr-msg').textContent = '', 2000);
+  addrMsgTimer = setTimeout(() => { $('#acc-addr-msg').textContent = ''; }, 2000);
 }
 
 async function logout() {

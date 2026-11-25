@@ -462,8 +462,8 @@
       <button type="button" class="linkbtn auth-forgot-link" id="al-forgot">Passwort vergessen?</button>
     </form>
     <form id="auth-register" hidden>
-      <label>Name <input type="text" id="ar-name" required autocomplete="name"></label>
-      <label>E-Mail <input type="email" id="ar-email" required autocomplete="email"></label>
+      <label>Name <input type="text" id="ar-name" required minlength="2" maxlength="80" autocomplete="name"></label>
+      <label>E-Mail <input type="email" id="ar-email" required maxlength="254" autocomplete="email"></label>
       <label>Passwort <input type="password" id="ar-pw" required minlength="6" placeholder="mind. 6 Zeichen" autocomplete="new-password"></label>
       <button class="btn btn-primary btn-lg" type="submit">Konto anlegen</button>
       <p class="tiny">Ich nutze deine Daten nur für dein Konto und deine Bestellungen – kein Newsletter. Mehr dazu in der <a href="/datenschutz" target="_blank" rel="noopener">Datenschutzerklärung</a>.</p>
@@ -497,9 +497,9 @@
     <div id="acc-orders"></div>
     <h3>📍 Standard-Lieferadresse</h3>
     <div class="co-grid">
-      <label class="wide">Straße &amp; Hausnummer <input type="text" id="acc-street"></label>
-      <label>PLZ <input type="text" id="acc-zip"></label>
-      <label>Ort <input type="text" id="acc-city"></label>
+      <label class="wide">Straße &amp; Hausnummer <input type="text" id="acc-street" maxlength="120"></label>
+      <label>PLZ <input type="text" id="acc-zip" maxlength="10"></label>
+      <label>Ort <input type="text" id="acc-city" maxlength="80"></label>
     </div>
     <div class="modal-btns" style="justify-content:space-between">
       <button class="btn btn-ghost" id="acc-logout">Abmelden</button>

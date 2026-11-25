@@ -39,7 +39,7 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
 - **Galerie & Produktfotos**: Im Admin (Produktfotos & Galerie) hochgeladene Fotos erscheinen sofort in der „Zuhause bei formsam“-Galerie; Fotos der Kategorie Vase ersetzen die Render-Bilder der Produktkarten
 - **Szenen-Vorschau**: Studio + 4 fotoreale CC0-HDRI-Szenen von Poly Haven (Esstisch mit echter Holztisch-Textur, Fensterbrett mit Ausblick, Café, Abend) — Environment-Beleuchtung, Trockengräser in der Vase
 - **📸 Foto-Shooting**: rendert das aktuelle Design in 4 Szenen als speicherbare PNGs
-- **Design-Codes & Listen**: jedes Design als kurzer Code zum Teilen und Nachbestellen (alte Codes bleiben gültig), Design-Listen (z. B. für eine Hochzeit) mit Vorschau, Code und Menge — teilbar per Link
+- **Design-Codes & Listen**: jedes Design als kurzer Code zum Teilen und Nachbestellen (alte Codes bleiben gültig), Design-Listen (z. B. für eine Hochzeit) mit Vorschau, Code und Menge — teilbar per Link. Neue Codes nur mit Werten, die der Konfigurator erzeugen kann (siehe „Eingaben & Schutz“), Eierbecher-Codes nur mit eingeschaltetem Produkt. Vorschaubild je Code: nur das erste (echtes JPEG) gilt, spätere Uploads ändern nichts — ein verunglücktes oder vorab fremd belegtes Bild entfernt der Admin unter Produktfotos & Galerie → „Vorschaubild eines Design-Codes“ (`DELETE /api/design/<CODE>/thumb` mit Admin-Passwort); das nächste Speichern des Designs im Shop (Design-Code anzeigen, zur Liste hinzufügen) lädt ein neues hoch
 - **STL-Export** direkt im Browser: binär, Millimeter, **wasserdicht/manifold** — slicebar in Bambu Studio, PrusaSlicer & Co.
 - **Shop-System**: Warenkorb mit konfigurierbaren **Mengenrabatten** (gleiches Design mehrfach → z. B. −35 % ab 4 Stück; Hinweis am Preis „ab 2 gleichen Vasen −10 % · ab 3 −15 %“), Checkout mit Lieferadresse, Vorkasse + **PayPal-Anbindung** (REST, Sandbox/Live — nur Zugangsdaten eintragen)
 - **Versand, Gutscheine, Guthaben** (Server `computeTotals`, Browser `pricing.js summen` — gleiche Regel): Die Versandfreigrenze misst den Warenwert nach Aktion und Mengenrabatt, aber **vor** Gutschein und Guthaben — ein Gutschein macht eine Bestellung nie teurer. Ein Rabatt-Gutschein mindert höchstens den Warenwert; ein Guthaben ist ein Zahlungsmittel und deckt auch den Versand. Ist danach nichts mehr zu zahlen (0,00 €), gilt die Bestellung mit dem Abschluss der Kasse als bezahlt („Nichts zu zahlen“ in Kasse, Erfolgsmeldung und Rechnung, ohne PayPal) — eine nie abgeschlossene 0-€-Kasse bleibt offen wie jede abgebrochene Kasse. Freigrenze 0 € = immer versandkostenfrei. Optional je Gutschein: „gültig bis“ (Datum, einschließlich) und „höchstens n Einlösungen“ (nicht für Guthaben; es zählen abgeschlossene Bestellungen und laufende Kassen anderer Kundinnen der letzten 2 Stunden — eine eigene abgebrochene Kasse sperrt den Code nicht; beim Abschluss wird nachgeprüft, sonst „bitte starte die Kasse neu“). Preis-/Warenkorb-/Kassentexte nennen bei Regelbesteuerung „inkl. MwSt.“, als Kleinunternehmer „keine USt. nach § 19 UStG“. Tests: `node tools/test-referenzpreis.mjs` (Regeln im Browser, pricing.js) und `node tools/test-kasse.mjs` (Server, Belege, Admin-Abläufe)
@@ -60,7 +60,7 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
   - Preise & Mengenrabatt-Stufen, Gutscheine (%- oder €-Codes, Mindestbestellwert, optional gültig bis / höchstens n Einlösungen), Aktionen. Gutschrift-Codes aus Reklamationen (`GH-XXXX-XXXX`, ältere `GS-XXXX-XXXX` bleiben gültig) sind **Guthaben**: einlösbar bis der Betrag aufgebraucht ist (Rest bleibt, stornierte Bestellungen geben ihn frei), immer ohne Mindestbestellwert und auch während einer Aktion — die Gutschein-Tabelle zeigt den Restwert, Mindestwert und „mit Aktion“ sind bei Guthaben nicht änderbar
   - Beim Speichern prüft der Server jedes Feld (400 mit deutscher Meldung, nichts wird übernommen): Beträge ≥ 0 mit höchstens zwei Nachkommastellen, Grundpreise > 0, Staffel unter 100 %, Währung EUR, Gutschein-Codes eindeutig (A–Z, 0–9, - _), Prozent bis 100, Farben mit Hex-Wert; E-Mail: Host ohne `smtp://`, Port 1–65535, Absender/Antwort/Admin-Adressen gültig (mehrere Admin-Adressen mit Komma), öffentliche Shop-Adresse als `https://…` ohne Pfad und Pflicht bei aktivem Versand. Ältere gespeicherte Preise mit drei Nachkommastellen rundet der Shop beim Start auf Cent
   - Mein Unternehmen (Anbieter, Steuer & Belege inkl. Wirtschafts-Identifikationsnummer `DE123456789-00001` als eigenes Feld, Bankverbindung, **Shop-Angaben** Lieferzeit/Liefergebiet, **Rechtstexte** Hoster/Serverstandort/AV-Vertrag/Mail-Versand je Server), PayPal, E-Mail, System (Passwort, Produktschalter, JSON-Backup) — alles in `data/settings.json` (nicht im Git)
-- **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, Sessions in `data/`), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung
+- **Kundenkonten**: Registrierung/Login (scrypt-gehashte Passwörter, Sessions in `data/`), Bestellhistorie mit Status & Rechnungen, Standard-Lieferadresse mit Checkout-Vorbefüllung. Name 2–80 Zeichen ohne `<` `>`, E-Mail wie beim Mailversand (höchstens 254 Zeichen), Adresse nur Text (Straße 120, PLZ 10, Ort 80) — bestehende Konten bleiben unverändert
 - **Mobil** (≤ 700 px): Startseite mit der 3D-Formenwelt als Bühne (Wischen wechselt die Form), Kataloge „Formen“ und „Oberflächen“ mit Detailblättern im Bottom-Sheet, ein klebender Bestellknopf; im Konfigurator klebende 3D-Bühne + Tab-Leiste statt Endlos-Scroll, Swipe zwischen Tabs, angedockte Bottom-Bar mit Live-Preis & Warenkorb, Vollbild-3D, Toasts, Haptik. Desktop (≥ 981 px) bleibt davon unberührt
 - **PWA**: Manifest („formsam – Vasen selbst gestalten“), Service Worker (Cache-First für Assets, Offline-Fallback), Home-Screen-Icons mit dem formsam-Zeichen, Theme-Color folgt dem Darkmode. Kein Install-Banner — wer mag, legt die Seite selbst über das Browser-Menü auf den Home-Bildschirm
 - **Darkmode**: Umschalter im Header (🌙/☀️), merkt sich die Wahl, folgt sonst der Systemeinstellung
@@ -121,7 +121,7 @@ node server.js          # → http://localhost:4488
 | `/admin` | Admin: Bestellungen, Status, Einstellungen (Standard-Passwort bei Neuinstallation: `formsam-admin`) |
 | `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand` | Rechtsseiten, aus den Einstellungen gerendert (`lib/legal.js`) |
 | `/api/pricing`, `/api/quote` | Preise, Rabatte, Lieferzeit/Liefergebiet (Server = einzige Preisquelle); `/api/pricing` liefert während einer Aktion unter `preisHistorie` die Momentaufnahmen für den 30-Tage-Tiefstpreis |
-| `/api/checkout` + STL-Upload | Warenkorb-Bestellung anlegen (Antwort mit `accessKey`), Modelle binär hochladen, Rechnung erzeugen — `/api/order/<ID>/stl/<i>` und `/complete` nur mit Header `x-order-key`. Pflicht: `beschaffenheit: true` (Vereinbarung Wasser/Standfestigkeit) und `expectedTotal` (angezeigter Gesamtbetrag — weicht er ab, 409 `code: 'preis'`; Kassen-Tabs ohne `kasseStand: 2`, also von vor der Versandregel „Freigrenze vor Gutschein“, bekommen dann „bitte lade die Seite neu“), 1–20 Positionen, keine aus dem Shop genommene Farbe, PLZ 4–5 Ziffern, Zahlart `vorkasse` oder `paypal`. Design-Codes der Zeilen werden gespeichert (`lines[].code`). Eine nie abgeschlossene Kasse hält ein Guthaben nur 2 Stunden fest |
+| `/api/checkout` + STL-Upload | Warenkorb-Bestellung anlegen (Antwort mit `accessKey`), Modelle binär hochladen, Rechnung erzeugen — `/api/order/<ID>/stl/<i>` und `/complete` nur mit Header `x-order-key`. Pflicht: `beschaffenheit: true` (Vereinbarung Wasser/Standfestigkeit) und `expectedTotal` (angezeigter Gesamtbetrag — weicht er ab, 409 `code: 'preis'`; Kassen-Tabs ohne `kasseStand: 2`, also von vor der Versandregel „Freigrenze vor Gutschein“, bekommen dann „bitte lade die Seite neu“), 1–20 Positionen, keine aus dem Shop genommene oder unbekannte Farbe, Konfiguration wie im Konfigurator (sonst 400 mit Hinweis auf die Position), PLZ 4–5 Ziffern, Zahlart `vorkasse` oder `paypal`. Design-Codes der Zeilen werden gespeichert (`lines[].code`). Eine nie abgeschlossene Kasse hält ein Guthaben nur 2 Stunden fest |
 | `/orders/<ID>/rechnung.html?k=…` | Rechnung, Gutschrift, Modelldateien — nur mit Zugriffsschlüssel oder Admin-Header (Altbestand ohne Schlüssel wie bisher) |
 | `/api/paypal/*` | PayPal-Order anlegen/einziehen (aktiv, sobald Zugangsdaten hinterlegt). `create` prüft vorher alles wie der Checkout und garantiert den Preis ab dem Klick; lehnt der Checkout nach dem Einzug trotzdem ab, wird automatisch erstattet (sonst Admin-Mail + Hinweis in der Übersicht) |
 | `/api/auth/verify`, `/api/auth/verify-resend` | E-Mail-Adresse des Kontos bestätigen (Token aus der Mail + Anmeldung) bzw. Link erneut senden |
@@ -141,6 +141,33 @@ PORT=4490 DATA_DIR=tmp-tests/sandbox/data ORDERS_DIR=tmp-tests/sandbox/orders no
 Bestellordner (`tmp-tests/` ist nicht im Git). Ein leerer Ordner startet mit den Standard-Einstellungen (Admin-Passwort
 `formsam-admin`, Mail aus). Wer echte Einstellungen kopiert (`cp data/settings.json …`), schaltet dort vorher den
 Mail-Versand aus und leert die PayPal-Zugangsdaten — sonst verschickt die Testinstanz echte Mails.
+
+## Eingaben & Schutz
+
+- **Eingaben** (`lib/eingaben.js`): jede Eingabe wird vor einem regulären Ausdruck in der Länge begrenzt, geprüft wird nur linear
+  (kein Ausdruck mit verschachtelten Wiederholungen — ein einzelner Request konnte vorher den ganzen Server minutenlang blockieren).
+  Konfigurationen (neue Design-Codes, Angebot, PayPal, Kasse): bekannte Formen, Muster, Schriften, Gravur-Stile, Ränder und Verläufe,
+  Zahlen in den Grenzen der Regler (inkl. früherer Reglergrenzen), Gravur ≤ 40 Zeichen, Farbname ≤ 80, `colorHex` nur `#rrggbb`,
+  die Farbe muss es geben. Die Tabellen spiegeln `public/js/geometry.js` — neue Muster/Formen/Schriften dort **und** in
+  `lib/eingaben.js` eintragen (`node tools/test-eingaben.mjs` meldet Abweichungen).
+- **Fehlerantworten**: kaputtes JSON, leerer Body oder `null` → 400 „Ungültige Anfrage“; zu großer Body → 413 mit Antwort (der Rest
+  wird noch angenommen und verworfen); unbekannte `/api/…`-Adressen → 404 als JSON; Seiten und Dateien nur per GET/HEAD (sonst 405
+  mit `Allow`). Alle `/api/…`-Antworten tragen `Cache-Control: no-store`.
+- **404-Seite**: Seitenaufrufe auf unbekannte Adressen bekommen eine kleine Seite im formsam-Look (Link zum Shop, Impressum/Datenschutz),
+  Bilder/Skripte weiter einen kurzen Text-404. `/Impressum`, `/impressum.html` usw. leiten per 301 auf die Rechtsseite. Der Service
+  Worker bildet nur `/` und `/index.html` auf die App-Shell ab, andere Seitenaufrufe gehen ans Netz.
+- **Schutz-Kopfzeilen** (server.js, jede Antwort): `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+  (Belege: `no-referrer`), `X-Frame-Options: SAMEORIGIN`, `Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'; object-src 'none'`.
+  **Bewusste Grenze:** keine `script-src` — Shop und Admin nutzen Inline-Skripte, Inline-Handler (`onclick`) und Worker; eine
+  Skript-Richtlinie bräuchte erst deren Umbau. HSTS (`max-age=31536000`, ohne `includeSubDomains`) setzt nginx
+  (`deploy/nginx-formsam.conf`), weil es nur über HTTPS gilt.
+- **Ausgabe im Browser**: Namen, Adressen, Notizen, Gravurtexte, Listen- und Farbnamen kommen nur maskiert (`esc`/`textContent`) ins
+  HTML; Farbwerte nur geprüft (`#rgb`/`#rrggbb`) in `style`-Attribute.
+- **Dateirechte**: der Shop startet mit `umask 077` (systemd: `UMask=0077`) — neue Dateien in `data/` und `orders/` sind 0600, Ordner
+  0700. Beim Start schränkt er außerdem die Ordner `data/`, `data/thumbs` und `orders/` selbst auf 0700 ein (nur diese Ordner, kein
+  rekursives chmod; steht einmal im Protokoll): ältere Dateien darin behalten ihre Rechte, sind für andere Benutzer aber nicht mehr
+  erreichbar. Wer auch die Dateien selbst angleichen will (optional, als root, Pfade anpassen):
+  `chmod -R go-rwx /srv/formsam/data /srv/formsam/orders`.
 
 ## Marke & Brand-Assets
 
@@ -170,6 +197,7 @@ lib/
   produkthinweise.js       Produkthinweise und Wortlaut des Kassen-Häkchens je Fassung (Rechnung, order.json)
   mailer.js                SMTP-Versand, Warteschlange + Outbox-Protokoll (data/mail-outbox.json, Inhalte in data/mail-outbox/)
   mail-templates.js        E-Mail-Vorlagen im formsam-Look
+  eingaben.js              Eingabeprüfung (E-Mail, Konto, Konfiguration, Farben) — linear, ohne ReDoS
 public/
   index.html               Landing + Konfigurator
   css/style.css            Design (warm-minimal, Fraunces/Inter lokal)
@@ -194,6 +222,7 @@ tools/
   test-referenzpreis.mjs   Unit-Test 30-Tage-Tiefstpreis (§ 11 PAngV) in public/js/pricing.js
   test-recht.mjs           Rechtstexte, Wartungsmodus, öffentliche Adresse, Produkthinweise (startet eigene Instanz)
   test-betrieb.mjs         Sicherungs- und Update-Skripte unter deploy/
+  test-eingaben.mjs        Eingaben, Fehlerantworten, Schutz-Kopfzeilen, 404, Dateirechte (startet eine eigene Instanz)
 deploy/                    Produktivserver: systemd, nginx (+ Logformat), Sicherung, Update, journald/logrotate, Mailserver
 docs/marke.md              Markenleitfaden
 docs/rechtstexte.md        Notiz zu den Rechtstexten (Annahmen, offene Punkte)
@@ -368,6 +397,7 @@ node tools/test-mail.mjs                           # Zustellung/Wiederholung, Pr
 node tools/test-referenzpreis.mjs                  # Streichpreis = niedrigster Preis der letzten 30 Tage
 node tools/test-recht.mjs                          # Rechtstexte, Wartungstor, Startseite/robots/sitemap, Produkthinweise (eigene Instanz)
 node tools/test-betrieb.mjs                        # deploy/: Sicherung und prod-update.sh in einer Attrappe
+node tools/test-eingaben.mjs                       # Eingaben, 400/404/405/413, Kopfzeilen, Dateirechte (eigene Instanz, Port 4545–4549)
 ```
 
 Der Validator prüft: Dateikonsistenz, degenerierte Dreiecke, NaN, Bounding Box,

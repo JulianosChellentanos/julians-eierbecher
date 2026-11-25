@@ -7,6 +7,8 @@ import { showToast, IS_MOBILE } from './mobile.js';
 import { copyText, formatCode, normalizeCode, esc } from './designcode.js';
 
 const $ = (s) => document.querySelector(s);
+/** Farbwert für style-Attribute: nur #rgb/#rrggbb (Farben kommen aus den Einstellungen), sonst Grau */
+const cssHex = (h) => (typeof h === 'string' && h.length <= 7 && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(h) ? h : '#dddddd');
 
 export const OCCASIONS = {
   hochzeit: { label: 'Hochzeit', icon: '💍' },
@@ -150,7 +152,7 @@ function renderList(list) {
       const col = hooks.colorInfo?.(it.config?.color);
       const off = !bestellbar(it);
       return `<div class="ls-item${off ? ' ls-off' : ''}" data-i="${i}">
-        <div class="ls-thumb" style="--sw:${col?.hex || '#ddd'}"><img src="/api/design/${it.code}/thumb" alt="" loading="lazy" onerror="this.remove()"><span class="ls-thumb-fb">${it.config?.product === 'eierbecher' ? '🥚' : '🏺'}</span></div>
+        <div class="ls-thumb" style="--sw:${cssHex(col?.hex)}"><img src="/api/design/${it.code}/thumb" alt="" loading="lazy" onerror="this.remove()"><span class="ls-thumb-fb">${it.config?.product === 'eierbecher' ? '🥚' : '🏺'}</span></div>
         <div class="ls-item-main">
           <b>${esc(itemTitle(fi))}</b>
           <small>${esc(itemSub(fi))}</small>

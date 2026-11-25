@@ -22,6 +22,9 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const money = (v) => (+v || 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** Farbwert für style-Attribute: nur #rgb/#rrggbb — config.colorHex kommt aus der Kasse (Kundschaft) und könnte sonst CSS wie
+ *  url(…) einschleusen (esc() maskiert ; ( ) : nicht); alles andere → neutrales Grau */
+const cssHex = (h) => (typeof h === 'string' && h.length <= 7 && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(h) ? h : '#cccccc');
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—');
 const fmtDT = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
 const ageDays = (iso) => Math.floor((Date.now() - new Date(iso).getTime()) / 864e5);
@@ -216,9 +219,8 @@ function colorOf(id, name) {
   const plain = String(name || '').replace(/\s*\(.*\)$/, '').trim();   // „Gold (Metallic)“ → „Gold“
   return (id && cols.find((c) => c.id === id)) || (plain && cols.find((c) => c.name === plain)) || null;
 }
-const lineColor = (l) => colorOf(l.config?.color, l.colorName) || { id: l.config?.color || l.colorName || '?', name: l.colorName || '?', hex: l.config?.colorHex || '#cccccc' };
-const textColorOf = (l) => (l.config?.textStyle === 'farbe'
-  ? (colorOf(l.config.textColor, l.textColorName) || { name: l.textColorName || l.config.textColor || '?', hex: '#222222' }) : null);
+const lineColor = (l) => { const c = colorOf(l.config?.color, l.colorName) || { id: l.config?.color || l.colorName || '?', name: l.colorName || '?', hex: l.config?.colorHex }; return { ...c, hex: cssHex(c.hex) }; };
+const textColorOf = (l) => { if (l.config?.textStyle !== 'farbe') return null; const c = colorOf(l.config.textColor, l.textColorName) || { name: l.textColorName || l.config.textColor || '?', hex: '#222222' }; return { ...c, hex: cssHex(c.hex) }; };
 const prodLabel = (l) => (l.product === 'vase' ? 'Vase' : 'Eierbecher');   // Bestellhistorie: alte Eierbecher-Bestellungen heißen weiterhin so
 // Produktschalter (settings.produkte, Vertrag „Nur Vasen“): Vasen sind immer an, Eierbecher nur mit dem Schalter unter System.
 // Eierbecher sind vorerst deaktiviert — Produktcode, Bestellungen und Designs bleiben erhalten, damit das Produkt später
@@ -389,7 +391,7 @@ function renderDash() {
   };
   const toplist = (entries, swatch) => {
     const mx = entries[0]?.[1] || 1;
-    return entries.map(([n, c]) => `<div><span class="n">${swatch ? `<span class="sw sm" style="background:${esc(colorOf(null, n)?.hex || '#ccc')}"></span>` : ''}${esc(n)}</span><div class="bar" style="width:${Math.round(c / mx * 130)}px"></div><b>${c}</b></div>`).join('') || '<p class="muted">Noch keine Daten.</p>';
+    return entries.map(([n, c]) => `<div><span class="n">${swatch ? `<span class="sw sm" style="background:${cssHex(colorOf(null, n)?.hex)}"></span>` : ''}${esc(n)}</span><div class="bar" style="width:${Math.round(c / mx * 130)}px"></div><b>${c}</b></div>`).join('') || '<p class="muted">Noch keine Daten.</p>';
   };
   $('#top-colors').innerHTML = toplist(count((l) => l.colorName), true);
   $('#top-products').innerHTML = toplist(count((l) => prodLabel(l)));
@@ -506,7 +508,7 @@ function renderDrawer() {
         <div class="lc-main"><b>${esc(lineTitle(l))}</b>${l.off ? ` <span class="badge">−${l.off} %</span>` : ''}
           <div class="lc-meta">${esc(lineMeta(l))}${l.code ? ` · Code ${esc(l.code)}` : ''} · ≈ ${fmtDur(e.minutes)} / ${Math.round(e.grams)} g</div>
           ${g ? `<div class="lc-meta">✒️ ${esc(g)}</div>` : ''}
-          <div class="lc-color"><span><span class="sw" style="background:${esc(col.hex)}"></span>${esc(col.name)}${col.finish && col.finish !== 'matt' ? ` <small class="muted">(${FINISHES[col.finish] || col.finish})</small>` : ''}</span>
+          <div class="lc-color"><span><span class="sw" style="background:${esc(col.hex)}"></span>${esc(col.name)}${col.finish && col.finish !== 'matt' ? ` <small class="muted">(${esc(FINISHES[col.finish] || col.finish)})</small>` : ''}</span>
             ${tc ? `<span><span class="sw" style="background:${esc(tc.hex)}"></span>Schrift: ${esc(tc.name)}</span>` : ''}</div>
           ${sur ? `<div class="lc-sur">💶 ${esc(sur)}</div>` : ''}
           ${ak ? `<div class="lc-ak">🔥 ${esc(ak)}</div>` : ''}
@@ -1103,8 +1105,8 @@ function renderPrint() {
   };
   $('#pq-groups').innerHTML = keys.filter((k) => !pqColor || k === pqColor).map((k) => {
     const g = groups[k];
-    return `<div class="card pq-group" style="--c:${esc(g.color.hex)}"><h2><span class="sw" style="background:${esc(g.color.hex)}"></span>${esc(g.color.name)}${g.color.finish && g.color.finish !== 'matt' ? ` <small>${FINISHES[g.color.finish] || ''}</small>` : ''}
-      <span class="meta">${g.qty} Stück · ≈ ${fmtDur(g.minutes)} · ≈ ${Math.round(g.grams)} g${g.color.stock ? ` · Bestand ${g.color.stock} g${g.grams > g.color.stock ? ' ⚠️ reicht nicht' : ''}` : ''}</span></h2>
+    return `<div class="card pq-group" style="--c:${esc(g.color.hex)}"><h2><span class="sw" style="background:${esc(g.color.hex)}"></span>${esc(g.color.name)}${g.color.finish && g.color.finish !== 'matt' ? ` <small>${esc(FINISHES[g.color.finish] || '')}</small>` : ''}
+      <span class="meta">${g.qty} Stück · ≈ ${fmtDur(g.minutes)} · ≈ ${Math.round(g.grams)} g${g.color.stock ? ` · Bestand ${esc(g.color.stock)} g${g.grams > g.color.stock ? ' ⚠️ reicht nicht' : ''}` : ''}</span></h2>
       ${g.items.map((it) => itemHTML(it)).join('')}</div>`;
   }).join('') || '<div class="card"><p class="empty">🎉 Nichts zu drucken — alle bezahlten Bestellungen sind fertig.</p></div>';
 
@@ -1158,11 +1160,11 @@ function renderColors() {
     const n = need[c.id] || need[c.name] || 0;
     const over = c.stock && n > c.stock;
     return `<div class="color-row">
-      <label class="f-sw"><span class="sw" style="background:${esc(c.hex)}"></span><input type="color" value="${esc(c.hex)}" onchange="colors[${i}].hex=this.value;renderColors()" title="${esc(c.hex)}">${plusBadge(c.aufpreis)}</label>
+      <label class="f-sw"><span class="sw" style="background:${cssHex(c.hex)}"></span><input type="color" value="${esc(c.hex)}" onchange="colors[${i}].hex=this.value;renderColors()" title="${esc(c.hex)}">${plusBadge(c.aufpreis)}</label>
       <label>Name<input type="text" value="${esc(c.name)}" onchange="colors[${i}].name=this.value" style="width:130px"></label>
       <label>Finish<select onchange="colors[${i}].finish=this.value">${Object.entries(FINISHES).map(([k, l]) => `<option value="${k}" ${(c.finish || 'matt') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="grow">Notiz<input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA Silk"></label>
-      <label>Bestand (g)<input type="number" min="0" step="10" value="${c.stock ?? ''}" placeholder="—" onchange="colors[${i}].stock=this.value===''?null:+this.value;renderColors()" style="width:88px"></label>
+      <label>Bestand (g)<input type="number" min="0" step="10" value="${esc(c.stock ?? '')}" placeholder="—" onchange="colors[${i}].stock=this.value===''?null:+this.value;renderColors()" style="width:88px"></label>
       <label>Aufpreis (€)<input type="number" min="0" step="0.5" value="${euroField(c.aufpreis)}" placeholder="0" title="Aufpreis je Stück für diese Körperfarbe (leer = 0)" onchange="colors[${i}].aufpreis=euro(this.value);renderColors()" style="width:88px"></label>
       <label>Offener Bedarf<div class="need-wrap"><div class="need ${over ? 'over' : ''}" style="width:80px"><i style="--w:${Math.round(n / maxNeed * 100)}%"></i></div><small>${n ? `${Math.round(n)} g${over ? ' ⚠️' : ''}` : '—'}</small></div></label>
       <label class="inline"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"> Im Shop</label>
@@ -1212,6 +1214,29 @@ async function deleteImage(name) {
   await fetch(`/api/admin/gallery/${name}`, { method: 'DELETE', headers: { 'x-admin-key': KEY() } });
   toast('Foto gelöscht', 'ok');
   loadImages();
+}
+
+// Vorschaubild eines Design-Codes: anzeigen und bei Bedarf entfernen (der Server behält sonst immer das erste Bild)
+let thumbCode = null;
+function thumbZeigen() {
+  const code = String($('#thumb-code').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^OVJU/, '').slice(0, 40);
+  const box = $('#thumb-vorschau');
+  thumbCode = null; $('#thumb-reset').disabled = true; box.textContent = ''; box.hidden = true;
+  if (code.length < 4) return toast('Bitte einen Design-Code eingeben', 'err');
+  const it = document.createElement('div'); it.className = 'it';
+  const img = document.createElement('img'); img.alt = `Vorschaubild ${code}`;
+  const p = document.createElement('p'); p.className = 'muted'; p.textContent = '…';
+  img.onload = () => { thumbCode = code; $('#thumb-reset').disabled = false; p.textContent = `Code ${code}`; };
+  img.onerror = () => { img.remove(); p.textContent = `Zu Code ${code} gibt es kein Vorschaubild.`; };
+  img.src = `/api/design/${code}/thumb?v=${Date.now()}`;   // am Browser-Cache vorbei: zeigt, was wirklich auf dem Server liegt
+  it.append(img, p); box.append(it); box.hidden = false;
+}
+async function thumbEntfernen() {
+  if (!thumbCode || !confirm(`Vorschaubild für Code ${thumbCode} entfernen?\nDas nächste Speichern des Designs im Shop erzeugt ein neues.`)) return;
+  const r = await api(`/api/design/${thumbCode}/thumb`, { method: 'DELETE' });
+  if (!r.ok) return toast('❌ ' + (r.error || 'Entfernen fehlgeschlagen'), 'err');
+  toast(r.entfernt ? `Vorschaubild für ${thumbCode} entfernt` : 'Es gab kein Vorschaubild', 'ok');
+  thumbZeigen();
 }
 
 // ---------------------------------------------------------------------------

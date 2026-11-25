@@ -12,6 +12,8 @@ import { createMailer, baseUrlFor, mailSettings, addressList, keepStoredPass } f
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
   widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung } from './lib/mail-templates.js';
+import { isEmail, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
+import { chmodSync } from 'node:fs';   // Dateirechte der Bestandsordner (unten bei process.umask)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, 'public');
@@ -22,6 +24,22 @@ const PORT = process.env.PORT || 4488;
 // HOST=127.0.0.1 hinter einem Reverse-Proxy (Produktivserver: nginx mit HTTPS) — der Shop-Port ist dann nicht von außen erreichbar
 const HOST = process.env.HOST || '0.0.0.0';
 const SERVER_STARTED = new Date().toISOString();
+// Dateirechte: alles, was der Shop anlegt (data/: Einstellungen mit Passwörtern, Konten, Sitzungen; orders/: Kundendaten), nur für
+// den Dienst-Benutzer — Dateien 0600, Ordner 0700.
+process.umask(0o077);
+// Bestand (Installationen von vor der umask): nur die Ordner data/, data/thumbs und orders/ selbst auf 0700 — die Dateien darin
+// bleiben unverändert (kein rekursives chmod), sind für andere Benutzer aber nicht mehr erreichbar. Fehlt ein Ordner, legt der
+// Shop ihn später ohnehin mit 0700 an; lässt er sich nicht ändern (anderer Eigentümer), steht ein Hinweis im Protokoll.
+for (const dir of [DATA, path.join(DATA, 'thumbs'), ORDERS]) {
+  try {
+    const st = statSync(dir);
+    if (!st.isDirectory() || !(st.mode & 0o077)) continue;
+    chmodSync(dir, st.mode & 0o700);
+    console.log(`Dateirechte: ${dir} nur noch für den Dienst-Benutzer (vorher ${(st.mode & 0o777).toString(8)}, jetzt ${(st.mode & 0o700).toString(8)})`);
+  } catch (err) {
+    if (err?.code !== 'ENOENT') console.error(`Dateirechte: ${dir} ließ sich nicht einschränken (${err?.code || err?.message}) — bitte von Hand: chmod 700 ${dir}`);
+  }
+}
 const MAX_JSON = 4 * 1024 * 1024;      // Checkout-JSON (ohne Modelle)
 const MAX_STL = 90 * 1024 * 1024;      // pro Modell-Datei (binär)
 
@@ -206,6 +224,14 @@ function farbSperre(items) {
   }
   return null;
 }
+/**
+ * Wertprüfung der Positionen (Quote, PayPal, Checkout; lib/eingaben.js pruefePositionen): Form, Muster, Schrift, Stil, Rand und Verlauf
+ * müssen bekannt sein, Zahlen in den Grenzen der Regler, Texte begrenzt (Gravur 40, Farbname 80), colorHex nur #rrggbb, Farbe
+ * (und bei Farbschrift die Schriftfarbe) muss es in den Einstellungen geben → Meldung (→ 400) oder null
+ */
+const positionenFehler = (items) => pruefePositionen(items, {
+  farbe: colorOfItem, schriftfarbe: (id) => (settings.colors || []).find((x) => x?.id === id) || null,
+});
 
 const DEFAULT_SETTINGS = {
   adminKey: 'formsam-admin',
@@ -1016,8 +1042,7 @@ const mailer = createMailer({
   onFinal: (e) => mailErgebnis(e), rebuildable: (e) => mailNeuBaubar(e), rebuild: (e) => mailNeuBauen(e),
 });
 const MAIL_KEYS = ['enabled', 'host', 'port', 'secure', 'user', 'pass', 'from', 'fromName', 'replyTo', 'adminTo', 'adminCopy', 'autoStatusMails', 'publicUrl', 'allowSelfSigned'];
-const EMAIL_RE = /^[^\s@<>,;"()]+@[^\s@<>,;"()]+\.[^\s@<>,;"()]+$/;
-const isEmail = (s) => EMAIL_RE.test(String(s || '').trim());
+// isEmail kommt aus lib/eingaben.js (wie der Mailversand, aber linear und höchstens 254 Zeichen)
 const customerAddress = (order) => ({ name: String(order.customer?.name || '').trim(), email: String(order.customer?.email || '').trim().toLowerCase() });
 const httpError = (code, message) => Object.assign(new Error(message), { httpCode: code });
 /** Einstellungen fürs Admin-UI/Export: Geheimnisse maskiert (leer + …Set) — SMTP-Passwort, PayPal-Secret und Admin-Passwort verlassen den Server nie. */
@@ -1308,7 +1333,7 @@ function colorOfItem(item) {
   if (id) { const c = cols.find((x) => x.id === id); if (c) return c; }
   const raw = String(item?.colorName || '').trim();
   if (!raw) return null;
-  const plain = raw.replace(/\s*(?:·\s*[^·()]*|\([^()]*\))\s*$/, '').trim();
+  const plain = ohneFinish(raw);   // linear (der frühere Ausdruck blockierte bei langen Namen den ganzen Server)
   return cols.find((x) => x.name === raw) || (plain && cols.find((x) => x.name === plain)) || null;
 }
 /**
@@ -1438,18 +1463,54 @@ function send(res, code, body, type = 'application/json; charset=utf-8') {
   res.writeHead(code, { 'Content-Type': type });
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
+/**
+ * Body lesen (höchstens limit Bytes). Zu groß → sofort Antwort 413 (JSON) und httpError 413 — eine Route, die Lesefehler selbst
+ * abfängt, kann die Antwort danach nicht mehr ändern (send() schreibt nichts mehr). Der Rest des Bodys wird noch angenommen und
+ * verworfen (bis 64 MB bzw. 10 s) — sonst ginge die Verbindung mit ungelesenen Daten zu und der Absender sähe nur einen
+ * Verbindungsabbruch statt der Meldung. Abgebrochene Anfrage → httpError 400.
+ */
+const ANTWORTEN = new WeakMap();   // Anfrage → Antwort (readBody beantwortet Überlänge selbst, auch in Routen mit eigenem try/catch)
 function readBody(req, limit = MAX_JSON) {
   return new Promise((resolve, reject) => {
-    let size = 0;
+    let size = 0, zuGross = false;
     const chunks = [];
+    const ablehnen = () => {
+      zuGross = true; chunks.length = 0;
+      const res = ANTWORTEN.get(req);
+      if (res && !res.headersSent) send(res, 413, { ok: false, error: 'Anfrage zu groß' });
+      reject(httpError(413, 'Anfrage zu groß'));
+      const t = setTimeout(() => req.destroy(), 10000);
+      req.once('end', () => clearTimeout(t)); req.once('close', () => clearTimeout(t));
+    };
+    if (Number(req.headers['content-length']) > limit) ablehnen();
     req.on('data', (c) => {
       size += c.length;
-      if (size > limit) { reject(new Error('Anfrage zu groß')); req.destroy(); return; }
+      if (zuGross) { if (size > limit + 64 * 1024 * 1024) req.destroy(); return; }
+      if (size > limit) { ablehnen(); return; }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    req.on('end', () => { if (!zuGross) resolve(Buffer.concat(chunks)); });
+    req.on('error', () => reject(httpError(400, 'Anfrage abgebrochen')));
   });
+}
+/** JSON-Body als Objekt lesen — kaputtes JSON, leerer Body, null, Liste oder Zahl → httpError 400 „Ungültige Anfrage“ */
+async function readJson(req, limit = MAX_JSON) {
+  const raw = (await readBody(req, limit)).toString('utf8');
+  let v = null;
+  try { v = JSON.parse(raw); } catch { /* unten 400 */ }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw httpError(400, 'Ungültige Anfrage');
+  return v;
+}
+/**
+ * Schutz-Kopfzeilen für jede Antwort (vor writeHead gesetzt; Routen mit eigenen Werten überschreiben sie, z. B. Belege mit
+ * Referrer-Policy no-referrer). Bewusst ohne script-src: Shop und Admin nutzen Inline-Skripte, Inline-Handler und Worker —
+ * eine Skript-Richtlinie bräuchte erst deren Umbau. HSTS setzt nginx (nur über HTTPS sinnvoll, deploy/nginx-formsam.conf).
+ */
+function schutzKopfzeilen(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
 }
 /** Datumsstempel YYMMDD (UTC) für Bestell- und Widerrufsnummern */
 const stampYYMMDD = (d = new Date()) => d.toISOString().slice(2, 10).replace(/-/g, '');
@@ -2699,6 +2760,9 @@ function pruefeKasse(data, { garantie = null } = {}) {
   if (!Array.isArray(items) || !items.length) return { status: 400, error: 'Warenkorb ist leer', customer };
   if (items.length > MAX_POSITIONEN) return { status: 400, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.`, customer };
   if (garantie) return { customer, items, totals: garantie.totals };
+  // Werte wie im Konfigurator, bekannte Farben (lib/eingaben.js) — bei PayPal schon vor der Zahlung geprüft (garantie = dieselben Positionen)
+  const ungueltig = positionenFehler(items);
+  if (ungueltig) return { status: 400, error: ungueltig, customer };
   // Produktschalter (derzeit Eierbecher) und aus dem Shop genommene Farben vor der Preisberechnung abweisen
   const sperre = produktSperre(items) || farbSperre(items);
   if (sperre) return { status: 400, error: sperre, customer };
@@ -2983,6 +3047,38 @@ function sendBelegFehler(res, code) {
   res.end(html);
 }
 
+/**
+ * Unbekannte Adresse: API → JSON, Seitenaufrufe (Accept text/html bzw. Pfad ohne Endung) → kleine Seite im formsam-Look mit Weg
+ * zurück in den Shop, alles andere (Bilder, Skripte …) → kurzer Text. Rechtsseiten in anderer Schreibweise (/Impressum,
+ * /impressum.html) → 301 auf die richtige Adresse. Status bleibt 404.
+ */
+function sendNichtGefunden(req, res, p, url) {
+  if (p.startsWith('/api/')) return send(res, 404, { ok: false, error: 'Unbekannte Schnittstelle' });
+  const slug = p.length < 40 ? p.slice(1).toLowerCase().replace(/\/+$/, '').replace(/\.html?$/, '') : '';
+  if (LEGAL_ROUTES.includes(slug) && (req.method === 'GET' || req.method === 'HEAD')) {
+    res.writeHead(301, { Location: `/${slug}${url.search}`, 'Cache-Control': 'no-cache' });
+    return res.end();
+  }
+  const seite = /text\/html/.test(String(req.headers.accept || '').slice(0, 500)) || !path.extname(p);
+  if (!seite) return send(res, 404, 'Nicht gefunden', 'text/plain; charset=utf-8');
+  const html = `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Seite nicht gefunden · ${BRAND}</title>
+  <style>@font-face{font-family:'Fraunces';src:url(/fonts/fraunces-latin.woff2) format('woff2');font-weight:400 700;font-display:swap}
+  @font-face{font-family:'Inter';src:url(/fonts/inter-latin.woff2) format('woff2');font-weight:100 900;font-display:swap}
+  body{margin:0;background:#f4efe7;color:#211d18;font:16px/1.6 Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+  main{max-width:560px;margin:48px auto 24px;padding:32px 28px;background:#fbf8f2;border-radius:18px;box-shadow:0 14px 36px rgba(33,29,24,.08)}
+  .logo{display:block;height:34px;width:auto;margin-bottom:24px}.wortmarke{font-family:Fraunces,Georgia,serif;font-size:30px}
+  h1{font-family:Fraunces,Georgia,serif;font-weight:500;font-size:26px;line-height:1.2;margin:0 0 12px}a{color:#9e4f2c}
+  .knopf{display:inline-block;margin-top:8px;padding:10px 22px;border-radius:999px;background:#211d18;color:#f4efe7;text-decoration:none}
+  footer{max-width:560px;margin:0 auto 40px;padding:0 28px;font-size:14px;color:#6b6157}footer a{color:inherit}
+  @media (max-width:600px){main{margin:16px;padding:24px 20px}footer{padding:0 20px}}</style></head><body><main>
+  <a href="/" aria-label="Zur Startseite">${logoHTML(34)}</a><h1>Diese Seite gibt es nicht</h1>
+  <p>Unter dieser Adresse ist nichts zu finden – vielleicht ein Tippfehler oder ein veralteter Link.</p>
+  <p><a class="knopf" href="/">Zum Shop</a></p></main>
+  <footer><a href="/impressum">Impressum</a> · <a href="/datenschutz">Datenschutz</a> · <a href="/agb">AGB</a> · <a href="/widerruf">Widerruf</a></footer></body></html>`;
+  res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+  res.end(req.method === 'HEAD' ? undefined : html);
+}
+
 // ---------------------------------------------------------------------------
 // Bestellungen
 // ---------------------------------------------------------------------------
@@ -3149,15 +3245,12 @@ async function handleComplete(req, res, id, url) {
   await runHook('orderCompleted', order);
 }
 
-// ---------------------------------------------------------------------------
-// Admin-Seite (Login clientseitig, API mit x-admin-key)
-// ---------------------------------------------------------------------------
-function adminHTML() {
-  return readFileSync(path.join(PUBLIC, 'admin.html'), 'utf8');
-}
+// Admin-Seite: /admin liefert public/admin.html wie eine statische Datei (Login clientseitig, API mit x-admin-key)
 
 // ---------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
+  schutzKopfzeilen(res);
+  ANTWORTEN.set(req, res);
   // URL-Parsen/Dekodieren geschützt: kaputte Prozentkodierung oder ein ungültiger Host-Header dürfen den
   // Prozess nicht beenden (400 statt unbehandelter Ausnahme). Der Host wird nirgends ausgewertet → feste Basis.
   let url, p;
@@ -3167,6 +3260,8 @@ const server = http.createServer(async (req, res) => {
   } catch {
     return send(res, 400, { ok: false, error: 'Ungültige URL' });
   }
+  // API-Antworten (Konto, Bestellungen, Admin) nie zwischenspeichern — Routen mit eigenem Cache-Control (Vorschaubilder) überschreiben es
+  if (p.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
 
   try {
     // --- Wartungsmodus: ohne Freigabe nur die Wartungsseite
@@ -3209,13 +3304,16 @@ const server = http.createServer(async (req, res) => {
     }
     // --- Kundenkonten
     if (req.method === 'POST' && p === '/api/auth/register') {
-      const { name, email, password } = JSON.parse((await readBody(req)).toString('utf8'));
-      const mail = String(email || '').trim().toLowerCase();
-      if (!name?.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return send(res, 400, { ok: false, error: 'Bitte Name und gültige E-Mail angeben' });
+      const { name: rohName, email, password } = await readJson(req, 16 * 1024);
+      // Name 2–80 Zeichen ohne < >, E-Mail wie beim Versand (isEmail, ≤ 254) — sonst entstünde ein Konto, an das nie eine Mail geht
+      const { name, error: nameFehler } = kontoName(rohName);
+      if (nameFehler) return send(res, 400, { ok: false, error: nameFehler });
+      const mail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+      if (!isEmail(mail)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an.' });
       if (String(password || '').length < 6) return send(res, 400, { ok: false, error: 'Passwort: mindestens 6 Zeichen' });
       if (users.some((u) => u.email === mail)) return send(res, 400, { ok: false, error: 'Für diese E-Mail existiert schon ein Konto – bitte anmelden' });
       const salt = crypto.randomBytes(16).toString('hex');
-      const user = { id: crypto.randomUUID(), name: name.trim(), email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
+      const user = { id: crypto.randomUUID(), name, email: mail, salt, hash: hashPw(password, salt), address: null, createdAt: new Date().toISOString(), emailVerifiedAt: null };
       const verifyToken = newVerifyToken(user);   // Bestätigungslink kommt mit der Willkommensmail
       users.push(user);
       await saveUsers();
@@ -3223,7 +3321,7 @@ const server = http.createServer(async (req, res) => {
       return runHook('userRegistered', { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt, verifyLink: verifyLinkFor(verifyToken) });
     }
     if (req.method === 'POST' && p === '/api/auth/login') {
-      const { email, password } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { email, password } = await readJson(req, 16 * 1024);
       const u = users.find((x) => x.email === String(email || '').trim().toLowerCase());
       const ok = u && crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(hashPw(password || '', u.salt), 'hex'));
       if (!ok) return send(res, 401, { ok: false, error: 'E-Mail oder Passwort falsch' });
@@ -3302,7 +3400,7 @@ const server = http.createServer(async (req, res) => {
       } catch (err) { console.error('Bestätigungsmail fehlgeschlagen:', err?.message || err); }
       return;
     }
-    if (p === '/api/auth/me') {
+    if ((req.method === 'GET' || req.method === 'HEAD') && p === '/api/auth/me') {
       const u = userFromReq(req);
       if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       // Zuordnung: Bestellungen dieses Kontos (userId) immer; Bestellungen mit derselben E-Mail-Adresse (Gast, Altbestand)
@@ -3339,8 +3437,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/auth/address') {
       const u = userFromReq(req);
       if (!u) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { street, zip, city } = JSON.parse((await readBody(req)).toString('utf8'));
-      u.address = { street: street || '', zip: zip || '', city: city || '' };
+      const { address, error } = kontoAdresse(await readJson(req, 16 * 1024));   // nur Text: Straße ≤ 120, PLZ ≤ 10, Ort ≤ 80
+      if (error) return send(res, 400, { ok: false, error });
+      u.address = address;
       await saveUsers();
       return send(res, 200, { ok: true });
     }
@@ -3418,11 +3517,17 @@ const server = http.createServer(async (req, res) => {
 
     // --- Design-Codes: speichern (POST) & laden (GET /api/design/CODE)
     if (req.method === 'POST' && p === '/api/design') {
-      let cfg;
-      try { cfg = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')).config; } catch { cfg = null; }
+      const cfg = (await readJson(req, 64 * 1024)).config;
       if (!cfg || !['vase', 'eierbecher'].includes(cfg.product)) return send(res, 400, { ok: false, error: 'Ungültiges Design' });
-      const { code, canon, isNew } = designCode(cfg);
+      let dc;
+      try { dc = designCode(cfg); } catch { return send(res, 400, { ok: false, error: 'Ungültiges Design' }); }   // z. B. customPoints [null]
+      const { code, canon, isNew } = dc;
       if (isNew) {
+        // Neue Codes nur mit Werten, die der Konfigurator erzeugen kann (lib/eingaben.js) und für bestellbare Produkte —
+        // bestehende Codes bleiben unverändert gültig (gleiches Design = gleicher Code)
+        const k = pruefeKonfig(cfg, { farbeBekannt: (id) => (settings.colors || []).some((c) => c?.id === id) });
+        if (k) return send(res, 400, { ok: false, error: `Ungültiges Design (${KONFIG_LABEL[k] || k})` });
+        if (!produktAktiv(cfg.product)) return send(res, 400, { ok: false, error: EIERBECHER_GESPERRT });
         designs[code] = { config: canon, createdAt: Date.now(), loads: 0 };
         await saveDesigns();
       }
@@ -3447,9 +3552,15 @@ const server = http.createServer(async (req, res) => {
         if (!designs[code]) return send(res, 404, { ok: false, error: 'Design unbekannt' });
         const raw = (await readBody(req, 120 * 1024)).toString('utf8');
         const m = raw.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/);
-        if (!m) return send(res, 400, { ok: false, error: 'Nur JPEG (data-URL)' });
+        const jpeg = m ? Buffer.from(m[1], 'base64') : null;
+        if (!jpeg || jpeg.length < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8 || jpeg[2] !== 0xff) return send(res, 400, { ok: false, error: 'Nur JPEG (data-URL)' });
+        // Nur das erste Bild gilt: es entsteht aus derselben Konfiguration wie jedes spätere — so kann niemand das Vorschaubild
+        // eines fremden Codes (geteilte Listen) austauschen. 'wx' legt die Datei nur an, wenn es sie noch nicht gibt.
         await mkdir(THUMBS, { recursive: true });
-        await writeFile(file, Buffer.from(m[1], 'base64'));
+        try { await writeFile(file, jpeg, { flag: 'wx' }); } catch (err) {
+          if (err?.code === 'EEXIST') return send(res, 200, { ok: true, vorhanden: true });
+          throw err;
+        }
         return send(res, 200, { ok: true });
       }
       if (req.method === 'GET') {
@@ -3457,17 +3568,26 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=3600' });
         return res.end(await readFile(file));
       }
+      // Admin (Produktfotos & Galerie → Vorschaubild eines Design-Codes): verunglücktes oder vorab fremd belegtes Bild entfernen —
+      // das nächste Speichern des Designs im Shop (Code anzeigen, Liste, Warenkorb) lädt ein neues hoch
+      if (req.method === 'DELETE') {
+        if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+        if (!designs[code]) return send(res, 404, { ok: false, error: 'Diesen Design-Code gibt es nicht' });
+        const entfernt = existsSync(file);
+        await rm(file, { force: true });
+        return send(res, 200, { ok: true, entfernt });
+      }
     }
 
     // --- Design-Listen
     if (req.method === 'POST' && p === '/api/list') {
-      let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
-      const name = String(b.name || '').trim().slice(0, 60) || 'Meine Liste';
+      const b = await readJson(req, 64 * 1024);
+      const name = (typeof b.name === 'string' ? oneLine(b.name, 60) : '') || 'Meine Liste';
       const code = newListCode();
       const token = crypto.randomBytes(16).toString('hex');
       const l = {
         code, token, name, occasion: LIST_OCCASIONS.includes(b.occasion) ? b.occasion : 'sonstiges',
-        note: String(b.note || '').slice(0, 300), items: cleanListItems(b.items),
+        note: typeof b.note === 'string' ? clipText(b.note, 300) : '', items: cleanListItems(b.items),
         createdAt: Date.now(), updatedAt: Date.now(),
       };
       lists[code] = l;
@@ -3480,13 +3600,13 @@ const server = http.createServer(async (req, res) => {
       const l = lists[code];
       if (!l) return send(res, 404, { ok: false, error: 'Diese Liste gibt es nicht – bitte den Code prüfen.' });
       if (req.method === 'GET') return send(res, 200, { ok: true, list: publicList(l) });
-      let b; try { b = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8')); } catch { b = {}; }
+      const b = await readJson(req, 64 * 1024);
       if (!b.token || b.token !== l.token) return send(res, 403, { ok: false, error: 'Nur der Besitzer kann diese Liste ändern.' });
       if (req.method === 'DELETE') { delete lists[code]; await saveLists(); return send(res, 200, { ok: true }); }
       if (req.method === 'PUT') {
-        if (b.name !== undefined) l.name = String(b.name).trim().slice(0, 60) || l.name;
+        if (b.name !== undefined) l.name = oneLine(typeof b.name === 'string' ? b.name : '', 60) || l.name;
         if (b.occasion !== undefined && LIST_OCCASIONS.includes(b.occasion)) l.occasion = b.occasion;
-        if (b.note !== undefined) l.note = String(b.note).slice(0, 300);
+        if (b.note !== undefined) l.note = typeof b.note === 'string' ? clipText(b.note, 300) : '';
         if (b.items !== undefined) l.items = cleanListItems(b.items);
         l.updatedAt = Date.now();
         await saveLists();
@@ -3498,9 +3618,9 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish, aufpreis }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis) })));
     }
     if (req.method === 'POST' && p === '/api/quote') {
-      const { items, couponCode } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { items, couponCode } = await readJson(req);
       if (Array.isArray(items) && items.length > MAX_POSITIONEN) return send(res, 400, { ok: false, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.` });
-      const sperre = produktSperre(items) || farbSperre(items);
+      const sperre = (Array.isArray(items) && positionenFehler(items)) || produktSperre(items) || farbSperre(items);
       if (sperre) return send(res, 400, { ok: false, error: sperre });
       const t = computeTotals(Array.isArray(items) ? items : [], couponCode);
       return send(res, 200, {
@@ -3590,7 +3710,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/admin/settings') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const patch = JSON.parse((await readBody(req)).toString('utf8'));
+      const patch = await readJson(req);
       // Admin-Passwort: nur ein nicht-leerer String (≥ 8 Zeichen) — leer würde den Admin für alle öffnen, Nicht-Strings sperren aus
       if (patch.adminKey !== undefined) {
         if (typeof patch.adminKey !== 'string' || patch.adminKey.trim().length < 8) return send(res, 400, { ok: false, error: 'Admin-Passwort: mindestens 8 Zeichen' });
@@ -3718,7 +3838,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/admin/order-update') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const body = JSON.parse((await readBody(req)).toString('utf8'));
+      const body = await readJson(req);
       const { orderId, status, paymentStatus, trackingNo, carrier, adminNote, note } = body;
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (status !== undefined && !STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
@@ -3774,7 +3894,7 @@ const server = http.createServer(async (req, res) => {
     // Druckstatus je Position — mit Automatik für den Bestellstatus (im-druck / gedruckt)
     if (req.method === 'POST' && p === '/api/admin/line-print') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, idx, status, note } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { orderId, idx, status, note } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!PRINT_STATES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Druckstatus' });
       let order, prevStatus, wasPrinted;
@@ -4041,7 +4161,7 @@ const server = http.createServer(async (req, res) => {
     // Kompatibel: alter Kurz-Endpoint (nur Status)
     if (req.method === 'POST' && p === '/api/admin/order-status') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
-      const { orderId, status } = JSON.parse((await readBody(req)).toString('utf8'));
+      const { orderId, status } = await readJson(req);
       if (!orderIdOk(orderId)) return send(res, 400, { ok: false, error: 'Ungültige Bestellnummer' });
       if (!STATUSES.includes(status)) return send(res, 400, { ok: false, error: 'Ungültiger Status' });
       let order, prevStatus;
@@ -4204,14 +4324,24 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // --- Seiten & Dateien
+    // --- Unbekannte API-Adresse bzw. Methode: JSON statt Datei-Suche (405 nur für bekannte Nur-Lese-Adressen)
+    if (p.startsWith('/api/')) {
+      if (p === '/api/auth/me') { res.setHeader('Allow', 'GET, HEAD'); return send(res, 405, { ok: false, error: 'Methode nicht erlaubt' }); }
+      return sendNichtGefunden(req, res, p, url);
+    }
+
+    // --- Seiten & Dateien: nur GET/HEAD (POST /__wartung beantwortet wartungTor vorher)
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.setHeader('Allow', 'GET, HEAD');
+      return send(res, 405, 'Methode nicht erlaubt', 'text/plain; charset=utf-8');
+    }
     if (p === '/favicon.ico') {
       const ico = path.join(PUBLIC, 'favicon.ico');
       if (!existsSync(ico)) { res.writeHead(204); return res.end(); }
       res.writeHead(200, { 'Content-Type': MIME['.ico'], 'Cache-Control': 'public, max-age=86400' });
       return createReadStream(ico).pipe(res);
     }
-    if (p === '/admin' || p === '/admin/') return send(res, 200, adminHTML(), 'text/html; charset=utf-8');
+    if (p === '/admin' || p === '/admin/') p = '/admin.html';   // wie /admin.html ausliefern (gzip, ETag)
 
     if (p.startsWith('/orders/')) {
       // Nur Rechnung/Gutschrift (Links in Mails/Konto) und Modelldateien — order.json mit Kundendaten, interner Notiz und
@@ -4238,28 +4368,33 @@ const server = http.createServer(async (req, res) => {
       return createReadStream(file).pipe(res);
     }
 
-    // Statische Dateien — mit Browser-Cache & gzip für Text-Assets
+    // Statische Dateien — mit Browser-Cache & gzip für Text-Assets. Pfade mit „..“ (auch %2e%2e/%2f) gar nicht erst auflösen;
+    // die Datei muss IN public/ liegen (mit Trenner geprüft — ein Nachbarordner wie public-alt/ ist kein Unterordner)
+    if (p.includes('\0') || p.split(/[/\\]/).includes('..')) return send(res, 400, { ok: false, error: 'Ungültige URL' });
     let file = path.normalize(path.join(PUBLIC, p === '/' ? 'index.html' : p));
-    if (!file.startsWith(PUBLIC)) return send(res, 403, { ok: false, error: 'Verboten' });
+    if (file !== PUBLIC && !file.startsWith(PUBLIC + path.sep)) return send(res, 403, { ok: false, error: 'Verboten' });
     if (existsSync(file) && statSync(file).isDirectory()) file = path.join(file, 'index.html');
-    if (!existsSync(file)) return send(res, 404, 'Nicht gefunden', 'text/plain; charset=utf-8');
+    if (!existsSync(file) || !statSync(file).isFile()) return sendNichtGefunden(req, res, p, url);
     const ext = path.extname(file);
     const stat = statSync(file);
     const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
     // vendor/fonts/env ändern sich praktisch nie → lange cachen;
-    // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe)
+    // eigene HTML/JS/CSS mit Revalidierung (ETag aus mtime+Größe, gzip-Fassung mit eigenem ETag)
     const isAsset = p.startsWith('/vendor/') || p.startsWith('/fonts/') || p.startsWith('/env/') || p.startsWith('/img/gallery/');
     headers['Cache-Control'] = isAsset ? 'public, max-age=2592000, immutable' : 'no-cache';
-    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    const compressible = ['.html', '.css', '.js', '.json', '.svg'].includes(ext);
+    const gz = compressible && /\bgzip\b/.test(String(req.headers['accept-encoding'] || '').slice(0, 500)) && stat.size > 1024;
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}${gz ? '-gz' : ''}"`;
     headers.ETag = etag;
-    if (req.headers['if-none-match'] === etag) {
+    if (compressible) headers.Vary = 'Accept-Encoding';
+    // If-None-Match tolerant: Liste, schwache ETags (W/ — z. B. von einem Proxy, der selbst komprimiert) und *
+    const inm = String(req.headers['if-none-match'] || '').slice(0, 2000);
+    if (inm && inm.split(',').some((t) => { const v = t.trim(); return v === '*' || v.replace(/^W\//, '') === etag; })) {
       res.writeHead(304, headers);
       return res.end();
     }
-    const compressible = ['.html', '.css', '.js', '.json', '.svg'].includes(ext);
-    if (compressible && /\bgzip\b/.test(req.headers['accept-encoding'] || '') && stat.size > 1024) {
+    if (gz) {
       headers['Content-Encoding'] = 'gzip';
-      headers.Vary = 'Accept-Encoding';
       res.writeHead(200, headers);
       return createReadStream(file).pipe(createGzip({ level: zc.Z_BEST_SPEED })).pipe(res);
     }
@@ -4267,6 +4402,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, headers);
     createReadStream(file).pipe(res);
   } catch (err) {
+    // Eingabefehler (httpError 4xx: kaputtes JSON → 400, zu großer Body → 413) sind kein Serverfehler
+    if (err?.httpCode >= 400 && err.httpCode < 500) return send(res, err.httpCode, { ok: false, error: err.message });
     console.error(err);
     send(res, 500, { ok: false, error: 'Serverfehler' });
   }
