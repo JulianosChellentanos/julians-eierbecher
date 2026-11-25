@@ -3,8 +3,9 @@
 //   node tools/admin-passwort.mjs <neues-passwort>   setzt das Passwort (8–200 Zeichen)
 //   node tools/admin-passwort.mjs --zufall           erzeugt ein zufälliges Passwort und zeigt es einmal an
 // Gespeichert wird nur der scrypt-Hash (settings.adminKeyHash, Format wie server.js: scrypt$salt$hash); ein altes Klartext-adminKey
-// wird entfernt. Datenordner wie beim Server: DATA_DIR=… (Standard: ./data). Fehlt settings.json, entsteht eine mit nur dem Passwort
-// (der Server ergänzt beim Start die Standardwerte).
+// wird durch einen zufälligen Platzhalter ersetzt (adminKeyPlatzhalter = SHA-256 davon, wie server.js — eine ältere Fassung sperrt
+// damit den Admin, statt das frühere Standard-Passwort zu nehmen). Datenordner wie beim Server: DATA_DIR=… (Standard: ./data).
+// Fehlt settings.json, entsteht eine mit nur dem Passwort (der Server ergänzt beim Start die Standardwerte).
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -33,7 +34,8 @@ if (existsSync(file)) {
 
 const salt = crypto.randomBytes(16).toString('hex');
 settings.adminKeyHash = `scrypt$${salt}$${crypto.scryptSync(pw, salt, 32).toString('hex')}`;
-delete settings.adminKey;
+settings.adminKey = crypto.randomBytes(24).toString('base64url');
+settings.adminKeyPlatzhalter = crypto.createHash('sha256').update(settings.adminKey).digest('hex');
 const tmp = `${file}.tmp-${process.pid}`;
 writeFileSync(tmp, JSON.stringify(settings, null, 2));
 renameSync(tmp, file);

@@ -360,9 +360,11 @@ function loadSettings() {
   // Aktionen: Array erzwingen, kaputte Einträge verwerfen (Meldung im Log)
   settings.aktionen = sanitizeAktionen(settings.aktionen, { lenient: true });
   // Admin-Passwort nur als scrypt-Hash (adminKeyHash). Ein Klartext-adminKey (ältere settings.json, von Hand oder per Skript
-  // gesetzt) wird umgestellt und entfernt — dasselbe Passwort gilt weiter. Fehlt beides oder ist der Hash kaputt, gibt es ein
-  // zufälliges Passwort, das genau einmal im Protokoll steht (kein bekanntes Standard-Passwort mehr)
-  if (typeof settings.adminKey === 'string' && settings.adminKey.trim()) {
+  // gesetzt) wird umgestellt — dasselbe Passwort gilt weiter. Fehlt beides oder ist der Hash kaputt, gibt es ein zufälliges Passwort,
+  // das genau einmal im Protokoll steht (kein bekanntes Standard-Passwort mehr). An der Stelle von adminKey steht danach ein
+  // Platzhalter (adminKeyPlatzhalter, siehe adminPlatzhalterSetzen) — den erkennt diese Fassung und lässt ihn stehen
+  const platzhalter = adminKeyIstPlatzhalter(settings);
+  if (!platzhalter && typeof settings.adminKey === 'string' && settings.adminKey.trim()) {
     settings.adminKeyHash = pwHashSync(settings.adminKey);
     console.log('🔐 Admin-Passwort: Klartext in settings.json durch einen scrypt-Hash ersetzt (das Passwort bleibt gleich)');
   } else if (!pwHashGueltig(settings.adminKeyHash)) {
@@ -370,7 +372,7 @@ function loadSettings() {
     settings.adminKeyHash = pwHashSync(neu);
     console.warn(`🔐 ${gespeichert ? 'settings.json ohne gültiges Admin-Passwort' : 'Neuinstallation'} – neues Admin-Passwort (steht nur hier, bitte notieren und im Admin unter System ändern): ${neu}`);
   }
-  delete settings.adminKey;
+  if (!platzhalter) adminPlatzhalterSetzen(settings);
   if (typeof settings.pricing.gravur !== 'number') settings.pricing.gravur = 3.00;
   if (!settings.pricing.volumen) settings.pricing.volumen = { prozent: 60, euro: 0 };
   // Migration Aufpreise: Muster (Betreiber-Wunsch: Lamellen +3 €), Farbschrift +2 €
@@ -499,6 +501,19 @@ function scryptAsync(pw, salt, len, pruefung = false) {
     if (scryptLaeuft < SCRYPT_PARALLEL) los(); else scryptWarten.push(los);
   });
 }
+/**
+ * Platzhalter statt adminKey: Eine ältere Fassung (Rückkehr per git nach einem Update) kennt nur settings.adminKey und nähme ohne ihn
+ * das früher bekannte Standard-Passwort „formsam-admin“. Deshalb steht dort ein zufälliger, nirgends angezeigter Wert — die alte
+ * Fassung sperrt den Admin damit zu, statt ihn zu öffnen. adminKeyPlatzhalter = SHA-256 davon: Daran erkennt diese Fassung den
+ * Platzhalter. Hat die alte Fassung adminKey inzwischen geändert (Admin → System), passt der SHA-256 nicht mehr → das neue Passwort
+ * wird beim nächsten Start in den Hash übernommen. Gleiches Verfahren in tools/admin-passwort.mjs.
+ */
+function adminPlatzhalterSetzen(s) {
+  s.adminKey = crypto.randomBytes(24).toString('base64url');
+  s.adminKeyPlatzhalter = crypto.createHash('sha256').update(s.adminKey).digest('hex');
+}
+const adminKeyIstPlatzhalter = (s) => typeof s.adminKey === 'string' && typeof s.adminKeyPlatzhalter === 'string'
+  && s.adminKeyPlatzhalter === crypto.createHash('sha256').update(s.adminKey).digest('hex');
 /** Admin-Passwort → 'scrypt$salt$hash' (32 Bytes, wie das Wartungskennwort); synchron nur beim Start und in tools/admin-passwort.mjs */
 function pwHashSync(pw) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -1152,7 +1167,7 @@ const customerAddress = (order) => ({ name: String(order.customer?.name || '').t
 const httpError = (code, message) => Object.assign(new Error(message), { httpCode: code });
 /** Einstellungen fürs Admin-UI/Export: Geheimnisse maskiert (leer + …Set) — SMTP-Passwort, PayPal-Secret und Admin-Passwort verlassen den Server nie. */
 const adminSettingsView = () => {
-  const { adminKey, adminKeyHash, ...rest } = settings;
+  const { adminKey, adminKeyHash, adminKeyPlatzhalter, ...rest } = settings;
   return {
     ...rest,
     mail: { ...settings.mail, pass: '', passSet: !!settings.mail?.pass },
@@ -3544,7 +3559,7 @@ const server = http.createServer(async (req, res) => {
       if (Array.isArray(settings.colors)) for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
       // PayPal: Secret-Maske wie beim SMTP-Passwort — leer = gespeichertes behalten, null = löschen
       if (wartungNeu) settings.wartung = wartungNeu;
-      if (adminHashNeu) { settings.adminKeyHash = adminHashNeu; delete settings.adminKey; adminCache.clear(); }
+      if (adminHashNeu) { settings.adminKeyHash = adminHashNeu; adminPlatzhalterSetzen(settings); adminCache.clear(); }
       if (patch.paypal && typeof patch.paypal === 'object') {
         const prev = settings.paypal || {};
         const next = { ...DEFAULT_SETTINGS.paypal, ...prev };
