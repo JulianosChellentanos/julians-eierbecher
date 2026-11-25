@@ -184,7 +184,8 @@ function showLogin(grund = '') {
       : grund === 'abgemeldet' ? 'Abgemeldet.'
         : grund === 'auth' && DATA && !ABGEMELDET ? 'Abgemeldet – das Admin-Passwort wurde geändert oder gilt nicht mehr. Bitte neu anmelden; deine Eingaben bleiben erhalten.'
           : grund && grund !== 'auth' ? grund : LOGIN_TEXT;
-    hint.classList.toggle('warn', !!grund && grund !== 'abgemeldet');
+    // Hervorgehoben nur, was die Anmeldung erklärt (Bremse, Abmeldung mitten in der Arbeit, keine Verbindung) — der normale Text bleibt grau
+    hint.classList.toggle('warn', hint.textContent !== LOGIN_TEXT && grund !== 'abgemeldet');
   }
   $('#pw').value = '';   // nach dem Abmelden steht das Passwort nicht mehr im Feld
   $('#login').hidden = false; $('#app').hidden = true;
@@ -425,32 +426,47 @@ async function konfliktLaden() {
   applyOrder(rr.ok && rr.order ? rr.order : k.order);
   toast('Aktueller Stand geladen – bitte prüfen und bei Bedarf noch einmal ausführen.', 'ok', 5000);
 }
-// Eingabefelder im Drawer, deren getippter Wert ein Neuzeichnen (Nachladen, Konflikt, neue Anmeldung) übersteht
-const DRAWER_FELDER = ['d-note', 'd-tracking', 'd-carrier', 'rk-grund', 'rk-betrag', 'rk-iban'];
-const feldStandard = (el) => (el.tagName === 'SELECT' ? ([...el.options].find((x) => x.defaultSelected) || el.options[0])?.value ?? '' : el.defaultValue);
-/** Getippte, noch nicht gespeicherte Eingaben im Drawer: { id: { wert, basis } } (nur Felder, die vom geladenen Stand abweichen) */
+// Eingaben im Drawer, die ein Neuzeichnen (Nachladen, Konflikt, neue Anmeldung) überstehen — samt Art und Häkchen der Reklamation
+const DRAWER_FELDER = ['d-note', 'd-tracking', 'd-carrier', 'rk-grund', 'rk-art', 'rk-betrag', 'rk-iban', 'rk-ruecksendung', 'rk-notify'];
+const DRAWER_GESPEICHERT = ['d-note', 'd-tracking'];   // Werte der Bestellung: anders gespeichert → Hinweis unter dem Feld
+/** Wert und Standard (= geladener Stand) eines Drawer-Felds; Häkchen als true/false, die Reklamationsart als Radio-Gruppe */
+function drawerFeld(id) {
+  if (id === 'rk-art') {
+    const r = $$('#drawer-body input[name="rk-art"]');
+    return r.length ? { radios: r, wert: r.find((x) => x.checked)?.value ?? '', standard: r.find((x) => x.defaultChecked)?.value ?? '' } : null;
+  }
+  const el = document.getElementById(id);
+  if (!el) return null;
+  if (el.type === 'checkbox') return { el, wert: el.checked, standard: el.defaultChecked };
+  return { el, wert: el.value, standard: el.tagName === 'SELECT' ? ([...el.options].find((x) => x.defaultSelected) || el.options[0])?.value ?? '' : el.defaultValue };
+}
+/** Getippte bzw. gewählte, noch nicht gespeicherte Eingaben im Drawer: { id: { wert, basis } } (nur Abweichungen vom geladenen Stand) */
 function drawerEingaben() {
   const out = {};
   for (const id of DRAWER_FELDER) {
-    const el = document.getElementById(id);
-    if (el && el.value !== feldStandard(el)) out[id] = { wert: el.value, basis: feldStandard(el) };
+    const f = drawerFeld(id);
+    if (f && f.wert !== f.standard) out[id] = { wert: f.wert, basis: f.standard };
   }
   return out;
 }
-/** Eingaben wieder einsetzen; hat sich der gespeicherte Wert inzwischen geändert, steht er als Hinweis unter dem Feld */
+/**
+ * Eingaben wieder einsetzen; hat sich der gespeicherte Wert inzwischen geändert, steht er als Hinweis unter dem Feld. Entspricht der
+ * neue Stand der Eingabe (gerade selbst gespeichert, Sendungsnummer ohne Leerzeichen), ist sie kein Entwurf mehr — dann kein Hinweis.
+ */
 function drawerEingabenSetzen(e) {
   for (const [id, { wert, basis }] of Object.entries(e || {})) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    const jetzt = feldStandard(el);
-    el.value = wert;
-    if (jetzt !== basis && el.tagName !== 'SELECT') {
+    const f = drawerFeld(id);
+    if (!f || String(f.standard).trim() === String(wert).trim()) continue;
+    if (f.radios) { const r = f.radios.find((x) => x.value === wert && !x.disabled); if (r) r.checked = true; continue; }
+    if (f.el.type === 'checkbox') f.el.checked = wert; else f.el.value = wert;
+    if (DRAWER_GESPEICHERT.includes(id) && f.standard !== basis) {
       const p = document.createElement('p');
       p.className = 'muted entwurf';
-      p.textContent = `Inzwischen gespeichert: „${jetzt || '(leer)'}“ – im Feld steht noch deine Eingabe.`;
-      el.after(p);
+      p.textContent = `Inzwischen gespeichert: „${f.standard || '(leer)'}“ – im Feld steht noch deine Eingabe.`;
+      f.el.after(p);
     }
   }
+  if ($('#rk-form')) reklaFormSync();   // Betrag/IBAN und Kachel-Markierung zur wiederhergestellten Art
 }
 let GELADEN_AM = 0;       // Zeitpunkt des letzten vollständigen Ladens (Nachladen beim Zurückkehren in den Tab)
 /**
@@ -655,6 +671,7 @@ function renderDrawer() {
   if (!o) return closeOrder();
   const s = st(o), cu = o.customer || {};
   const entwurf = DRAWER_FUER === o.orderId ? drawerEingaben() : null;   // getippt, noch nicht gespeichert — bleibt beim Neuzeichnen
+  const fokus = entwurf && $('#drawer-body').contains(document.activeElement) ? document.activeElement : null;   // Cursor bleibt im Feld
   $('#drawer-title').innerHTML = `${esc(o.orderId)} <span class="badge st-${s}" style="vertical-align:middle;margin-left:6px">${esc(stLabel(s))}</span>`;
 
   // Status-Stepper
@@ -766,6 +783,11 @@ function renderDrawer() {
     </div>`;
   DRAWER_FUER = o.orderId;
   if (entwurf) drawerEingabenSetzen(entwurf);
+  if (fokus?.id) {
+    const el = document.getElementById(fokus.id);
+    el?.focus({ preventScroll: true });
+    if (el && fokus.value === el.value && typeof fokus.selectionStart === 'number') try { el.setSelectionRange(fokus.selectionStart, fokus.selectionEnd); } catch { /* Feldtyp ohne Auswahl (number) */ }
+  }
 }
 /**
  * Summen wie auf der Rechnung: Zwischensumme, Gutschein (Code, −Betrag), Versand, Gesamtbetrag; ein Guthaben (Gutschrift-Code) ist
