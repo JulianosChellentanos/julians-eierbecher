@@ -307,7 +307,8 @@ const gueltigerCoupon = () => (coupon && coupon.sig === cartSig() ? coupon : nul
 const ausKonto = {};
 // Angelegte, noch nicht abgeschlossene Bestellung (Upload/Abschluss fehlgeschlagen): ein erneuter Versuch mit derselben Kasse
 // setzt dort fort, statt eine zweite Bestellung anzulegen (sonst hielte die erste z. B. ein Guthaben fest, und bei PayPal wäre
-// die Zahlung schon der ersten zugeordnet) — { sig, orderId, accessKey, paypalOrderId }
+// die Zahlung schon der ersten zugeordnet) — { sig, payment, body (gesendete Kassendaten), orderId (null: PayPal bezahlt, Anlegen
+// ohne Antwort), accessKey, paypalOrderId, total, hochgeladen, abschlussUnklar (Abschluss ohne Antwort), abgeschlossen }
 let offeneKasse = null;
 
 /** Kasse: Versandfreigrenze am Warenwert VOR Gutschein/Guthaben, danach der Abzug laut Server (pricing.js summen, wie computeTotals) */
@@ -438,10 +439,38 @@ async function kassenAnfrage(url, opts) {
   const j = await res.json().catch(() => null);
   return j && typeof j === 'object' && !Array.isArray(j) ? { ...j, httpStatus: res.status } : { ok: false, kaputt: true, httpStatus: res.status };
 }
-/** Bestellung ist angelegt, aber noch nicht abgeschlossen (Upload/Abschluss): ein neuer Klick setzt dort fort (offeneKasse) */
-const nichtAbgeschlossen = (grund) => `Deine Bestellung ist noch nicht abgeschlossen: ${String(grund).replace(/[.!\s]+$/, '')}. ` +
-  'Bitte bestell noch einmal mit „Zahlungspflichtig bestellen“ – es geht an derselben Stelle weiter, eine zweite Bestellung entsteht dabei nicht.';
+/**
+ * Bestellung ist angelegt, aber noch nicht abgeschlossen (Upload/Abschluss): ein neuer Klick setzt dort fort (offeneKasse) — bei
+ * PayPal über den PayPal-Knopf (der Bestellknopf ist dann ausgeblendet), mit derselben Zahlung
+ */
+const nochmalKlick = (payment) => (payment === 'paypal'
+  ? 'Bitte tipp noch einmal auf den PayPal-Knopf – es geht mit derselben Zahlung an derselben Stelle weiter, es wird nichts mehr abgebucht und eine zweite Bestellung entsteht nicht.'
+  : 'Bitte bestell noch einmal mit „Zahlungspflichtig bestellen“ – es geht an derselben Stelle weiter, eine zweite Bestellung entsteht dabei nicht.');
+const nichtAbgeschlossen = (grund, payment) => `Deine Bestellung ist noch nicht abgeschlossen: ${String(grund).replace(/[.!\s]+$/, '')}. ${nochmalKlick(payment)}`;
 const grundVon = (r, wobei) => (r.netz ? `die Verbindung zum Shop ist ${wobei} abgebrochen` : r.kaputt ? 'der Shop antwortet gerade nicht' : r.error || 'das hat gerade nicht geklappt');
+/** Abschluss ohne Antwort: er kann beim Shop trotzdem angekommen sein — der nächste Klick klärt das zuerst (offeneKlaeren) */
+const abschlussOffen = (r, payment) => `${r.netz ? 'Die Verbindung zum Shop ist beim Abschluss abgebrochen' : 'Der Shop antwortet gerade nicht'} – vielleicht ist deine Bestellung trotzdem schon angekommen. ` +
+  `Tipp einfach noch einmal auf ${payment === 'paypal' ? 'den PayPal-Knopf' : '„Zahlungspflichtig bestellen“'}: Dann siehst du, ob sie da ist, oder sie wird jetzt abgeschlossen – ${payment === 'paypal' ? 'es wird nichts mehr abgebucht und ' : ''}eine zweite Bestellung entsteht dabei nicht.`;
+/** PayPal: Geld eingezogen, aber keine Antwort auf das Anlegen der Bestellung — nie zu einer zweiten Zahlung raten */
+const paypalOhneBestellung = (grund, spaeter = false) => `Deine PayPal-Zahlung ist angekommen, ${grund} – deine Bestellung ist noch nicht abgeschlossen. ` +
+  `Bitte bezahl nicht noch einmal: Tipp ${spaeter ? 'in ein paar Minuten ' : ''}wieder auf den PayPal-Knopf (ohne die Seite neu zu laden), dann geht es mit derselben Zahlung weiter – es wird nichts mehr abgebucht.`;
+// Danke-Ansicht, wenn eine offene Kasse fortgesetzt wurde, die nach dem ersten Klick noch geändert wurde (bezahlt bzw. schon abgeschlossen)
+const AENDERUNG_NICHT_DRIN = 'Hinweis: Deine Bestellung gilt so, wie du sie beim ersten Klick abgeschickt hast – was du danach in der Kasse geändert hast, ist darin nicht enthalten. Antworte einfach auf deine Bestellbestätigung, wenn etwas angepasst werden soll.';
+/**
+ * Vor einer neuen Kasse: Blieb der Abschluss der offenen Bestellung ohne Antwort, beim Shop nachfragen, ob sie schon abgeschlossen ist
+ * (GET …/stand, wartet einen laufenden Abschluss ab) → 'fertig' (dann gilt sie, offeneKasse.abgeschlossen), 'neu' (nie abgeschlossen —
+ * eine neue Kasse darf beginnen) oder 'netz' (keine Antwort, Meldung steht da)
+ */
+async function offeneKlaeren() {
+  const k = offeneKasse;
+  if (!k?.abschlussUnklar || !k.orderId) return 'neu';
+  const st = await kassenAnfrage(`/api/order/${encodeURIComponent(k.orderId)}/stand`, { headers: { 'x-order-key': k.accessKey || '' }, cache: 'no-store' });
+  if (st.ok) { k.abgeschlossen = !!st.abgeschlossen; return k.abgeschlossen ? 'fertig' : 'neu'; }
+  if (st.httpStatus === 404) return 'neu';   // unbekannt (nie abgeschlossene Kasse, inzwischen aufgeräumt)
+  // ungeklärt (keine Verbindung, Wartung, zu viele Anfragen): die offene Kasse bleibt, nichts Neues beginnt
+  kassenMeldung(st.netz || st.kaputt ? abschlussOffen(st, k.payment) : `${String(st.error || 'Das hat gerade nicht geklappt').replace(/[.!\s]+$/, '')}. ${nochmalKlick(k.payment)}`);
+  return 'netz';
+}
 
 function openCheckout() {
   if (farbFehler() || cart.length > MAX_POSITIONEN) { renderCart(); return; }   // Hinweis steht im Warenkorb
@@ -492,6 +521,12 @@ function setupPayPal() {
       onClick: async (data, actions) => {
         kassenMeldung('');
         if (offeneKasse?.paypalOrderId) { submitOrder('paypal', offeneKasse.paypalOrderId); return actions.reject(); }
+        // Überweisungs-Bestellung von eben, deren Abschluss ohne Antwort blieb: ist sie schon da, gilt sie (keine Zahlung per PayPal)
+        if (offeneKasse?.abschlussUnklar) {
+          const st = await offeneKlaeren();
+          if (st === 'fertig') submitOrder(offeneKasse.payment);
+          if (st !== 'neu') return actions.reject();
+        }
         if (farbFehler()) { kassenMeldung('Eine Farbe in deinem Warenkorb gibt es gerade nicht – bitte die markierte Position im Warenkorb ändern.'); return actions.reject(); }
         if (!$('#checkout-form').reportValidity()) return actions.reject();
         // Eingetippter, nicht eingelöster Gutschein: erst einlösen bzw. den Grund nennen — bezahlt wird der dann angezeigte Betrag
@@ -576,6 +611,9 @@ async function gutscheinVorBestellen() {
 }
 /** „Zahlungspflichtig bestellen“ (nur der Knopf, siehe initCart) */
 async function bestellen() {
+  // Schon per PayPal bezahlt, Bestellung aber noch nicht abgeschlossen (z. B. danach auf Überweisung gewechselt): mit dieser Zahlung
+  // weiter — nie zusätzlich eine Vorkasse-Bestellung
+  if (offeneKasse?.paypalOrderId) return submitOrder('paypal', offeneKasse.paypalOrderId);
   if (gutscheinOffen()) { await gutscheinVorBestellen(); return; }
   await submitOrder('vorkasse');
 }
@@ -587,21 +625,48 @@ async function submitOrder(payment, paypalOrderId = null) {
   kassenMeldung('');
   try {
     prog.textContent = 'Bestellung wird angelegt …';
-    const body = kassenDaten(payment, paypalOrderId);
-    const lokal = emailLokalFehler(body.customer.email);   // z. B. vom Konto vorbefüllt (ohne Eingabe-Ereignis)
-    if (lokal) return kassenMeldung(lokal, 'email');
+    const jetzt = kassenDaten(payment, paypalOrderId);
+    // Stand der Kasse (Warenkorb, Adresse, Zahlart, Gutschein) — derselbe wie beim letzten, abgebrochenen Versuch → dort fortsetzen
+    const sig = JSON.stringify({ ...jetzt, expectedTotal: null });
+    if (paypalOrderId && offeneKasse && offeneKasse.paypalOrderId !== paypalOrderId) offeneKasse = null;   // neue Zahlung → eigene Bestellung
+    // Inzwischen geändert: die offene Kasse gilt trotzdem, wenn sie schon per PayPal bezahlt ist (es gilt, was bezahlt wurde) oder ihr
+    // Abschluss ohne Antwort blieb und der Shop sie schon abgeschlossen hat — sonst beginnt eine neue (die offene wurde nie
+    // abgeschlossen: keine Rechnung, kein Vertrag; der Shop räumt sie auf)
+    if (offeneKasse && offeneKasse.sig !== sig && !offeneKasse.paypalOrderId && !offeneKasse.abgeschlossen) {
+      const st = await offeneKlaeren();
+      if (st === 'netz') return;
+      if (st === 'neu') offeneKasse = null;
+    }
+    const k = offeneKasse;
+    const geaendert = !!(k?.body && k.sig !== sig);   // Änderungen nach dem ersten Klick fehlen in der Bestellung → Hinweis im Danke
+    const body = k?.body || jetzt;
+    payment = body.payment;
+    if (!k) {
+      const lokal = emailLokalFehler(body.customer.email);   // z. B. vom Konto vorbefüllt (ohne Eingabe-Ereignis)
+      if (lokal) return kassenMeldung(lokal, 'email');
+    }
     const nichtsZuZahlen = payment !== 'paypal' && body.expectedTotal <= 0;
-    // Dieselbe Kasse (Warenkorb, Adresse, Zahlart, Gutschein) wie beim letzten, abgebrochenen Versuch → dort fortsetzen
-    const sig = JSON.stringify({ ...body, expectedTotal: null });
+    // gesendete Kassendaten merken (Kopie): ein neuer Versuch schickt und druckt genau das, auch wenn Warenkorb/Felder sich ändern
+    const merken = (orderId, rest) => {
+      offeneKasse = { sig: k?.sig || sig, payment, body: k?.body || JSON.parse(JSON.stringify(body)), orderId, accessKey: '',
+        paypalOrderId: payment === 'paypal' ? body.paypalOrderId : null, total: null, hochgeladen: [], ...rest };
+    };
     let r;
-    if (offeneKasse && offeneKasse.sig === sig) {
-      r = { ok: true, orderId: offeneKasse.orderId, accessKey: offeneKasse.accessKey };
+    if (k?.orderId) {
+      r = { ok: true, orderId: k.orderId, accessKey: k.accessKey };
     } else {
       r = await kassenAnfrage('/api/checkout', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(body),
       });
       if (!r.ok) {
+        // PayPal: das Geld ist schon eingezogen — ohne Antwort fragt der nächste Klick mit derselben Zahlung noch einmal (eine dabei
+        // schon angelegte Bestellung gibt der Server zurück); nie beginnt eine zweite Zahlung
+        if (payment === 'paypal' && body.paypalOrderId && (r.netz || r.kaputt)) {
+          merken(null);
+          return kassenMeldung(paypalOhneBestellung(r.netz ? 'aber danach ist die Verbindung zum Shop abgebrochen' : 'aber der Shop antwortet gerade nicht', r.kaputt));
+        }
+        if (r.bezahlt) offeneKasse = null;   // nach der Zahlung abgelehnt: der Shop erstattet sie (steht in der Meldung des Servers)
         // Ohne Antwort ist keine Bestellung entstanden, die gilt: ohne Abschluss gibt es weder Rechnung noch Vertrag
         if (r.netz) return kassenMeldung(`${KEINE_VERBINDUNG} und bestell dann noch einmal. Es wurde noch nichts bestellt.`);
         if (r.kaputt) return kassenMeldung('Der Shop antwortet gerade nicht – es wurde noch nichts bestellt. Bitte versuch es in ein paar Minuten noch einmal.');
@@ -611,36 +676,42 @@ async function submitOrder(payment, paypalOrderId = null) {
         return kassenMeldung(r.error || 'Die Bestellung hat nicht geklappt – bitte versuch es noch einmal.', ADRESSFELDER.includes(r.feld) ? r.feld : null);
       }
       // hochgeladen = Positionen, deren Druckdatei schon angekommen ist (ein neuer Versuch lädt sie nicht noch einmal)
-      offeneKasse = { sig, orderId: r.orderId, accessKey: r.accessKey || '', paypalOrderId: payment === 'paypal' ? paypalOrderId : null, total: r.total, hochgeladen: [] };
+      merken(r.orderId, { accessKey: r.accessKey || '', total: r.total });
     }
     // Zugriffsschlüssel der Bestellung: ohne ihn nimmt der Server weder Druckdateien noch den Abschluss an
     const orderKey = { 'x-order-key': r.accessKey || '' };
 
-    // Druckdateien erzeugen & hochladen
-    for (let i = 0; i < cart.length; i++) {
+    // Druckdateien erzeugen & hochladen — aus den gesendeten Positionen (nicht aus einem inzwischen geänderten Warenkorb); eine schon
+    // abgeschlossene Bestellung hat alle
+    const pos = body.items;
+    for (let i = 0; i < pos.length && !offeneKasse?.abgeschlossen; i++) {
       if (offeneKasse?.hochgeladen?.includes(i)) continue;
-      prog.textContent = `Erzeuge Druckdatei ${i + 1}/${cart.length} …`;
+      prog.textContent = `Erzeuge Druckdatei ${i + 1}/${pos.length} …`;
       let buf;
-      try { ({ buffer: buf } = await exportModel(cart[i].config)); } catch (err) {   // STL oder 3MF (Farbschrift)
+      try { ({ buffer: buf } = await exportModel(pos[i].config)); } catch (err) {   // STL oder 3MF (Farbschrift)
         console.warn('Druckdatei', err);
-        return kassenMeldung(nichtAbgeschlossen(`Die Druckdatei für Position ${i + 1} ließ sich nicht erzeugen`));
+        return kassenMeldung(nichtAbgeschlossen(`Die Druckdatei für Position ${i + 1} ließ sich nicht erzeugen`, payment));
       }
-      prog.textContent = `Lade Druckdatei ${i + 1}/${cart.length} hoch (${(buf.byteLength / 1e6).toFixed(1).replace('.', ',')} MB) …`;
+      prog.textContent = `Lade Druckdatei ${i + 1}/${pos.length} hoch (${(buf.byteLength / 1e6).toFixed(1).replace('.', ',')} MB) …`;
       const up = await kassenAnfrage(`/api/order/${r.orderId}/stl/${i}`, {
         method: 'PUT', headers: { 'Content-Type': 'model/stl', ...orderKey }, body: buf,
       });
       // Meldung des Servers zeigen (z. B. 413 Datei zu groß, 429 zu viele Uploads, 507 Speicher knapp), sonst die allgemeine
-      if (!up.ok) return kassenMeldung(nichtAbgeschlossen(grundVon(up, 'beim Hochladen der Druckdatei')));
+      if (!up.ok) return kassenMeldung(nichtAbgeschlossen(grundVon(up, 'beim Hochladen der Druckdatei'), payment));
       offeneKasse?.hochgeladen?.push(i);
     }
     prog.textContent = 'Erstelle Rechnung …';
     const done = await kassenAnfrage(`/api/order/${r.orderId}/complete`, { method: 'POST', headers: orderKey });
     if (!done.ok) {
-      // Keine Antwort: der Abschluss kann trotzdem angekommen sein — ein neuer Versuch fragt einfach noch einmal (der Server
-      // antwortet für eine abgeschlossene Bestellung wieder mit der Rechnung)
-      if (done.netz || done.kaputt) return kassenMeldung(nichtAbgeschlossen(grundVon(done, 'beim Abschluss')));
+      // Keine Antwort: der Abschluss kann trotzdem angekommen sein — der nächste Klick ruft ihn noch einmal auf (für eine abgeschlossene
+      // Bestellung antwortet der Server wieder mit der Rechnung) bzw. fragt nach einer Änderung erst nach (offeneKlaeren)
+      if (done.netz || done.kaputt) {
+        if (offeneKasse) offeneKasse.abschlussUnklar = true;
+        return kassenMeldung(abschlussOffen(done, payment));
+      }
+      if (offeneKasse) offeneKasse.abschlussUnklar = false;   // der Shop hat geantwortet: nicht abgeschlossen
       // Druckdatei fehlt/unvollständig: dieselbe Bestellung, Dateien beim nächsten Versuch noch einmal hochladen
-      if (done.code === 'dateien' && offeneKasse) { offeneKasse.hochgeladen = []; return kassenMeldung(nichtAbgeschlossen(done.error)); }
+      if (done.code === 'dateien' && offeneKasse) { offeneKasse.hochgeladen = []; return kassenMeldung(nichtAbgeschlossen(done.error, payment)); }
       // Abschluss abgelehnt (z. B. Guthaben inzwischen eingelöst, Gutschein mit Höchstzahl vergeben): diese Bestellung ist erledigt —
       // der nächste Versuch beginnt neu; den Gutschein neu prüfen, damit die Kasse den aktuellen Stand zeigt
       offeneKasse = null;
@@ -666,16 +737,22 @@ async function submitOrder(payment, paypalOrderId = null) {
     // Nichts zu zahlen: keine Überweisung — die Frist beginnt wie bei PayPal am Tag nach der Bestellung
     const fristOhneZahlung = pricing()?.shop?.fristBeginn?.paypal || 'Die Frist beginnt am Tag nach Vertragsschluss, also am Tag nach deiner Bestellung.';
     const mitBank = dankeZahlung(payment, done, gesamt);
-    $('#confirm-pay-hint').textContent = payment === 'paypal'
+    const hinweis = payment === 'paypal'
       ? `Deine Zahlung ist eingegangen, ich starte jetzt den Druck. Lieferzeit: ${lieferzeit}. ${frist}`
       : nichtsZuZahlen
         ? `Es ist nichts zu zahlen – dein Gutschein bzw. Guthaben deckt den Gesamtbetrag. Ich starte jetzt den Druck. Lieferzeit: ${lieferzeit}. ${fristOhneZahlung}`
         : `${mitBank ? 'Die Bankverbindung steht auch auf deiner Rechnung und in deiner Bestellbestätigung.' : 'Alle Zahlungsdaten (IBAN & Betrag) findest du auf deiner Rechnung.'} Sobald dein Geld da ist, starte ich den Druck. Lieferzeit: ${lieferzeit}. ${frist}`;
+    $('#confirm-pay-hint').textContent = geaendert ? `${hinweis} ${AENDERUNG_NICHT_DRIN}` : hinweis;
     $('#confirm-modal').showModal();
     refreshOrders(); // Bestellhistorie im Konto aktualisieren
   } catch (err) {
     console.warn('Kasse', err);
-    kassenMeldung(offeneKasse ? nichtAbgeschlossen('Das hat gerade nicht geklappt') : 'Die Bestellung hat gerade nicht geklappt – bitte versuch es noch einmal.');
+    if (offeneKasse) kassenMeldung(nichtAbgeschlossen('Das hat gerade nicht geklappt', offeneKasse.payment));
+    else if (payment === 'paypal' && paypalOrderId) {
+      // bezahlt, aber vor dem Anlegen abgebrochen: der nächste Klick versucht es mit derselben Zahlung
+      offeneKasse = { sig: null, payment, body: null, orderId: null, accessKey: '', paypalOrderId, total: null, hochgeladen: [] };
+      kassenMeldung(paypalOhneBestellung('aber danach ist etwas schiefgegangen'));
+    } else kassenMeldung('Die Bestellung hat gerade nicht geklappt – bitte versuch es noch einmal.');
   } finally {
     btn.disabled = false;
     prog.textContent = '';

@@ -3295,6 +3295,17 @@ async function kasseAbgelehntNachZahlung(res, id, cap, status, body, kunde) {
     : ' Deine PayPal-Zahlung ist bei mir eingegangen – ich melde mich bei dir und erstatte sie.';
   return send(res, status, { ...body, error: `${grund}${zusatz}`, bezahlt: true, erstattet: r.erstattet });
 }
+/**
+ * Checkout mit einer PayPal-Zahlung, die schon einer Bestellung gehört → dieselbe Antwort wie beim ersten Mal, wenn es diese Kasse
+ * ist (Bestellung mit dieser Zahlung, noch nicht abgeschlossen/storniert, gleiche E-Mail-Adresse) — sonst null (→ 400 wie bisher)
+ */
+async function paypalKasseWieder(orderId, ppId, email) {
+  let o;
+  try { o = await readOrder(orderId); } catch { return null; }
+  if (!email || o.paypalOrderId !== ppId || o.completedAt || o.status === 'storniert' || !o.accessKey || String(o.customer?.email || '').toLowerCase() !== email) return null;
+  console.warn(`↩️  PayPal ${ppId}: Checkout wiederholt (Antwort ging verloren) – offene Kasse ${o.orderId} geht weiter`);
+  return { ok: true, orderId: o.orderId, accessKey: o.accessKey, itemCount: o.lines.length, total: o.total, wiederholt: true };
+}
 /** Admin-Hinweise: eingezogene PayPal-Zahlungen der letzten 30 Tage ohne Bestellung und ohne Erstattung (älter als 15 Minuten) */
 function paypalHinweise(now = Date.now()) {
   return Object.entries(paypalCaptures)
@@ -3654,7 +3665,12 @@ async function handleCheckout(req, res) {
       console.error(`PayPal-Prüfung ${ppId} fehlgeschlagen:`, err?.message || err);
       return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt' });
     }
-    if (paypalCap.usedBy) return send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt (bereits einer Bestellung zugeordnet)' });
+    if (paypalCap.usedBy) {
+      // Antwort auf den ersten Checkout verloren (Netz, Proxy beim Neustart): die Kasse fragt mit derselben Zahlung noch einmal →
+      // dieselbe, noch nicht abgeschlossene Bestellung (nur für dieselbe E-Mail-Adresse), weiter mit Upload und Abschluss
+      const wieder = await paypalKasseWieder(paypalCap.usedBy, ppId, kundeAus(data.customer).email);
+      return wieder ? send(res, 200, wieder) : send(res, 400, { ok: false, error: 'Zahlung nicht bestätigt (bereits einer Bestellung zugeordnet)' });
+    }
     if (paypalCap.erstattet) return send(res, 400, { ok: false, error: 'Diese Zahlung wurde bereits erstattet – bitte starte die Kasse neu.' });
     // Preisgarantie: gleicher Warenkorb + Gutschein wie bei „Jetzt kaufen“ und genau der damals berechnete Betrag eingezogen
     const pend = paypalPending.get(ppId);
@@ -4443,6 +4459,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PUT' && mUp) return await handleStlUpload(req, res, mUp[1], mUp[2], url);
     const mDone = p.match(/^\/api\/order\/([A-Z0-9-]+)\/complete$/);
     if (req.method === 'POST' && mDone) return await handleComplete(req, res, mDone[1], url);
+    // Kasse nach einem Abschluss ohne Antwort (Netz/Proxy): ist die Bestellung schon abgeschlossen? Nur mit Schlüssel, ändert nichts;
+    // ein gerade laufender Abschluss wird abgewartet (Sperre der Bestellung) — sonst entstünde nach einer Änderung eine zweite
+    const mStand = p.match(/^\/api\/order\/([A-Z0-9-]+)\/stand$/);
+    if (req.method === 'GET' && mStand) {
+      let order = null;
+      if (ORDER_ID_RE.test(mStand[1])) { const release = await lockOrder(mStand[1]); try { order = await readOrder(mStand[1]); } catch { order = null; } finally { release(); } }
+      const z = orderZugriff(req, url, order, kasseOffen);
+      if (z !== 'ok') return z === 'gesperrt' ? send(res, 429, TOO_MANY) : send(res, 404, { ok: false, error: 'Bestellung unbekannt' });
+      return send(res, 200, { ok: true, abgeschlossen: !!order.completedAt, storniert: order.status === 'storniert' });
+    }
 
     // --- PayPal
     if (req.method === 'POST' && p === '/api/paypal/create') {
