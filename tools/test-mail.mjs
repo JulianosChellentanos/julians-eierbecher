@@ -149,7 +149,18 @@ function vorlagen() {
   check(b.html.includes('Mengenrabatt −10&nbsp;%'), 'HTML: „−10&nbsp;%“ bricht nicht um');
   // Null-Betrag: keine Zahlungsaufforderung
   const z = T.orderConfirmation({ order: ORDER({ coupon: { code: 'GS-AAAA-BBBB', off: 44.82, guthaben: true }, total: 0 }), settings: SET, baseUrl: BASE });
-  check(/nichts zu überweisen/.test(z.text) && !/IBAN/.test(z.text) && !/sobald deine Zahlung da ist/.test(z.text) && !/innerhalb von 14 Tagen/.test(z.text), 'Bestätigung über 0 €: keine Zahlungsaufforderung, keine IBAN, Druck ohne Warten auf Zahlung');
+  check(/Nichts zu zahlen – Dein Guthaben deckt den Gesamtbetrag\. Ich starte jetzt den Druck\./.test(z.text) && /<b>Nichts zu zahlen<\/b>/.test(z.html) && !/IBAN/.test(z.text) && !/sobald deine Zahlung da ist/.test(z.text) && !/innerhalb von 14 Tagen/.test(z.text), 'Bestätigung über 0 €: „Nichts zu zahlen“, keine Zahlungsaufforderung, keine IBAN, Druck ohne Warten auf Zahlung', z.text.slice(0, 900));
+  // Guthaben: Summen wie auf der Rechnung (Gesamtbetrag ohne Abzug, „abzüglich Guthaben“, „Zu zahlen“); Rabatt-Gutschein vor dem Versand
+  const gh = T.orderConfirmation({ order: ORDER({ coupon: { code: 'GH-AAAA-BBBB', off: 10, guthaben: true }, total: 34.82 }), settings: SET, baseUrl: BASE });
+  check(/Gesamtbetrag: 44,82 €\nabzüglich Guthaben GH-AAAA-BBBB: −10,00 €\nZu zahlen: 34,82 €/.test(nb(gh.text)) && /Betrag: 34,82 €/.test(nb(gh.text)) && /den zu zahlenden Betrag/.test(gh.text) && gh.html.includes('Zu zahlen'),
+    'Bestätigung mit Guthaben: Gesamtbetrag 44,82 € · abzüglich Guthaben −10,00 € · Zu zahlen 34,82 € (wie die Rechnung)', nb(gh.text).split('\n').filter((x) => /Gesamt|Guthaben|zahlen/.test(x)));
+  const gr = T.orderConfirmation({ order: ORDER({ coupon: { code: 'HERBST', off: 4.48 }, total: 40.34 }), settings: SET, baseUrl: BASE });
+  check(/Gutschein HERBST: −4,48 €\nVersand: kostenlos\nGesamtbetrag: 40,34 €/.test(nb(gr.text)) && !/Zu zahlen/.test(gr.text), 'Bestätigung mit Rabatt-Gutschein: Gesamtbetrag nach Gutschein, keine „Zu zahlen“-Zeile');
+  // Produkthinweise (Kurzfassung wie Rechnung) und vereinbarter Wortlaut des Kassen-Häkchens (Fassung an der Bestellung)
+  const ph = T.orderConfirmation({ order: ORDER({ beschaffenheitBestaetigt: '2026-11-25T09:00:00Z', beschaffenheitFassung: '2026-09-27', lines: [{ product: 'vase', qty: 1, unit: 24.9, off: 0, line: 24.9, colorName: 'Salbei', config: { preset: 'eigene', pattern: 'skelett', height: 150 } }] }), settings: SET, baseUrl: BASE });
+  check(/Gut zu wissen: Jede Vase besteht aus PLA/.test(nb(ph.text)) && /Voronoi, Pos\. 1/.test(ph.text) && /Du hast in der Kasse zugestimmt: „Ich bin ausdrücklich einverstanden/.test(ph.text) && /Gut zu wissen:/.test(ph.html),
+    'Bestätigung: Kurzfassung der Produkthinweise + vereinbarter Wortlaut (lib/produkthinweise.js)');
+  check(!/Du hast in der Kasse zugestimmt/.test(T.orderConfirmation({ order: ORDER(), settings: SET, baseUrl: BASE }).text), 'Bestätigung ohne gespeicherte Zustimmung (Altbestand): kein Zustimmungssatz');
   // Status-Mail: Konto → Konto-Knopf, Gast → Rechnung; Text-Teil ohne Entities
   const sk = T.orderStatus({ order: ORDER({ status: 'bezahlt' }), status: 'bezahlt', settings: SET, baseUrl: BASE });
   const sg = T.orderStatus({ order: ORDER({ status: 'bezahlt', userId: null }), status: 'bezahlt', settings: SET, baseUrl: BASE });

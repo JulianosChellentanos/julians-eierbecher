@@ -32,6 +32,8 @@ try {
   console.log('formsam-backup');
   const app = path.join(T, 'app'), ziel = path.join(T, 'ziel'), backup = path.join(ROOT, 'deploy/formsam-backup');
   schreib(path.join(app, 'data/settings.json'), '{}'); schreib(path.join(app, 'orders/FS-1/order.json'), '{}'); mkdirSync(path.join(app, 'public/img/gallery'), { recursive: true });
+  // Mail-Outbox ab Version 2: Kopfdaten in data/mail-outbox.json, Inhalte nicht zugestellter Mails in data/mail-outbox/<id>.json
+  schreib(path.join(app, 'data/mail-outbox.json'), '{"version":2,"entries":[]}'); schreib(path.join(app, 'data/mail-outbox/abc123.json'), '{}');
   mkdirSync(ziel, { recursive: true });
   // logger als Attrappe — Testläufe sollen nicht im echten Journal (journalctl -t formsam-backup) landen
   const still = path.join(T, 'still');
@@ -43,7 +45,11 @@ try {
   let dateien = readdirSync(ziel);
   const neu = dateien.find((f) => /^formsam-\d{4}-\d{2}-\d{2}-\d{4}\.tar\.gz$/.test(f));
   check(r.status === 0 && neu, 'Sicherung: Exit 0, Archiv angelegt', r.stderr + dateien.join(' '));
-  if (neu) check(execFileSync('tar', ['-tzf', path.join(ziel, neu)], { encoding: 'utf8' }).includes('orders/FS-1/order.json'), 'Archiv enthält die Bestellungen');
+  if (neu) {
+    const liste = execFileSync('tar', ['-tzf', path.join(ziel, neu)], { encoding: 'utf8' });
+    check(liste.includes('orders/FS-1/order.json'), 'Archiv enthält die Bestellungen');
+    check(liste.includes('data/settings.json') && liste.includes('data/mail-outbox.json') && liste.includes('data/mail-outbox/abc123.json'), 'Archiv enthält data/ samt Mail-Outbox (data/mail-outbox/)');
+  }
   check(!dateien.includes('formsam-alt-14.tar.gz') && dateien.includes('formsam-alt-13.tar.gz'), 'Sicherung von vor 14 Tagen gelöscht, von vor 13 Tagen bleibt', dateien.join(' '));
   check(!dateien.some((f) => f.endsWith('.unfertig')), 'keine halbe Datei');
   rmSync(path.join(app, 'public/img/gallery'), { recursive: true });

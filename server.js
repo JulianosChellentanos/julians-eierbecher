@@ -11,8 +11,8 @@ import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings, addressList, keepStoredPass } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
-  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung, passwortGeaendert } from './lib/mail-templates.js';
-import { isEmail, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
+  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung, passwortGeaendert, ZAHLUNGSFRIST_TAGE } from './lib/mail-templates.js';
+import { isEmail, emailLokalFehler, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
 import { chmodSync } from 'node:fs';   // Dateirechte der Bestandsordner (unten bei process.umask)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2529,7 +2529,7 @@ function invoiceHTML(order) {
       ? `Bezahlt per PayPal am ${esc(dateDE(order.paidAt || order.createdAt))}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
       : order.paymentStatus === 'bezahlt'
         ? `Bezahlt per Überweisung${order.paidAt ? ` am ${esc(dateDE(order.paidAt))}` : ''}${guth ? ` (${money(order.total)}, der Rest über dein Guthaben)` : ''} – danke!`
-        : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von 14 Tagen mit deiner Bestellnummer als Verwendungszweck:
+        : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von ${ZAHLUNGSFRIST_TAGE} Tagen mit deiner Bestellnummer als Verwendungszweck:
        <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
   // Leistungszeitpunkt (§ 14 Abs. 4 Nr. 6 UStG, Kalendermonat genügt nach § 31 Abs. 4 UStDV): schon versandt → Versanddatum,
   // sonst der voraussichtliche Liefermonat (Rechnungsdatum + längste Lieferzeit) — ausdrücklich als „voraussichtlich“
@@ -3067,6 +3067,9 @@ function pruefeKasse(data, { garantie = null } = {}) {
   if (!customer.name || !isEmail(customer.email) || !customer.street || !customer.zip || !customer.city) {
     return { status: 400, error: 'Bitte Adresse vollständig ausfüllen', customer };
   }
+  // Umlaute vor dem @: die Bestätigung käme nie an (lib/eingaben.js emailLokalFehler — derselbe Text wie im Browser)
+  const lokal = emailLokalFehler(customer.email);
+  if (lokal) return { status: 400, error: lokal, customer };
   // PLZ wie das Kassenfeld (pattern [0-9]{4,5}); Zahlart nur Vorkasse oder PayPal (alles andere wäre still als Vorkasse angelegt worden)
   if (!/^[0-9]{4,5}$/.test(customer.zip)) return { status: 400, error: 'Bitte eine gültige Postleitzahl angeben (4 oder 5 Ziffern).', customer };
   if (data.payment !== undefined && data.payment !== null && !['vorkasse', 'paypal'].includes(data.payment)) {
@@ -3836,6 +3839,7 @@ const server = http.createServer(async (req, res) => {
       if (nameFehler) return send(res, 400, { ok: false, error: nameFehler });
       const mail = typeof email === 'string' ? email.trim().toLowerCase() : '';
       if (!isEmail(mail)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an.' });
+      if (emailLokalFehler(mail)) return send(res, 400, { ok: false, error: emailLokalFehler(mail) });
       const pwFehler = pwRegel(password);
       if (pwFehler) return send(res, 400, { ok: false, error: pwFehler });
       // Bremsen vor der Kontoanlage (jedes neue Konto verschickt eine Mail an die angegebene Adresse): je IP 5 Versuche je Stunde
@@ -4056,6 +4060,7 @@ const server = http.createServer(async (req, res) => {
       const nachricht = String(body.nachricht ?? '').replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, ' ').trim();
       if (name.length < 2 || name.length > 120) return send(res, 400, { ok: false, error: 'Bitte gib deinen Namen an (2 bis 120 Zeichen).' });
       if (email.length > 254 || !isEmail(email)) return send(res, 400, { ok: false, error: 'Bitte gib eine gültige E-Mail-Adresse an – dorthin schicke ich die Eingangsbestätigung.' });
+      if (emailLokalFehler(email)) return send(res, 400, { ok: false, error: emailLokalFehler(email) });
       if (orderId && !ORDER_ID_RE.test(orderId)) return send(res, 400, { ok: false, error: 'Die Bestellnummer hat nicht das richtige Format (z. B. FS-260927-A1B2C3). Du kannst das Feld auch leer lassen.' });
       if (nachricht.length > 2000) return send(res, 400, { ok: false, error: 'Die Nachricht ist zu lang (höchstens 2000 Zeichen).' });
       if (forgotLimited(`widerruf-ip:${clientIp(req)}`, WIDERRUF_IP_MAX)) {

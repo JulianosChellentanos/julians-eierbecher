@@ -180,6 +180,17 @@ await admin('POST', '/api/admin/settings', { legal: { hoster: 'Neu-Hoster AG, Al
 ds = await req('GET', '/datenschutz');
 check(/Neu-Hoster AG verarbeitet diese Daten nur in meinem Auftrag/.test(ds.text) && /Der Server steht in Frankfurt am Main/.test(ds.text), 'Hoster mit bestätigtem AV-Vertrag');
 
+console.log('Versandfreigrenze, Mengenrabatt, Gutscheine (AGB § 6/§ 14, Versandseite — wie computeTotals)');
+const agbT = norm(text((await req('GET', '/agb')).text)), versT = norm(text((await req('GET', '/versand')).text));
+const FREI = 'Maßgeblich ist der Preis deiner Vasen nach Aktions- und Mengenrabatten, vor Abzug von Gutscheinen und Guthaben.';
+const MENGE = 'Mengenrabatte gelten je Design, also für mehrere Stück derselben Gestaltung in einer Bestellung.';
+check(agbT.includes(FREI) && versT.includes(FREI) && !/nach allen Rabatten und Gutscheinen/.test(agbT + versT), 'AGB § 6 und Versandseite: Freigrenze am Warenwert vor Gutschein und Guthaben');
+check(agbT.includes(MENGE) && versT.includes(MENGE) && agbT.includes('zahlst du nie mehr als ohne Aktion'), 'AGB § 6 und Versandseite: Mengenrabatt je Design, Aktion nie teurer');
+check(agbT.includes('ein Ablaufdatum oder eine begrenzte Zahl an Einlösungen') && agbT.includes('oder die Aktion deine Bestellung nicht günstiger macht') && agbT.includes('Es deckt auch die Versandkosten und lässt die Versandkostenfreiheit unberührt'), 'AGB § 14: Bedingungen, Kombination mit Aktion, Guthaben als Zahlungsmittel');
+check(/innerhalb von 14 Tagen nach Vertragsschluss/.test(agbT) && /innerhalb von 14 Tagen nach Vertragsschluss/.test(versT), 'Zahlungsfrist 14 Tage nach Vertragsschluss (lib/lieferfrist.js) in AGB § 8 und Versandseite');
+const dsT = norm(text((await req('GET', '/datenschutz')).text));
+check(dsT.includes('spätestens nach 90 Tagen') && dsT.includes('nach 48 Stunden') && dsT.includes('nach 14 Tagen') && /\/64/.test(dsT) && dsT.includes('Konto unter „Mein Konto“ jederzeit selbst löschen'), 'Datenschutz: 90 Tage Mail-Inhalte, abgebrochene Kasse, /64-Bremsen, Konto selbst löschen');
+
 console.log('Produkthinweise aus einer Quelle, Bestellung');
 const content = JSON.parse(readFileSync(path.join(ROOT, 'public/content.json'), 'utf8'));
 check(Object.values(HINWEIS).every((s) => norm(content.hinweise.checkout).includes(norm(s))), 'Kassenhinweis (content.json) enthält alle Produkthinweise wörtlich');

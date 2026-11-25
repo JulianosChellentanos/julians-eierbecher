@@ -8,6 +8,23 @@ let verifyToken = '';  // aus ?verify=TOKEN (Link aus der Willkommens-/Bestätig
 
 const token = () => localStorage.getItem('ovju-auth') || '';
 export const getAuthHeaders = () => token() ? { 'x-auth': token() } : {};
+
+// E-Mail-Adresse für Kasse und Registrierung: vor dem @ nur ASCII, wie der Server (lib/eingaben.js EMAIL_LOKAL_FEHLER — Text
+// wörtlich gleich, tools/test-eingaben.mjs prüft das). Umlaute in der Domain sind erlaubt.
+export const EMAIL_LOKAL_FEHLER = 'Vor dem @ gehen leider keine Umlaute, kein ß und keine anderen Sonderzeichen – solche Adressen erreichen meine E-Mails nicht zuverlässig. Bitte gib eine E-Mail-Adresse ohne sie an (in der Domain nach dem @ sind Umlaute in Ordnung).';
+export function emailLokalFehler(v) {
+  const s = String(v ?? '').trim().slice(0, 255);
+  const at = s.lastIndexOf('@');
+  return at > 0 && /[^\x21-\x7e]/.test(s.slice(0, at)) ? EMAIL_LOKAL_FEHLER : '';
+}
+/** Feld mit der Browser-Prüfung verbinden: die Meldung erscheint wie „Pflichtfeld“ direkt am Feld (setCustomValidity) */
+export function emailFeldPruefen(input) {
+  if (!input) return;
+  const pruefen = () => input.setCustomValidity(emailLokalFehler(input.value));
+  input.addEventListener('input', pruefen);
+  input.addEventListener('change', pruefen);
+  pruefen();
+}
 export const getUser = () => currentUser;
 
 const STATUS_LABEL = {
@@ -359,8 +376,11 @@ export async function initAuth() {
     e.preventDefault();
     doAuth('/api/auth/login', { email: $('#al-email').value, password: $('#al-pw').value });
   });
+  emailFeldPruefen($('#ar-email'));
   $('#auth-register').addEventListener('submit', (e) => {
     e.preventDefault();
+    const lokal = emailLokalFehler($('#ar-email').value);
+    if (lokal) { showErr(lokal); return; }
     doAuth('/api/auth/register', { name: $('#ar-name').value, email: $('#ar-email').value, password: $('#ar-pw').value });
   });
   // Passwort vergessen / zurücksetzen

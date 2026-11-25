@@ -3,7 +3,7 @@
 import { exportModel } from './model-builder.js'; // Druckdateien im Hintergrund-Thread — die Kasse bleibt bedienbar
 import { copyText, formatCode, esc } from './designcode.js';
 import { PRODUCTS, PATTERNS, FLOWS, FONTS, RIMS } from './geometry.js';
-import { getAuthHeaders, getUser, refreshOrders } from './auth.js';
+import { getAuthHeaders, getUser, refreshOrders, emailLokalFehler, emailFeldPruefen } from './auth.js';
 import { showToast } from './mobile.js';
 import { produktAktiv, filterBestellbar, EIERBECHER_HINWEIS } from './produkte.js';
 import { reloadPricing } from './aktion.js';
@@ -493,6 +493,8 @@ async function submitOrder(payment, paypalOrderId = null) {
   try {
     prog.textContent = 'Bestellung wird angelegt …';
     const body = kassenDaten(payment, paypalOrderId);
+    const lokal = emailLokalFehler(body.customer.email);   // z. B. vom Konto vorbefüllt (ohne Eingabe-Ereignis)
+    if (lokal) throw new Error(lokal);
     const nichtsZuZahlen = payment !== 'paypal' && body.expectedTotal <= 0;
     // Dieselbe Kasse (Warenkorb, Adresse, Zahlart, Gutschein) wie beim letzten, abgebrochenen Versuch → dort fortsetzen
     const sig = JSON.stringify({ ...body, expectedTotal: null });
@@ -586,6 +588,7 @@ export async function initCart() {
   $('#co-back-top').addEventListener('click', () => { $('#checkout-modal').close(); openCart(); });
   $('#co-close').addEventListener('click', () => $('#checkout-modal').close());
   $('#co-coupon-btn').addEventListener('click', applyCoupon);
+  emailFeldPruefen($('#co-email'));   // Umlaute vor dem @ → Meldung direkt am Feld (wie der Server)
   $('#checkout-form').addEventListener('submit', (e) => {
     e.preventDefault();
     submitOrder('vorkasse');

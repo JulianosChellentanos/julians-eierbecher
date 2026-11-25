@@ -21,7 +21,9 @@ mkdir -p "$ZIEL" && chmod 700 "$ZIEL" || fehler "Zielordner $ZIEL lässt sich ni
 DATEI="$ZIEL/formsam-$(date +%F-%H%M).tar.gz"
 TMP="$DATEI.unfertig"
 # GNU tar: Exit 1 = eine Datei hat sich während des Lesens geändert (Archiv trotzdem vollständig, z. B. Mail-Protokoll) → Warnung;
-# Exit 2 = echter Fehler (Datei fehlt, nicht lesbar, Platte voll) → keine Sicherung
+# Exit 2 = echter Fehler (Datei fehlt, nicht lesbar, Platte voll) → keine Sicherung.
+# data/ ganz: Einstellungen, Konten, Sitzungen, Design-Codes, Listen, Vorschaubilder (data/thumbs), Mail-Protokoll mit den Inhalten
+# nicht zugestellter Mails (data/mail-outbox.json + data/mail-outbox/), Preis-Historie, Widerrufe, PayPal-Zahlungen
 tar -C "$APP" -czf "$TMP" data orders public/img/gallery
 RC=$?
 [ "$RC" -ge 2 ] && fehler "tar brach mit Exit $RC ab – keine Sicherung erstellt"

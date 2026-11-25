@@ -52,10 +52,12 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
    Anbieter ist ein weiterer Empfänger: dann AV-Vertrag schließen und die Datenschutzerklärung (Abschnitt
    „Hosting und Server“ → Sicherungen, „Wer Daten bekommt“) in `lib/legal.js` ergänzen.
 8. **Wirtschafts-Identifikationsnummer**: Sobald das BZSt dir eine W-IdNr. zuteilt (Format `DE123456789-00001`),
-   muss sie ins Impressum (§ 5 Abs. 1 Nr. 6 DDG). Trag sie vorerst ins Feld „USt-IdNr.“ ein – das Impressum erkennt
-   das Format und beschriftet sie richtig.
-9. **Steuernummer** trägst du nur für Rechnungen ein. Im Impressum steht sie absichtlich nicht (keine Pflicht,
-   und sie gehört nicht öffentlich ins Netz).
+   muss sie ins Impressum (§ 5 Abs. 1 Nr. 6 DDG). Dafür gibt es ein eigenes Feld: Admin → Mein Unternehmen →
+   Steuer & Belege → „W-IdNr.“. (Ältere Einträge im Feld „USt-IdNr.“ im W-IdNr.-Format erkennt das Impressum weiter.)
+9. **Steuernummer** gehört auf jede Rechnung – auch als Kleinunternehmer (§ 34a UStDV; ausgenommen nur
+   Kleinbetragsrechnungen bis 250 €), es sei denn, die USt-IdNr. steht darauf. Die Admin-Übersicht warnt, solange
+   beides fehlt. Im Impressum steht die Steuernummer absichtlich nicht (keine Pflicht, und sie gehört nicht
+   öffentlich ins Netz). Ebenso warnt der Admin bei der Platzhalter-IBAN „DE00 …“ – die echte IBAN eintragen.
 10. **Verpackungsregister LUCID**: Wer Pakete an Privatleute verschickt, muss sich vor dem ersten Verkauf bei der
     Zentralen Stelle Verpackungsregister registrieren und die Versandverpackungen bei einem dualen System
     lizenzieren. Ohne das droht ein Vertriebsverbot – bitte vor dem Start erledigen.
@@ -164,13 +166,29 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
     (§ 11 Abs. 3 PAngV) nutzt der Shop nicht – er rechnet immer mit dem strengeren Tiefstpreis.
   - Praxis-Tipp bleibt: zwischen zwei Aktionen auf dieselben Vasen mindestens 30 Tage Abstand lassen und Preise nicht
     kurz vor einer Aktion erhöhen – sonst schrumpfen Streichpreis und Prozentzahl.
+- **Versandkostenfreiheit, Mengenrabatt, Gutscheine** (AGB § 6 und § 14, „Versand & Zahlung“ – gleiche Regel wie
+  `computeTotals` im Server und `summen` in `public/js/pricing.js`): Die Freigrenze misst den Warenwert nach Aktions-
+  und Mengenrabatt, aber **vor** Gutschein und Guthaben – ein Gutschein macht eine Bestellung also nie teurer.
+  Mengenrabatte gelten je Design (mehrere Stück derselben Gestaltung); während einer Aktion ohne zusätzlichen
+  Mengenrabatt gilt der normale Preis mit Mengenrabatt, wenn er günstiger ist. Ein Guthaben (Gutschrift-Code) ist
+  ein Zahlungsmittel: Es deckt auch den Versand und lässt die Versandkostenfreiheit unberührt. Gutscheine können ein
+  Ablaufdatum und eine Höchstzahl an Einlösungen haben – solche Bedingungen bei der Bekanntgabe des Gutscheins nennen.
+  Ändert sich eine dieser Regeln im Code, AGB § 6/§ 14 und Versandseite mitziehen.
+- **Zahlungsfrist** 14 Tage nach Vertragsschluss (AGB § 8, Versandseite, Bestätigung, Rechnung, Zahlungserinnerung)
+  kommt aus `ZAHLUNGSFRIST_TAGE` in `lib/lieferfrist.js`; die Nachfrist der Erinnerung aus `NACHFRIST_TAGE`.
+- **Datenschutz – Speicherdauer im Betrieb:** Inhalte nicht zugestellter Mails löscht der Shop spätestens nach 90 Tagen
+  (Abschnitt „E-Mails“). Nie abgeschlossene Kassen: Druckdateien nach 48 Stunden (bei knappem Speicher nach 1 Stunde),
+  die angefangene Bestellung nach 14 Tagen (Abschnitt „Bestellung“). Missbrauchsbremsen zählen IP-Adressen (IPv6 als
+  /64-Netz) nur im Arbeitsspeicher, höchstens einen Tag (Abschnitt „Wenn du die Website aufrufst“). Das Konto lässt sich
+  unter „Mein Konto“ selbst löschen; eine Datenauskunft erstellst du im Admin unter Kunden (Datenexport als JSON) und
+  schickst sie per Mail (Abschnitt „Kundenkonto“).
 - **Stand-Datum** steht zentral in `LEGAL_STAND` (`lib/legal.js`) und muss bei inhaltlichen Änderungen angepasst werden.
 
 ## Was du NICHT anpassen musst (läuft automatisch aus den Einstellungen)
 
 | Änderung im Admin | wirkt sich automatisch aus auf |
 |---|---|
-| Kleinunternehmer an/aus | Preissätze in AGB § 6 und „Versand & Zahlung“, Hinweis im Impressum, USt.-Hinweis am Preis im Shop |
+| Kleinunternehmer an/aus | Preissätze in AGB § 6 und „Versand & Zahlung“, Hinweis im Impressum, USt.-Hinweis am Preis im Shop, in Warenkorb, Kasse und Bestellbestätigung („inkl. MwSt.“ bzw. „keine USt. nach § 19 UStG“) – Rechnung, Gutschrift und Storno folgen dem Steuerstatus der Bestellung (`order.steuer`) |
 | PayPal an/aus (mit Client-ID) | AGB § 3 und § 8, Datenschutz (Kurzfassung, Zahlung, Bestellung, Empfänger), „Versand & Zahlung“, Lieferfristbeginn |
 | Versandkosten / Freigrenze | AGB § 6, „Versand & Zahlung“ (auch „kostenlos“ oder „ohne Freigrenze“), Versandhinweis am Preis im Shop |
 | Lieferzeit / Liefergebiet | AGB § 7, „Versand & Zahlung“ |

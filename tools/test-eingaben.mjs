@@ -12,7 +12,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  isEmail, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG, ZAHLEN, isHex6,
+  isEmail, emailLokalFehler, EMAIL_LOKAL_FEHLER, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG, ZAHLEN, isHex6,
 } from '../lib/eingaben.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -352,6 +352,27 @@ for (const [lbl, it] of [['Höhe 5000', { config: { height: 5000 } }], ['Muster 
   }
   check(modus(path.join(DATA, 'alt-bestand.json')) === '644', 'alte Datei unverändert (kein rekursives chmod), erreichbar nur über den 0700-Ordner');
   check(/Dateirechte: .*data nur noch für den Dienst-Benutzer \(vorher 755, jetzt 700\)/.test(log), 'Protokoll nennt den eingeschränkten Bestandsordner');
+
+  console.log('B9 Umlaute vor dem @ (Kasse, Registrierung, Widerruf) — klare Meldung, Domain-Umlaute erlaubt');
+  const ML = EMAIL_LOKAL_FEHLER;
+  const kasse = (email) => req('POST', '/api/checkout', { customer: { ...KUNDE, email }, items: [pos()], payment: 'vorkasse', beschaffenheit: true, mitSchluessel: true, expectedTotal: 1 });
+  for (const e of ['jürgen@beispiel.de', 'straße@beispiel.de', 'zoë@beispiel.de']) {
+    const k = await kasse(e);
+    check(k.status === 400 && k.json?.error === ML, `Kasse „${e}“ → 400 mit Meldung`, k.json);
+  }
+  const kd = await kasse('anna@müller.de');
+  check(!(kd.json?.error === ML), 'Kasse: Umlaute in der Domain (anna@müller.de) → keine Umlaut-Meldung', kd.json);
+  const rg = await req('POST', '/api/auth/register', { name: 'Jürgen Test', email: 'jürgen@beispiel.de', password: 'geheim1234' });
+  check(rg.status === 400 && rg.json?.error === ML, 'Registrierung „jürgen@beispiel.de“ → 400 mit Meldung', rg.json);
+  const rd = await req('POST', '/api/auth/register', { name: 'Anna Test', email: 'anna@müller.de', password: 'geheim1234' });
+  check(rd.status === 200, 'Registrierung „anna@müller.de“ (Umlaut nur in der Domain) → 200', rd.json);
+  const wr = await req('POST', '/api/widerruf', { name: 'Jürgen Test', email: 'jürgen@beispiel.de' });
+  check(wr.status === 400 && wr.json?.error === ML, 'Widerruf „jürgen@beispiel.de“ → 400 mit Meldung', wr.json);
+  check(emailLokalFehler('max@beispiel.de') === '' && emailLokalFehler('max@bäckerei.de') === '' && emailLokalFehler('mäx@x.de') === ML && emailLokalFehler('ä'.repeat(200) + '@x.de') === ML && emailLokalFehler('ä'.repeat(5000)) === '', 'emailLokalFehler(): nur der Teil vor dem @ zählt');
+  const authJs = readFileSync(path.join(ROOT, 'public/js/auth.js'), 'utf8');
+  check(authJs.includes(`export const EMAIL_LOKAL_FEHLER = '${ML}';`), 'Browser (public/js/auth.js) meldet wörtlich denselben Text wie der Server');
+  const wseite = await req('GET', '/widerruf');
+  check(wseite.text.includes(`data-email-lokal="${ML}"`) && /lokalFehler\(d\.email\)/.test(wseite.text), 'Widerrufsseite prüft im Browser mit demselben Text');
 }
 check(!/Serverfehler|TypeError|SyntaxError/.test(log), 'kein Serverfehler im Protokoll', log.split('\n').filter((l) => /Error/.test(l)).slice(0, 3));
 
