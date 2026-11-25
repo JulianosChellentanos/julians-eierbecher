@@ -462,6 +462,8 @@ export async function initAuth() {
   $('#at-login').addEventListener('click', () => showAuthTab('login'));
   $('#at-register').addEventListener('click', () => showAuthTab('register'));
   $('#auth-close').addEventListener('click', () => $('#auth-modal').close());
+  // Eine alte Fehlermeldung (falsches Passwort, Adresse schon vergeben …) verschwindet, sobald wieder getippt wird
+  $('#auth-modal').addEventListener('input', () => { if ($('#auth-err').textContent) showErr(''); });
   $('#account-close').addEventListener('click', () => $('#account-modal').close());
   $('#acc-logout').addEventListener('click', logout);
   $('#acc-addr-save').addEventListener('click', saveAddress);

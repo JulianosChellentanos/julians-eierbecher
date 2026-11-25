@@ -243,13 +243,13 @@ function renderCart() {
           ${ref ? `<small class="ci-ref">${esc(referenzTextZeile(lp.lineRef, it.qty))}</small>` : ''}
           ${it.code ? `<button class="ci-code" data-code="${esc(it.code)}" title="Design-Code kopieren – damit kannst du dieses Design jederzeit wieder laden">🔖 ${esc(formatCode(it.code))}</button>` : ''}
           <div class="ci-qty">
-            <span class="ci-step"><button data-i="${i}" data-d="-1">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1">+</button></span>
+            <span class="ci-step"><button data-i="${i}" data-d="-1" aria-label="Eins weniger">−</button><span>${it.qty}</span><button data-i="${i}" data-d="1" aria-label="Eins mehr">+</button></span>
             ${ref ? `<span class="aktion-badge" title="${esc(akt.name)}: −${lp.refProzent} % gegenüber dem niedrigsten Preis der letzten 30 Tage">−${lp.refProzent}\u00a0%</span>` : ''}
             ${off ? `<span class="ci-off">−${off}\u00a0%</span>` : ''}
             ${nextTier ? `<small class="ci-hint">ab ${nextTier.qty} St. −${nextTier.off}\u00a0%</small>` : ''}
           </div>
         </div>
-        <div class="ci-right"><b${ref ? ' class="aktion-price"' : ''}>${fmt(line)}</b>${ref ? refStrike(lp, it.qty) : ''}<button class="ci-del" data-del="${i}" title="Entfernen">🗑</button></div>
+        <div class="ci-right"><b${ref ? ' class="aktion-price"' : ''}>${fmt(line)}</b>${ref ? refStrike(lp, it.qty) : ''}<button class="ci-del" data-del="${i}" title="Entfernen" aria-label="Aus dem Warenkorb entfernen">🗑</button></div>
       </div>`;
     }).join('');
   }
