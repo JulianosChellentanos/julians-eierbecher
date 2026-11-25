@@ -55,6 +55,8 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
 - **Admin-Zentrale** (`/admin`; bei einer Neuinstallation steht ein zufälliges Admin-Passwort einmal im Server-Protokoll — siehe [Admin-Passwort](#admin-passwort)):
   - Übersicht: Umsatz (gesamt/30 Tage — nur Bestellungen mit Rechnung, Rechnungsbetrag inkl. Guthaben-Anteil, abzüglich Gutschriften/Erstattungen, stornierte zählen nicht), offene Drucke, Ø Bestellwert, meistbestellte Farben & Produkte, offene Widerrufe, fehlende Pflichtangaben (auch: Steuernummer als Kleinunternehmer, Platzhalter-IBAN oder falsche IBAN-Prüfziffer, Lücken im Nummernkreis), nicht zugestellte bzw. wartende E-Mails
   - Bestellungen: Suche & Status-Filter, aufklappbare Details, Sendungsnummer, interne Notizen, E-Mails (Bestätigung, Status-Mails wie Druckstart/Versand, Freitext, Vorschau) und für offene Vorkasse-Bestellungen „💶 Zahlungserinnerung senden“ (Bankverbindung, Nachfrist 7 Tage, aber nie vor dem Ende der Zahlungsfrist — 14 Tage nach der Bestätigung, gezählt in Kalendertagen —; Hinweis auf AGB § 8 erst nach Ablauf der Zahlungsfrist, eine frühere Erinnerung kündigt keine Stornierung an; höchstens eine am Tag, auch bei Doppelklick oder „Erneut“; „Erneut“ erzeugt sie immer frisch — nach einer Zahlung oder einer heute schon zugestellten Erinnerung wird nichts gesendet; nicht für abgebrochene Kassen; keine Automatik), Reklamation mit Gutschrift (nur zu einer Rechnung, nicht nach Storno, höchstens der bezahlte Betrag inkl. Guthaben-Anteil minus frühere Gutschriften; per PayPal höchstens der PayPal-Betrag), CSV-Export (am Ende: Rechnungsbetrag, davon Guthaben, Gutschriftbetrag; „Summe“ bleibt der zu zahlende Betrag). „Storno aufheben“ geht nur ohne Stornorechnung und solange ein eingelöstes Guthaben noch frei ist (sonst 409 — neuer Auftrag = neue Bestellung); eine Rechnung über 0,00 € (100-%-Gutschein) braucht keine Stornorechnung, dort bleibt das Aufheben möglich; „Bezahlt“ mit offener Zahlung lehnt der Server ab
+  - Liste und Detail: Bestellungen und „Letzte Bestellungen“ chronologisch (Bestellzeit, neueste oben — auch vor dem Altbestand `OV-…`), je 200 Zeilen mit „Weitere … zeigen“; die Suche findet auch eingelöste Gutschein- und Guthaben-Codes; das Detail zeigt unter den Positionen die Summen wie die Rechnung (Zwischensumme, Gutschein, Versand, Gesamtbetrag, bei Guthaben „abzüglich Guthaben“ und „Zu zahlen“). Netz- und Serverfehler erscheinen als rote Meldung („Keine Verbindung zum Server – nichts gespeichert“); CSV, Backup, Kontodaten und Fotos gelten nur als gespeichert bzw. hochgeladen, wenn der Server es bestätigt. Gilt das Passwort mitten in der Arbeit nicht mehr (anderswo geändert), schließt der Admin Detail und Dialoge, bittet um neue Anmeldung und öffnet danach die Bestellung wieder — mit der getippten, noch nicht gespeicherten Notiz
+  - **Veraltete Tabs** (Admin auf Handy und Rechner): Bestelländerungen schicken den Stand mit, auf dem sie beruhen (`stand`: Status, Zahlung, Sendungsnummer, Versender, Notiz; beim Druckstatus `vorher` = Stand der Position), Einstellungen den Zähler `settings.rev` (`baseRev`; zählt nur Speichern im Admin, nicht Rechnungsnummern o. Ä.). Weicht er ab, antwortet der Server 409 „Inzwischen geändert – bitte neu laden“ — im Detail bzw. in der Speichern-Leiste steht dann „↻ Neu laden“, getippte Eingaben bleiben stehen (ein inzwischen anders gespeicherter Wert steht als Hinweis darunter). Statuswechsel prüft der Server immer, auch für Tabs von vor diesem Update ohne Stand: erlaubt sind vorwärts (auch übersprungen), Stornieren, „Storno aufheben“ (→ Neu) und „zurück auf Neu (Zahlung offen)“ aus „Bezahlt“, solange noch nichts gedruckt wird — ein alter Tab setzt so keinen Status mehr zurück (keine widersprüchlichen Kundenmails). Kehrt ein Tab nach mehr als einer Minute in den Vordergrund zurück, lädt er selbst nach (ungespeicherte Einstellungen bleiben). Neues Admin-Passwort: zweimal eingeben. Test: `node tools/test-admin.mjs`
   - Druckwarteschlange, Kunden (je Konto: Daten als JSON exportieren — Gastbestellungen, Widerrufe und Mails, die nur über die Adresse zugeordnet sind, nur bei bestätigter Adresse; Konto löschen — Bestellungen bleiben ohne Kontobezug)
   - Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
   - Preise & Mengenrabatt-Stufen, Gutscheine (%- oder €-Codes, Mindestbestellwert, optional gültig bis / höchstens n Einlösungen), Aktionen. Gutschrift-Codes aus Reklamationen (`GH-XXXX-XXXX`, ältere `GS-XXXX-XXXX` bleiben gültig) sind **Guthaben**: einlösbar bis der Betrag aufgebraucht ist (Rest bleibt, stornierte Bestellungen geben ihn frei), immer ohne Mindestbestellwert und auch während einer Aktion — die Gutschein-Tabelle zeigt den Restwert, Mindestwert und „mit Aktion“ sind bei Guthaben nicht änderbar
@@ -205,7 +207,7 @@ node server.js          # → http://localhost:4488
 
 | Route | Zweck |
 |---|---|
-| `/` | Landingpage + Konfigurator; Canonical und Vorschau-Adressen (og:url, og:image, twitter:image) setzt der Server aus der öffentlichen Shop-Adresse ein (leer/lokal → `https://www.formsam.com`), ETag aus dem Ergebnis |
+| `/` | Landingpage + Konfigurator; Canonical und Vorschau-Adressen (og:url, og:image, twitter:image) setzt der Server aus der öffentlichen Shop-Adresse ein (leer/lokal → `https://www.formsam.com`), dazu strukturierte Daten (JSON-LD: Organization aus den Firmendaten — Anschrift/Telefon/E-Mail nur, wenn eingetragen und kein Platzhalter —, WebSite und, solange die Startseite den FAQ-Bereich zeigt, FAQPage aus `content.json`; bewusst kein Product/Offer, die Preise hängen von der Gestaltung ab), ETag aus dem Ergebnis |
 | `/robots.txt`, `/sitemap.xml` | vom Server aus der öffentlichen Adresse: gesperrt sind `/admin`, `/orders/`, `/api/admin/`, `/api/auth/` (Preise, Farben, Texte, JS, CSS bleiben frei); Sitemap = Startseite + fünf Rechtsseiten. Im Wartungsmodus `Disallow: /` |
 | `/admin` | Admin: Bestellungen, Status, Einstellungen (Passwort: siehe [Admin-Passwort](#admin-passwort)) |
 | `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand` | Rechtsseiten, aus den Einstellungen gerendert (`lib/legal.js`) |
@@ -215,6 +217,13 @@ node server.js          # → http://localhost:4488
 | `/api/paypal/*` | PayPal-Order anlegen/einziehen (aktiv, sobald Zugangsdaten hinterlegt). `create` prüft vorher alles wie der Checkout und garantiert den Preis ab dem Klick; lehnt der Checkout nach dem Einzug trotzdem ab, wird automatisch erstattet (sonst Admin-Mail + Hinweis in der Übersicht) |
 | `/api/auth/verify`, `/api/auth/verify-resend` | E-Mail-Adresse des Kontos bestätigen (Token aus der Mail + Anmeldung) bzw. Link erneut senden |
 | `/api/widerruf` | Widerrufsfunktion (Eingangsbestätigung per Mail, Eintrag in `data/widerrufe.json`) |
+
+**Auslieferung:** Text-Dateien (HTML, CSS, JS, JSON, SVG, Manifest), Startseite und Rechtsseiten packt der Shop einmal mit gzip (Stufe 9)
+und Brotli (Qualität 11, sofern `node:zlib` es kann) und hält sie im Speicher (Schlüssel Pfad + Änderungszeit + Größe bzw. Inhalt;
+Brotli rechnet im Hintergrund nacheinander, bis dahin geht gzip raus). Ausgeliefert wird je `Accept-Encoding` (q-Werte zählen,
+`gzip;q=0` = ungepackt) mit `Content-Length` und `Vary: Accept-Encoding`; jede Fassung hat ihr eigenes ETag (`…-gz`, `…-br`),
+`If-None-Match` darf Listen und schwache ETags (`W/…`) enthalten. three.js z. B.: 1,27 MB → 257 kB (gzip) bzw. 201 kB (Brotli).
+HTTP/2 schaltet nginx ein (`deploy/nginx-formsam.conf`, Kommentar oben: auf Ubuntu 24.04/nginx 1.24 `listen 443 ssl http2;`).
 
 ### Testinstanz neben dem Live-Shop
 
@@ -306,6 +315,7 @@ orders/                    Eingegangene Bestellungen mit Rechnungen (nicht im Gi
 tools/
   check-stl.mjs            STL-Validator (watertight, Volumen, BBox …)
   test-kasse.mjs           Kasse, Belege, Steuerstatus, Storno/Reklamation, Einstellungs-Prüfung gegen eine eigene Instanz
+  test-admin.mjs           Admin: Reihenfolge, veraltete Tabs (409), Statuswechsel; Kompression, ETag, JSON-LD (eigene Instanz)
   generate-stl.mjs         STL per CLI erzeugen (Tests/Repro)
   admin-passwort.mjs       Admin-Passwort bei gestopptem Server setzen (nur Hash)
   test-daten.mjs           Prüfung Datenhaltung, Admin-Passwort, Bremsen, Uploads, Aufräumen, Konto (eigene Instanz)
@@ -487,6 +497,7 @@ npm run setup   # einmalig: three-Symlink für die CLI-Tools
 npm run check   # erzeugt eine Referenz-Vase als STL und validiert sie
 node tools/check-stl.mjs orders/<ID>/<datei>.stl   # Bestellung prüfen
 node tools/test-kasse.mjs                          # Kasse/Belege/Einstellungen (startet eine eigene Instanz unter tmp-tests/)
+node tools/test-admin.mjs                          # Admin (veraltete Tabs, Reihenfolge), Kompression/ETag, JSON-LD (eigene Instanz)
 node tools/mail-test.mjs --smoke                   # Mail-Versand und alle Vorlagen
 node tools/test-mail.mjs                           # Zustellung/Wiederholung, Protokoll, Vermerke, Vorlagen (eigene Instanz)
 node tools/test-referenzpreis.mjs                  # Streichpreis = niedrigster Preis der letzten 30 Tage
