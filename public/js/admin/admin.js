@@ -1646,7 +1646,7 @@ function fillCompany() {
   $('#c-name').value = c.name || ''; $('#c-owner').value = c.owner || ''; $('#c-street').value = c.street || '';
   $('#c-zip').value = c.zip || ''; $('#c-city').value = c.city || ''; $('#c-country').value = c.country || 'Deutschland';
   $('#c-email').value = c.email || ''; $('#c-phone').value = c.phone || '';
-  $('#c-steuernr').value = c.steuerNr || ''; $('#c-ustid').value = c.ustId || ''; $('#c-iban').value = c.iban || '';
+  $('#c-steuernr').value = c.steuerNr || ''; $('#c-ustid').value = c.ustId || ''; $('#c-widnr').value = c.wIdNr || ''; $('#c-iban').value = c.iban || '';
   $('#c-bic').value = c.bic || ''; $('#c-bank').value = c.bank || ''; $('#c-prefix').value = s.invoicePrefix || '';
   $('#c-credit-prefix').value = s.creditPrefix || '';   // Gutschriftnummern (Reklamation): Präfix + nextCredit
   $('#c-klein').checked = !!c.kleinunternehmer;
@@ -1659,7 +1659,7 @@ function companyForm() {
   const v = (id) => $(id).value;
   return {
     name: v('#c-name'), owner: v('#c-owner'), street: v('#c-street'), zip: v('#c-zip'), city: v('#c-city'), country: v('#c-country'),
-    email: v('#c-email'), phone: v('#c-phone'), ustId: v('#c-ustid'), steuerNr: v('#c-steuernr'), kleinunternehmer: $('#c-klein').checked,
+    email: v('#c-email'), phone: v('#c-phone'), ustId: v('#c-ustid'), wIdNr: v('#c-widnr'), steuerNr: v('#c-steuernr'), kleinunternehmer: $('#c-klein').checked,
     iban: v('#c-iban'), bic: v('#c-bic'), bank: v('#c-bank'),
   };
 }
@@ -1682,11 +1682,21 @@ function pflichtLuecken(c = {}) {
   const iban = t(c.iban).replace(/\s+/g, '').toUpperCase();
   if (!iban) out.push({ feld: 'c-iban', text: 'IBAN fehlt — Vorkasse-Kundschaft überweist dorthin' });
   else if (iban.startsWith('DE00')) out.push({ feld: 'c-iban', text: 'IBAN ist noch der Platzhalter „DE00 …“ — Vorkasse-Kundschaft überweist dorthin' });
-  if (!c.kleinunternehmer && !t(c.steuerNr) && !t(c.ustId)) out.push({ feld: 'c-steuernr', text: 'Steuernummer oder USt-IdNr. fehlt — ohne Kleinunternehmerregelung Pflicht auf jeder Rechnung' });
+  else if (!ibanOk(iban)) out.push({ feld: 'c-iban', text: 'IBAN-Prüfziffer stimmt nicht — bitte auf Tippfehler prüfen' });
+  // § 34a UStDV: auch Kleinunternehmer-Rechnungen (über 250 €) tragen Steuernummer oder USt-IdNr. — wie settingsHinweise() im Server
+  if (!t(c.steuerNr) && !t(c.ustId)) out.push({ feld: 'c-steuernr', text: c.kleinunternehmer ? 'Steuernummer fehlt — auch als Kleinunternehmer Pflicht auf Rechnungen über 250 € (§ 34a UStDV)' : 'Steuernummer oder USt-IdNr. fehlt — ohne Kleinunternehmerregelung Pflicht auf jeder Rechnung' });
   return out;
 }
+/** IBAN-Prüfziffer (mod 97) wie ibanPruefzifferOk() im Server — nur Hinweis, gespeichert wird trotzdem */
+function ibanOk(iban) {
+  const c = String(iban || '').replace(/\s+/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(c)) return false;
+  let rest = 0;
+  for (const ch of c.slice(4) + c.slice(0, 4)) for (const d of (/\d/.test(ch) ? ch : String(ch.charCodeAt(0) - 55))) rest = (rest * 10 + Number(d)) % 97;
+  return rest === 1;
+}
 /** Server-Hinweise, die der eigene Check nicht schon abdeckt (Inhaber, Anschrift, E-Mail, Telefon, Steuer stehen dort bzw. im Formular) */
-const HINWEIS_DOPPELT = /inhaber|anschrift|e-mail|telefon|steuernummer|ust-idnr/i;
+const HINWEIS_DOPPELT = /inhaber|anschrift|e-mail|telefon|steuernummer|ust-idnr|iban/i;
 const serverHinweise = () => (Array.isArray(DATA?.hinweise) ? DATA.hinweise : []).map((h) => String(h || '').trim()).filter((h) => h && !HINWEIS_DOPPELT.test(h));
 function pflichtHTML(list, extra, inForm) {
   const items = list.map((l) => `<li>${inForm ? `<button class="link" data-pf-focus="${esc(l.feld)}">${esc(l.text)}</button>` : esc(l.text)}</li>`)

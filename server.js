@@ -238,7 +238,7 @@ const DEFAULT_SETTINGS = {
     name: 'formsam', owner: 'Julian Sendlhofer',
     street: 'Musterstraße 1', zip: '00000', city: 'Musterstadt', country: 'Deutschland',
     email: 'jsendlhofer.js@gmail.com', phone: '',
-    ustId: '', steuerNr: '', kleinunternehmer: true,
+    ustId: '', wIdNr: '', steuerNr: '', kleinunternehmer: true,
     iban: 'DE00 0000 0000 0000 0000 00', bic: '', bank: '',
   },
   // Shop-Angaben für Kasse, Mails und Rechnung (Lieferzeit steht u. a. in der Bestellbestätigung)
@@ -268,7 +268,7 @@ const DEFAULT_SETTINGS = {
 // Texte ohne Steuerzeichen, getrimmt und gekürzt. Beim Laden werden fehlende Felder nur aufgefüllt (Live-Daten
 // bleiben unverändert); ein Admin-Patch wird streng geprüft (400 mit lesbarer Meldung).
 // ---------------------------------------------------------------------------
-const COMPANY_TEXT = { name: 60, owner: 120, street: 120, zip: 10, city: 80, country: 60, email: 254, phone: 40, ustId: 20, steuerNr: 20, iban: 42, bic: 11, bank: 80 };
+const COMPANY_TEXT = { name: 60, owner: 120, street: 120, zip: 10, city: 80, country: 60, email: 254, phone: 40, ustId: 20, wIdNr: 20, steuerNr: 20, iban: 42, bic: 11, bank: 80 };
 const SHOP_TEXT = { lieferzeit: 60, liefergebiet: 80 };
 const LEGAL_TEXT = { hoster: 200, serverOrt: 120 };
 const plainObj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
@@ -285,7 +285,8 @@ function pickText(src, fields, defaults) {
 }
 /**
  * Firmendaten aus einem Admin-Patch prüfen: Name/Land fallen auf „formsam“/„Deutschland“ zurück, E-Mail (wenn gesetzt) gültig,
- * USt-IdNr. „DE123456789“-Form, Steuernummer 10–13 Ziffern (mit / - Leerzeichen), IBAN über cleanIban (Vierergruppen).
+ * USt-IdNr. „DE123456789“-Form, Wirtschafts-Identifikationsnummer „DE123456789-00001“ (§ 139c AO; eigenes Feld wIdNr — steht sie
+ * im USt-IdNr.-Feld, wird sie dorthin verschoben), Steuernummer 10–13 Ziffern (mit / - Leerzeichen), IBAN über cleanIban.
  * Wirft httpError(400); liefert das vollständige company-Objekt.
  */
 function sanitizeCompany(raw) {
@@ -295,7 +296,10 @@ function sanitizeCompany(raw) {
   co.email = co.email.toLowerCase();
   if (co.email && !isEmail(co.email)) throw httpError(400, 'Firma: E-Mail-Adresse ungültig');
   co.ustId = co.ustId.toUpperCase().replace(/\s+/g, '');
+  co.wIdNr = co.wIdNr.toUpperCase().replace(/\s+/g, '');
+  if (/^DE\d{9}-\d{5}$/.test(co.ustId) && (!co.wIdNr || co.wIdNr === co.ustId)) { co.wIdNr = co.ustId; co.ustId = ''; }
   if (co.ustId && !/^[A-Z]{2}[0-9A-Z+*.]{2,12}$/.test(co.ustId)) throw httpError(400, 'Firma: USt-IdNr. ungültig (z. B. DE123456789)');
+  if (co.wIdNr && !/^DE\d{9}-\d{5}$/.test(co.wIdNr)) throw httpError(400, 'Firma: Wirtschafts-Identifikationsnummer ungültig (DE, 9 Ziffern, Bindestrich, 5 Ziffern – z. B. DE123456789-00001)');
   const stDigits = co.steuerNr.replace(/\D/g, '').length;
   if (co.steuerNr && (!/^[0-9 /-]+$/.test(co.steuerNr) || stDigits < 10 || stDigits > 13)) throw httpError(400, 'Firma: Steuernummer ungültig (z. B. 12/345/67890)');
   const iban = cleanIban(co.iban);
@@ -315,8 +319,20 @@ const sanitizeLegal = (raw) => pickText(plainObj(raw), LEGAL_TEXT, DEFAULT_SETTI
 function settingsHinweise() {
   const co = settings.company || {};
   const out = [];
-  if (!co.kleinunternehmer && !String(co.steuerNr || '').trim() && !String(co.ustId || '').trim()) {
-    out.push('Rechnungen mit Umsatzsteuer brauchen eine Steuernummer oder USt-IdNr. – bitte unter Firma eintragen.');
+  // § 14 Abs. 4 Nr. 2 UStG bzw. § 34a Satz 1 Nr. 2 UStDV: auch Kleinunternehmer-Rechnungen tragen Steuernummer oder USt-IdNr.
+  // (ausgenommen nur Kleinbetragsrechnungen bis 250 €, § 33 UStDV)
+  if (!String(co.steuerNr || '').trim() && !String(co.ustId || '').trim()) {
+    out.push(co.kleinunternehmer
+      ? 'Steuernummer fehlt: Auch als Kleinunternehmer muss jede Rechnung über 250 € die Steuernummer oder USt-IdNr. tragen (§ 34a UStDV) – bitte unter Firma eintragen.'
+      : 'Rechnungen mit Umsatzsteuer brauchen eine Steuernummer oder USt-IdNr. – bitte unter Firma eintragen.');
+  }
+  // IBAN: Platzhalter aus der Grundeinstellung oder falsche Prüfziffer — Rechnung und Bestätigungsmail nennen sie als Zahlungsziel
+  const iban = String(co.iban || '').replace(/\s+/g, '').toUpperCase();
+  if (/^[A-Z]{2}00/.test(iban) || /^DE0+$/.test(iban)) out.push('Bankverbindung: Die IBAN ist noch der Platzhalter „DE00 …“ – Rechnungen und Bestätigungsmails nennen sie als Zahlungsziel. Bitte unter Firma die echte IBAN eintragen.');
+  else if (iban && !ibanPruefzifferOk(iban)) out.push(`Bankverbindung: Die Prüfziffer der IBAN ${iban.slice(0, 4)} … stimmt nicht – bitte unter Firma prüfen (Tippfehler?).`);
+  // Nummern, die bei einem Schreibfehler nicht vergeben werden konnten (belegNrFreigeben) — Lücke mit Grund für die Buchhaltung
+  for (const l of (Array.isArray(settings.belegLuecken) ? settings.belegLuecken : []).slice(-5)) {
+    out.push(`Nummernkreis: Belegnummer ${l.nr} wurde am ${dateDE(l.at)} nicht vergeben (${l.grund}) – Lücke bitte in der Buchhaltung vermerken.`);
   }
   if (historieDefekt) out.push(`Preis-Historie war beim Start unlesbar (gesichert als ${historieDefekt}) – die Streichpreise der nächsten 30 Tage (niedrigster Preis vor einer Aktion) bitte prüfen.`);
   if (historieGesperrt) out.push('Preis-Historie (data/preis-historie.json) ist nicht lesbar und wird nicht fortgeschrieben – bitte Datei prüfen und den Shop neu starten.');
@@ -2313,6 +2329,17 @@ const REKLA_ACTIONS = ['anlegen', 'eingegangen', 'erledigen', 'ablehnen', 'zurue
 const REKLA_OPEN = ['offen', 'ruecksendung', 'eingegangen'];   // noch in Bearbeitung
 // Welche Kundenmail-Phase zu welchem Reklamationsstatus gehört (Admin-Vorschau/-Versand; Spiegel von reklaPhase() im Admin-UI)
 const REKLA_PHASE_OF = { offen: 'angelegt', ruecksendung: 'angelegt', eingegangen: 'eingegangen', erledigt: 'erledigt', abgelehnt: 'abgelehnt' };
+/** IBAN-Prüfziffer (ISO 13616, mod 97) — nur für Hinweise; gespeichert wird auch eine IBAN mit falscher Prüfziffer (Testdaten) */
+function ibanPruefzifferOk(iban) {
+  const c = String(iban || '').replace(/\s+/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(c)) return false;
+  let rest = 0;
+  for (const ch of c.slice(4) + c.slice(0, 4)) {
+    const v = /\d/.test(ch) ? ch : String(ch.charCodeAt(0) - 55);
+    for (const d of v) rest = (rest * 10 + Number(d)) % 97;
+  }
+  return rest === 1;
+}
 /** IBAN-Eingabe: nur A–Z/0–9 (Leerzeichen erlaubt), 15–34 Zeichen → Vierergruppen; '' bei leer, null bei ungültig */
 function cleanIban(raw) {
   const s = String(raw ?? '').toUpperCase().trim();
