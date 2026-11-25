@@ -543,7 +543,7 @@ function renderDrawer() {
       ${kannErinnern(o) ? `<div class="row" style="margin-top:8px">
         <button class="ghost mini" onclick="zahlungErinnern('${esc(o.orderId)}')">💶 Zahlungserinnerung senden</button>
         <button class="ghost mini" onclick="mailPreview('${esc(o.orderId)}','zahlungserinnerung')">👁 Vorschau</button>
-        <small class="muted">${o.mailsSent?.zahlungserinnerung ? `zuletzt erinnert ${fmtDT(o.mailsSent.zahlungserinnerung)}` : `mit Nachfrist von 7 Tagen · höchstens einmal am Tag`}</small>
+        <small class="muted">${o.mailsSent?.zahlungserinnerung ? `zuletzt erinnert ${fmtDT(o.mailsSent.zahlungserinnerung)}` : erinnerungFrueh(o) ? `Zahlungsfrist läuft noch bis ${fmtDate(zahlungsfristBis(o))} – die Erinnerung nennt dieses Datum` : `mit Nachfrist von 7 Tagen · höchstens einmal am Tag`}</small>
       </div>` : ''}
     </div>`;
 }
@@ -631,9 +631,15 @@ async function bestellungNachladen(id) {
 }
 /** Zahlungserinnerung: offene Vorkasse mit Betrag, Kasse abgeschlossen, nicht storniert (Server prüft dasselbe) */
 const kannErinnern = (o) => o.payment !== 'paypal' && o.paymentStatus !== 'bezahlt' && st(o) !== 'storniert' && (o.total || 0) > 0 && !kasseAbgebrochen(o);
+// Zahlungsfrist (AGB § 8): 14 Tage nach Vertragsschluss (Bestätigung = completedAt). Die Erinnerung nennt 7 Tage ab heute, aber nie
+// ein Datum davor — wie zahlungserinnerungBis in lib/mail-templates.js
+const zahlungsfristBis = (o) => { const t = Date.parse(o.completedAt || o.createdAt); return Number.isFinite(t) ? t + 14 * 864e5 : 0; };
+const erinnerungFrueh = (o) => zahlungsfristBis(o) > Date.now() + 7 * 864e5;
 async function zahlungErinnern(id) {
   const o = DATA.orders.find((x) => x.orderId === id);
-  if (!o || !confirm(`Zahlungserinnerung für ${id} (${money(o.total)}) an ${custEmail(o)} senden?\nSie nennt Bankverbindung und eine Nachfrist von 7 Tagen.`)) return;
+  if (!o) return;
+  const frist = erinnerungFrueh(o) ? `die Zahlungsfrist bis ${fmtDate(zahlungsfristBis(o))} (sie läuft noch)` : 'eine Nachfrist von 7 Tagen';
+  if (!confirm(`Zahlungserinnerung für ${id} (${money(o.total)}) an ${custEmail(o)} senden?\nSie nennt Bankverbindung und ${frist}.`)) return;
   const r = await api('/api/admin/mail-send', { method: 'POST', body: JSON.stringify({ orderId: id, kind: 'zahlungserinnerung' }) });
   if (r.notReady) return notReady();
   if (!r.ok) { toast(r.error || 'Senden fehlgeschlagen', 'err', 5000); return bestellungNachladen(id); }
