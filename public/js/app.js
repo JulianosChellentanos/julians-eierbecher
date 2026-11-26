@@ -24,7 +24,7 @@ import { initLists, openList, loadListFromURL, createListFromCart } from './list
 import { initAuth } from './auth.js';
 import { activateTab, initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
 import { aktionFor, aktionMuster, musterListLabel, aktionText, aktionTextKurz, onAktionEnde, referenzpreis, referenzText, aktionProzentGueltig, versandHTML, ustText,
-  itemLieferzeit, itemAnfrageFarbe, lieferzeitStandard } from './pricing.js';
+  itemLieferzeit, itemAnfrageFarbe, lieferzeitStandard, farbLieferzeit, mitFarbschrift, colorByRef } from './pricing.js';
 import { initAktionBar } from './aktion.js';
 import { initAnfrage, openAnfrage } from './anfrage.js';
 
@@ -233,10 +233,18 @@ function renderVerfuegbarkeit(item) {
   anfrageFarbe = itemAnfrageFarbe(item);
   const lz = $('#farbe-lieferzeit');
   if (lz) {
-    const t = anfrageFarbe ? `Lieferzeit auf Anfrage` : `📦 Lieferzeit ${itemLieferzeit(item)}`;
+    // Bestimmt die Schriftfarbe einer Farbschrift die Lieferzeit (länger als die der Körperfarbe), steht das dabei — sonst sähe es aus,
+    // als hätte die Körperfarbe diese Lieferzeit
+    const gesamt = itemLieferzeit(item), koerper = colorByRef(item.color, item.colorName);
+    const koerperLz = farbLieferzeit(koerper, lieferzeitStandard());
+    const wegenSchrift = !anfrageFarbe && mitFarbschrift(item) && gesamt !== koerperLz;
+    const schriftName = wegenSchrift ? colorByRef(item.config.textColor, null)?.name || '' : '';
+    const t = anfrageFarbe ? (anfrageFarbe.schrift ? 'Schriftfarbe auf Anfrage' : 'Lieferzeit auf Anfrage')
+      : wegenSchrift ? `📦 ${gesamt} (Schriftfarbe)` : `📦 Lieferzeit ${gesamt}`;
     if (lz.textContent !== t) lz.textContent = t;
     lz.title = anfrageFarbe ? `${anfrageFarbe.schrift ? 'Die Schriftfarbe' : 'Die Farbe'} „${anfrageFarbe.farbe.name}“ gibt es gerade nur auf Anfrage`
-      : itemLieferzeit(item) !== lieferzeitStandard() ? 'Lieferzeit in dieser Farbe' : 'Lieferzeit';
+      : wegenSchrift ? `Lieferzeit ${gesamt} wegen der Schriftfarbe „${schriftName}“ – ${koerper?.name || 'die Farbe der Vase'} allein: ${koerperLz}`
+        : gesamt !== lieferzeitStandard() ? 'Lieferzeit in dieser Farbe' : 'Lieferzeit';
     lz.hidden = false;
   }
   document.body.classList.toggle('farbe-anfrage', !!anfrageFarbe);
@@ -245,7 +253,7 @@ function renderVerfuegbarkeit(item) {
   for (const b of $$('.m-next-done')) { const t = anfrageFarbe ? 'Fertig · Farbe anfragen' : 'Fertig · In den Warenkorb'; if (b.textContent !== t) b.textContent = t; }
 }
 /** Anfrageformular für die Farbe des aktuellen Designs, die es nur auf Anfrage gibt (Kaufknöpfe, Hinweis am Preis) */
-const farbeAnfragen = () => anfrageFarbe && openAnfrage({ anlass: 'farbe', farbe: anfrageFarbe.farbe });
+const farbeAnfragen = () => anfrageFarbe && openAnfrage({ anlass: 'farbe', farbe: anfrageFarbe.farbe, schrift: anfrageFarbe.schrift });
 
 function renderPrices() {
   renderHeroHint();
@@ -317,13 +325,14 @@ function renderPrices() {
   // Ohne Aktion, aber mit besserer Aktion für ein anderes Muster: kurzer Hinweis „🔥 −30 % auf Gehämmert“ (Tipp schaltet um).
   const surSum = Math.round((q.muster + q.gravur + q.farbschrift + q.farbe + q.untersetzer + q.groesse) * 100) / 100;
   const narrow = window.innerWidth <= 430 && labels.length > 1;
-  if (anfrageFarbe) setMobilePrice(undefined, `${anfrageFarbe.schrift ? 'Schriftfarbe' : 'Farbe'} nur auf Anfrage`);
+  // kurz, damit es auch bei 360 px ganz in die Leiste passt (welche Farbe: Zeichen am Farbpunkt, Knopf „Farbe anfragen“ daneben)
+  if (anfrageFarbe) setMobilePrice(undefined, 'Nur auf Anfrage');
   else if (ref) $('#mb-sub').innerHTML = `<span class="aktion-badge" title="${escAttr(referenzText(ref.tiefst))}">−${ref.prozent}\u00a0%</span> <span class="aktion-countdown" data-kurz data-aktion-id="${aktion.id}">${aktionTextKurz(aktion)}</span>`;
   else if (alt) $('#mb-sub').innerHTML = `<button type="button" class="mb-aktion-hint" data-pattern="${alt.pattern}" title="${escAttr(referenzText(altRef.tiefst))}">🔥 −${altRef.prozent}\u00a0% auf ${musterListLabel(alt.keys, 'oder')}</button>`;
   else setMobilePrice(undefined, labels.length ? (narrow ? `inkl. ${fmt(surSum)} Aufpreise` : `inkl. ${labels.join(' · ')}`) : 'pro Stück');
   // Mengenrabatt-Teaser — entfällt während einer Aktion ohne „Mengenrabatt zusätzlich“; bei einer Farbe „auf Anfrage“ steht dort stattdessen,
   // dass es sie nur auf Anfrage gibt (gleiche Stelle und Größe — der Preisbereich verschiebt sich nicht)
-  $('#price-hint').textContent = anfrageFarbe ? `„${anfrageFarbe.farbe.name}“ gibt es nur auf Anfrage`
+  $('#price-hint').textContent = anfrageFarbe ? (anfrageFarbe.schrift ? `Schriftfarbe „${anfrageFarbe.farbe.name}“ nur auf Anfrage` : `„${anfrageFarbe.farbe.name}“ gibt es nur auf Anfrage`)
     : aktion && !aktion.mengenrabatt ? 'Während der Aktion kein zusätzlicher Mengenrabatt' : discountTeaser(state.product);
   // Aufpreis-Zeile unter dem Preis („inkl. 3,00 € Lamellen · 2,00 € Farbschrift · 1,00 € Farbe Gold“)
   const badge = $('#price-size');
@@ -1087,6 +1096,30 @@ function initPanelCta() {
   }, { root: panel, threshold: [0, 0.5, 0.98, 1] });
   io.observe(preis); io.observe(kauf);
   desk.addEventListener?.('change', setze);
+}
+
+/**
+ * Desktop: Link „💬 Sonderwunsch? Individuelles Angebot“ hinter „Code eingeben“ unter dem Kaufknopf. Die Zeile darf dadurch nicht höher
+ * werden (der Preisbereich ist unten im Panel verankert — eine Zeile mehr schöbe Preis und Kaufknopf nach oben). Je nach Panelbreite
+ * steht deshalb der ganze Link, nur „💬 Sonderwunsch?“ oder keiner (data-platz voll | kurz | kein); geprüft wird, ob er in derselben
+ * Zeile beginnt wie „Code eingeben“ — bei jeder Größenänderung und nach dem Laden der Schriften. Fußzeile und FAQ bieten ihn immer an.
+ */
+function initAngebotKurz() {
+  const kurz = $('.panel-cta .angebot-kurz'), anker = kurz?.previousElementSibling;
+  if (!kurz || !anker) return;
+  const passt = () => Math.abs(kurz.getBoundingClientRect().top - anker.getBoundingClientRect().top) < 3;
+  const pruefen = () => {
+    if (!anker.getClientRects().length) return;   // Preisbereich ausgeblendet (Handy/Tablet)
+    for (const platz of ['voll', 'kurz']) {
+      if (kurz.dataset.platz !== platz) kurz.dataset.platz = platz;
+      if (passt()) return;
+    }
+    kurz.dataset.platz = 'kein';
+  };
+  pruefen();
+  if ('ResizeObserver' in window) new ResizeObserver(pruefen).observe(kurz.parentElement);
+  else addEventListener('resize', pruefen);
+  document.fonts?.ready?.then(pruefen);
 }
 
 /** Ohne WebGL: statt endlosem „Lade 3D-Studio …“ eine klare Erklärung in der Bühne (Inhalte, Preise und Warenkorb laufen normal) */
@@ -1873,6 +1906,7 @@ warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noc
   initBuildIndicator();
   initKonfAktiv();
   initPanelCta();
+  initAngebotKurz();
   if (renderer) modelReady().then(() => $('#loading').classList.add('hidden'));
   await loadGallery();
   setTimeout(renderShowcase, 400); // Showcase: echte Fotos, sonst Engine-Renders

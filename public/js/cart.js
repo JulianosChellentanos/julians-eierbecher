@@ -11,7 +11,7 @@ import {
   setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
   volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp, linePrice,
   aktionFor, aktionScopeLabel, onAktionEnde, referenzTextZeile, aktionProzentGueltig, summen,
-  itemLieferzeit, warenkorbLieferzeit, itemAnfrageFarbe, anfrageMeldung,
+  itemLieferzeit, warenkorbLieferzeit, itemAnfrageFarbe, anfrageMeldung, lieferzeitAllgemein, mitFarbschrift,
 } from './pricing.js';
 import { openAnfrage } from './anfrage.js';
 
@@ -29,7 +29,10 @@ export function shopInfo() {
 export function fillShopInfo(root = document) {
   if (!getPricing()) return;
   const { lieferzeit, liefergebiet } = shopInfo();
-  root.querySelectorAll('[data-lieferzeit]').forEach((el) => { if (el.textContent !== lieferzeit) el.textContent = lieferzeit; });
+  // Vor der Farbwahl: allgemeine Lieferzeit — mit Einschränkung, sobald eine bestellbare Farbe länger braucht (pricing.js lieferzeitAllgemein;
+  // data-lieferzeit="kurz" für knappe Stellen wie die Trust-Kacheln auf dem Handy)
+  const lang = lieferzeitAllgemein(getColors(), lieferzeit), kurz = lieferzeitAllgemein(getColors(), lieferzeit, { kurz: true });
+  root.querySelectorAll('[data-lieferzeit]').forEach((el) => { const t = el.dataset.lieferzeit === 'kurz' ? kurz : lang; if (el.textContent !== t) el.textContent = t; });
   root.querySelectorAll('[data-liefergebiet]').forEach((el) => { if (el.textContent !== liefergebiet) el.textContent = liefergebiet; });
   // Kontaktadresse für Anfragen/individuelle Angebote (/api/pricing → kontakt.email: Antwortadresse der Shop-Mails, sonst Firmen-E-Mail) —
   // FAQ, Fußzeile; ohne Adresse bleibt der Platzhalter („die Adresse im Impressum“) bzw. die Zeile ausgeblendet
@@ -63,7 +66,8 @@ function farbeFehlt(it) {
   if (!getColors().length) return '';
   if (!colorByRef(it.color, it.colorName)) return it.colorName || it.color || 'dieser Farbe';
   const c = it.config || {};
-  if (String(c.text || '').trim() && c.textStyle === 'farbe' && c.textColor && !colorByRef(c.textColor, null)) return it.textColorName || c.textColor;
+  // Schriftfarbe nur bei gedruckter Farbschrift (pricing.js mitFarbschrift — wie der Farbschrift-Aufpreis und farbSperre im Server)
+  if (mitFarbschrift(it) && !colorByRef(c.textColor, null)) return it.textColorName || c.textColor;
   return '';
 }
 const farbFehler = () => cart.map(farbeFehlt).find(Boolean) || '';
@@ -316,12 +320,12 @@ function renderCart() {
     saveCart(); renderCart();
   }));
   // „Farbe anfragen“ an einer Position, deren Farbe es nur auf Anfrage gibt: Anfrageformular mit Farbe und Design-Code der Position
+  // Der Dialog öffnet über dem Warenkorb (der bleibt offen; nach dem Schließen ist der Fokus wieder am Knopf dieser Zeile)
   box.querySelectorAll('[data-anfrage-zeile]').forEach((b) => b.addEventListener('click', () => {
     const it = cart[+b.dataset.anfrageZeile], anf = it && anfrageZeile(it);
     if (!anf) return;
-    $('#cart-modal').close();
-    // Design-Code der Position (ältere Zeilen ohne Code: aus ihrer Konfiguration erzeugen — nicht das gerade im Konfigurator offene Design)
-    openAnfrage({ anlass: 'farbe', farbe: anf.farbe, code: it.code || (() => saveDesign({ ...it.config, color: it.color || it.config?.color })) });
+    // Design-Code der Position (ältere Zeilen ohne Code: beim Absenden aus ihrer Konfiguration erzeugen — nicht das im Konfigurator offene Design)
+    openAnfrage({ anlass: 'farbe', farbe: anf.farbe, schrift: anf.schrift, code: it.code || (() => saveDesign({ ...it.config, color: it.color || it.config?.color })) });
   }));
 }
 
@@ -584,7 +588,7 @@ function setupPayPal() {
           body: JSON.stringify(kassenDaten('paypal')),
         });
         if (!r.ok) {
-          if (r.code === 'preis') await preisNeu();
+          if (r.code === 'preis' || r.code === 'lieferzeit') await preisNeu();
           kassenMeldung(r.netz ? `${KEINE_VERBINDUNG} und versuch es noch einmal – es wurde nichts bezahlt.` : r.kaputt ? 'PayPal ist gerade nicht erreichbar – bitte versuch es gleich noch einmal oder bezahl per Überweisung.' : (r.error || 'PayPal ist gerade nicht erreichbar.'), r.feld);
           throw new Error(r.error || 'PayPal');
         }
@@ -628,12 +632,14 @@ function kassenDaten(payment, paypalOrderId = null) {
     items: cartPayload(), payment, paypalOrderId, couponCode: gueltigerCoupon()?.code || null,
     beschaffenheit: $('#co-beschaffenheit')?.checked === true, mitSchluessel: true,
     expectedTotal: checkoutTotals().total,
+    // die in der Kasse angezeigte Lieferzeit (längste Position) — ist die der Bestellung inzwischen länger, antwortet der Server mit 409
+    expectedLieferzeit: warenkorbLieferzeit(cart).text,
     // Rechenstand dieser Kasse: 2 = Versandfreigrenze vor Gutschein/Guthaben — ältere Tabs bittet der Server bei Abweichung ums Neuladen
     kasseStand: 2,
   };
 }
 /**
- * Der Server meldet „Preis hat sich geändert“ (409): Farben und Preise frisch laden (aktion.js zeichnet dabei alle Preise neu,
+ * Der Server meldet „Preis bzw. Lieferzeit hat sich geändert“ (409): Farben und Preise frisch laden (aktion.js zeichnet dabei alle Preise neu,
  * der onAktionEnde-Callback unten prüft einen eingegebenen Gutschein neu), dann Warenkorb und Kasse neu zeichnen
  */
 async function preisNeu() {
@@ -673,7 +679,7 @@ async function submitOrder(payment, paypalOrderId = null) {
     prog.textContent = 'Bestellung wird angelegt …';
     const jetzt = kassenDaten(payment, paypalOrderId);
     // Stand der Kasse (Warenkorb, Adresse, Zahlart, Gutschein) — derselbe wie beim letzten, abgebrochenen Versuch → dort fortsetzen
-    const sig = JSON.stringify({ ...jetzt, expectedTotal: null });
+    const sig = JSON.stringify({ ...jetzt, expectedTotal: null, expectedLieferzeit: null });
     if (paypalOrderId && offeneKasse && offeneKasse.paypalOrderId !== paypalOrderId) offeneKasse = null;   // neue Zahlung → eigene Bestellung
     // Inzwischen geändert: die offene Kasse gilt trotzdem, wenn sie schon per PayPal bezahlt ist (es gilt, was bezahlt wurde) oder ihr
     // Abschluss ohne Antwort blieb und der Shop sie schon abgeschlossen hat — sonst beginnt eine neue (die offene wurde nie
@@ -720,8 +726,9 @@ async function submitOrder(payment, paypalOrderId = null) {
         // Ohne Antwort ist keine Bestellung entstanden, die gilt: ohne Abschluss gibt es weder Rechnung noch Vertrag
         if (r.netz) return kassenMeldung(`${KEINE_VERBINDUNG} und bestell dann noch einmal. Es wurde noch nichts bestellt.`);
         if (r.kaputt) return kassenMeldung('Der Shop antwortet gerade nicht – es wurde noch nichts bestellt. Bitte versuch es in ein paar Minuten noch einmal.');
-        // Preis hat sich geändert (Admin hat Preise/Aktion geändert, während die Kasse offen war): neu rechnen, neu bestätigen lassen
-        if (r.code === 'preis') await preisNeu();
+        // Preis oder Lieferzeit hat sich geändert (Admin hat Preise/Aktion/Farben geändert, während die Kasse offen war): neu rechnen,
+        // neu bestätigen lassen
+        if (r.code === 'preis' || r.code === 'lieferzeit') await preisNeu();
         if (r.code === 'gutschein' && $('#co-coupon').value.trim()) await applyCoupon();   // Gutscheinfeld zeigt den Grund
         return kassenMeldung(r.error || 'Die Bestellung hat nicht geklappt – bitte versuch es noch einmal.', ADRESSFELDER.includes(r.feld) ? r.feld : null);
       }

@@ -1,9 +1,13 @@
 // formsam — Anfrageformular (ein Dialog für „Farbe anfragen“ und „Individuelles Angebot“; Desktop und Handy)
-//   openAnfrage({ anlass: 'farbe', farbe: { id, name }, code? })  — Farbe, die es nur auf Anfrage gibt (Konfigurator; Warenkorb und Listen
-//                                                                    geben den Design-Code ihrer Position mit, sonst das aktuelle Design)
+//   openAnfrage({ anlass: 'farbe', farbe: { id, name }, schrift?, code? }) — Farbe, die es nur auf Anfrage gibt (Konfigurator; Warenkorb
+//                     und Listen geben den Design-Code ihrer Position mit, sonst das aktuelle Design); schrift = die Schriftfarbe einer
+//                     Farbschrift ist angefragt (Texte sprechen dann von der Schrift, die Meldung an den Shop nennt „Schriftfarbe“)
 //   openAnfrage({ anlass: 'angebot' })                      — Sonderwunsch (Hinweis im Konfigurator, FAQ, Fußzeile, Adresse #angebot)
-// Name, E-Mail, Nachricht (je Anlass vorausgefüllt), bei Farben „Gib mir Bescheid, sobald die Farbe bestellbar ist“; das aktuelle Design
-// geht als Design-Code mit (dieselbe Code-Funktion wie „Design-Code anzeigen“, abwählbar). Unsichtbares Fallen-Feld „website“ gegen Bots.
+// Name, E-Mail, Nachricht (je Anlass vorausgefüllt), bei Farben „Gib mir Bescheid, sobald die Farbe bestellbar ist“; das Design geht als
+// Design-Code mit (dieselbe Code-Funktion wie „Design-Code anzeigen“, abwählbar). Ein neuer Code entsteht erst beim Absenden und nur
+// mit Häkchen — wer das Formular nur öffnet oder abbricht, hinterlässt nichts auf dem Server (Datenschutzerklärung „Design-Codes“).
+// Unsichtbares Fallen-Feld „website“ gegen Bots. Der Dialog öffnet über einem offenen Warenkorb bzw. einer Liste (die bleiben offen,
+// beim Schließen geht der Fokus zurück an den auslösenden Knopf).
 // POST /api/anfrage → Meldung an den Shop (Antwort kommt von Hand von der Antwortadresse — es gibt bewusst keine automatische Mail an
 // die angegebene Adresse). Elemente mit data-anfrage="angebot" (oder Links auf #angebot) öffnen den Dialog ohne eigenes Skript.
 import { getUser, emailLokalFehler } from './auth.js';
@@ -12,19 +16,24 @@ import { formatCode } from './designcode.js';
 
 const $ = (s) => document.querySelector(s);
 let getDesign = null;      // async () => { code, config } — vom Konfigurator (app.js)
-let stand = null;          // { anlass, farbe } des offenen Dialogs
-let codeLauf = null;       // Promise des Design-Codes für den offenen Dialog
-let code = null;
-let oeffnung = 0;          // zählt jedes Öffnen — ein spät fertiger Code eines früheren Öffnens überschreibt nichts
+let stand = null;          // { anlass, farbe, schrift } des offenen Dialogs
+let codeFest = null;       // vorhandener Design-Code (Liste, Warenkorbzeile mit Code) — wird nur angezeigt und mitgeschickt
+let codeHolen = null;      // () => Promise<Code> — erzeugt den Code des Designs erst beim Absenden (nur mit Häkchen)
 
 /** Antwortadresse aus /api/pricing → kontakt.email (Reply-To der Shop-Mails, sonst Firmen-E-Mail) — '' ohne */
 export const kontaktEmail = () => String(getPricing()?.kontakt?.email || '').trim();
 
+// Farbe „auf Anfrage“: nur „ab wann“ — den Preis zeigt der Konfigurator wie bei jeder Farbe, der Text stellt ihn nicht in Frage
 const TEXTE = {
   farbe: {
     titel: '✉️ Farbe anfragen',
-    lead: (f) => `„${f}“ gibt es gerade nur auf Anfrage. Schreib mir kurz – ich sage dir, ab wann und zu welchem Preis ich deine Vase in dieser Farbe drucken kann.`,
+    lead: (f) => `„${f}“ gibt es gerade nur auf Anfrage. Schreib mir kurz – ich sage dir, ab wann ich deine Vase in dieser Farbe drucken kann.`,
     nachricht: (f) => `Hallo, ich hätte meine Vase gern in „${f}“. Ab wann wäre das möglich, und wie lange würde es dauern?`,
+  },
+  schrift: {
+    titel: '✉️ Schriftfarbe anfragen',
+    lead: (f) => `Die Schriftfarbe „${f}“ gibt es gerade nur auf Anfrage. Schreib mir kurz – ich sage dir, ab wann ich die Schrift deiner Vase in dieser Farbe drucken kann.`,
+    nachricht: (f) => `Hallo, ich hätte die Schrift auf meiner Vase gern in „${f}“. Ab wann wäre das möglich, und wie lange würde es dauern?`,
   },
   angebot: {
     titel: '💬 Individuelles Angebot',
@@ -42,12 +51,12 @@ function fehler(text, feld = null) {
 /** Hinweis zum angehängten Design: „Mein aktuelles Design mitschicken (Design-Code K7P-3QX)“ */
 function codeZeile(text) { const el = $('#anf-code-name'); if (el) el.textContent = text; }
 
-export function openAnfrage({ anlass = 'angebot', farbe = null, code: designCode = null } = {}) {
+export function openAnfrage({ anlass = 'angebot', farbe = null, schrift = false, code: designCode = null } = {}) {
   const dlg = $('#anfrage-modal');
   if (!dlg) return;
   const a = anlass === 'farbe' && farbe ? 'farbe' : 'angebot';
-  stand = { anlass: a, farbe: a === 'farbe' ? { id: farbe.id, name: farbe.name } : null };
-  const t = TEXTE[a];
+  stand = { anlass: a, farbe: a === 'farbe' ? { id: farbe.id, name: farbe.name } : null, schrift: a === 'farbe' && schrift === true };
+  const t = TEXTE[stand.schrift ? 'schrift' : a];
   $('#anf-title').textContent = t.titel;
   $('#anf-lead').textContent = t.lead(stand.farbe?.name || '');
   const mail = kontaktEmail();
@@ -68,22 +77,14 @@ export function openAnfrage({ anlass = 'angebot', farbe = null, code: designCode
   $('#anf-done').hidden = true;
   fehler('');
   $('#anf-submit').disabled = false;
-  // Design-Code des aktuellen Designs vorbereiten (gleich beim Öffnen — beim Absenden ist er dann meist schon da)
-  const lauf = ++oeffnung;
-  // designCode: fester Code (Liste, Warenkorbzeile mit Code) oder Funktion → Promise<Code> (Warenkorbzeile ohne Code); sonst das aktuelle Design
-  code = typeof designCode === 'string' && designCode ? designCode : null;
-  const holen = typeof designCode === 'function' ? designCode : getDesign ? () => getDesign().then((d) => d?.code || null) : null;
+  // designCode: vorhandener Code (Liste, Warenkorbzeile mit Code) oder Funktion → Promise<Code> (Warenkorbzeile ohne Code); sonst das
+  // aktuelle Design des Konfigurators. Neue Codes entstehen erst beim Absenden (absenden) — hier wird nichts gespeichert.
+  codeFest = typeof designCode === 'string' && designCode ? designCode : null;
+  codeHolen = codeFest ? null : typeof designCode === 'function' ? designCode : getDesign ? () => getDesign().then((d) => d?.code || null) : null;
   $('#anf-code').checked = true;
-  $('#anf-code-row').hidden = !code && !holen;
+  $('#anf-code-row').hidden = !codeFest && !codeHolen;
   const was = $('#anf-code-was'); if (was) was.textContent = designCode ? 'Das Design' : 'Mein aktuelles Design';
-  if (code) { codeZeile(`Design-Code ${formatCode(code)}`); codeLauf = Promise.resolve(code); }
-  else {
-    codeZeile('wird vorbereitet …');
-    codeLauf = holen ? Promise.resolve().then(holen).then((c) => {
-      if (lauf !== oeffnung) return null;
-      code = c || null; codeZeile(code ? `Design-Code ${formatCode(code)}` : 'nicht verfügbar'); return code;
-    }).catch(() => { if (lauf === oeffnung) codeZeile('gerade nicht verfügbar'); return null; }) : Promise.resolve(null);
-  }
+  codeZeile(codeFest ? `Design-Code ${formatCode(codeFest)}` : 'als Design-Code');
   if (!dlg.open) dlg.showModal();
   setTimeout(() => ($('#anf-name').value ? msg : $('#anf-name')).focus(), 60);
 }
@@ -100,14 +101,21 @@ async function absenden(e) {
   if (!nachricht) return fehler('Bitte schreib mir kurz, was du dir wünschst.', 'nachricht');
   btn.disabled = true;
   fehler('');
+  // Design-Code nur mit Häkchen: vorhandener Code, sonst jetzt erzeugen (höchstens 8 s — klappt es nicht, geht die Anfrage ohne Code)
   const mitCode = !$('#anf-code-row').hidden && $('#anf-code').checked;
-  const c = mitCode ? await Promise.race([codeLauf, new Promise((r) => setTimeout(() => r(code), 8000))]) : null;
+  let c = mitCode ? codeFest : null;
+  if (mitCode && !c && codeHolen) {
+    codeZeile('wird erstellt …');
+    c = await Promise.race([Promise.resolve().then(codeHolen).catch(() => null), new Promise((r) => setTimeout(() => r(null), 8000))]);
+    codeZeile(c ? `Design-Code ${formatCode(c)}` : 'gerade nicht verfügbar');
+    if (c) codeFest = c;   // ein neuer Versuch (z. B. nach einer Fehlermeldung) schickt denselben Code
+  }
   let r;
   try {
     const res = await fetch('/api/anfrage', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        anlass: stand.anlass, farbe: stand.farbe?.id || undefined, name, email, nachricht,
+        anlass: stand.anlass, farbe: stand.farbe?.id || undefined, schrift: stand.schrift || undefined, name, email, nachricht,
         benachrichtigen: stand.anlass === 'farbe' && $('#anf-notify').checked, code: c || undefined, website: $('#anf-website').value,
       }),
     });

@@ -937,7 +937,10 @@ section[id] { scroll-margin-top: 72px; }
 .ls-item-main small { color: var(--ink-soft); font-size: 0.78rem; line-height: 1.35; }
 .ls-item-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
 .ls-qty { font-size: 0.8rem; font-weight: 700; color: var(--ink-soft); }
-.ls-item-btns { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; margin-top: 4px; align-items: center; }
+/* Knöpfe der Listenkarte: der mittlere (In den Warenkorb / Farbe anfragen) füllt die Zeile; passt er nicht ganz hinein, rutscht er in eine
+   eigene Zeile statt abgeschnitten zu werden */
+.ls-item-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; align-items: center; }
+.ls-item-btns .btn-primary { flex: 1 0 auto; }
 .ls-item-btns .btn { white-space: nowrap; }
 .ls-item-btns .btn { padding: 7px 10px; font-size: 0.78rem; }
 .ls-del { padding: 7px 9px; }
@@ -1482,6 +1485,11 @@ section[id] { scroll-margin-top: 72px; }
   padding: 2px 4px; font-size: 0.52rem; background: var(--card); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
 }
 .swatches-sm .swatch .sur-anfrage { top: -5px; left: auto; right: -5px; transform: none; padding: 1px 4px; }
+/* Desktop: Der Farbknopf ist breiter als sein Punkt (37 px, links im Knopf, senkrecht mittig — configurator-studio.css .panel .swatch span)
+   → Zeichen über die Mitte des Punkts statt des Knopfs (Innenabstand 3 px + halber Punkt) */
+@media (min-width: 981px) {
+  .panel #swatches .swatch .sur-anfrage { left: calc(3px + 37px / 2); top: calc(50% - 37px / 2 - 9px); }
+}
 .swatch.sw-anfrage span { opacity: 0.82; }
 .swatch.sw-anfrage.active span { opacity: 1; }
 .dark .swatch .sur-anfrage { background: var(--bg-soft); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
@@ -1489,6 +1497,7 @@ section[id] { scroll-margin-top: 72px; }
    Preisbereich verschiebt sich in keinem Reiter), Handy/Tablet als ganzer Satz am Panel-Ende (mobile.js verschiebt .angebot-zeile) */
 .panel-cta .angebot-zeile { display: none; }
 .angebot-kurz { white-space: nowrap; }
+.angebot-kurz[data-platz="kurz"] .ak-lang, .angebot-kurz[data-platz="kein"] { display: none; }
 .angebot-zeile.m-angebot { margin: 6px 4px 0; line-height: 1.5; }
 /* Warenkorb: Lieferzeit je Position (nur wenn sie sich unterscheiden) */
 .ci-lz { display: block; margin-top: 2px; font-size: 0.74rem; color: var(--ink-soft); line-height: 1.4; }

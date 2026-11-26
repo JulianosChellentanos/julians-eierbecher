@@ -138,6 +138,7 @@ function renderList(list) {
   // Farbe (oder Schriftfarbe) nur auf Anfrage: Design lässt sich ansehen und anfragen, aber nicht in den Warenkorb legen
   const anfrage = (it) => itemAnfrageFarbe(fakeItem(it));
   const totalOk = list.items.filter((it) => bestellbar(it) && !anfrage(it)).reduce((s, it) => s + (it.qty || 1), 0);
+  const nurAnfrage = list.items.filter((it) => bestellbar(it) && anfrage(it)).reduce((s, it) => s + (it.qty || 1), 0);
   const box = $('#ls-body');
   box.innerHTML = `
     <button class="linkbtn ls-back" id="ls-back">← Meine Listen</button>
@@ -182,7 +183,7 @@ function renderList(list) {
       : `<p class="cart-empty">Noch leer.<br><small>${own ? 'Füge unten dein aktuelles Design hinzu – oder gestalte im Konfigurator und wähle im Design-Code-Dialog „Zu einer Liste hinzufügen“.' : 'Der Besitzer hat noch nichts hinzugefügt.'}</small></p>`}
     <div class="ls-foot">
       ${own ? `<button class="btn btn-ghost" id="ls-addcur">➕ Aktuelles Design hinzufügen</button>` : `<button class="btn btn-ghost" id="ls-copy">📋 Als eigene Liste kopieren</button>`}
-      ${totalOk ? `<button class="btn btn-primary" id="ls-allcart">🛒 Alle ${totalOk} in den Warenkorb</button>` : ''}
+      ${totalOk ? `<button class="btn btn-primary" id="ls-allcart">🛒 ${nurAnfrage ? `${totalOk} Stück in den Warenkorb (${nurAnfrage} nur auf Anfrage)` : `Alle ${totalOk} in den Warenkorb`}</button>` : ''}
       ${own ? `<button class="linkbtn ls-delete" id="ls-delete">Liste löschen</button>` : ''}
     </div>`;
 
@@ -228,11 +229,11 @@ function renderList(list) {
     if (!bestellbar(it)) { showToast(EIERBECHER_HINWEIS); return; }
     $('#lists-modal').close(); toCart(it, false);
   }));
+  // Anfrage über der offenen Liste (die bleibt offen; nach dem Schließen ist der Fokus wieder an diesem Knopf)
   box.querySelectorAll('[data-anfrage-ls]').forEach((b) => b.addEventListener('click', () => {
     const it = list.items[+b.dataset.anfrageLs], anf = it && anfrage(it);
     if (!anf) return;
-    $('#lists-modal').close();
-    openAnfrage({ anlass: 'farbe', farbe: anf.farbe, code: it.code });
+    openAnfrage({ anlass: 'farbe', farbe: anf.farbe, schrift: anf.schrift, code: it.code });
   }));
   $('#ls-allcart')?.addEventListener('click', () => {
     $('#lists-modal').close();

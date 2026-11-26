@@ -90,7 +90,8 @@ function iconize(el, fallback = null, force = null) {
 }
 // Vertrauensband: reine Materialangabe mit neutralem Symbol (kein Blatt: „Pflanzen-PLA“ mit Keimling wäre eine Umweltaussage ohne
 // Erläuterung — RL (EU) 2024/825, UWG Anhang Nr. 4a); was PLA ist, steht im FAQ „Woraus bestehen die Vasen …“
-const TRUST = [[ICON.layers, 'Material: PLA'], [ICON.printer, 'Aus Deutschland'], [ICON.box, LZ]];
+// Lieferzeit in der Kachel als kurze Fassung (data-lieferzeit="kurz": bei Farben mit längerer Lieferzeit die ganze Spanne, cart.js fillShopInfo)
+const TRUST = [[ICON.layers, 'Material: PLA'], [ICON.printer, 'Aus Deutschland'], [ICON.box, LZ.replace('data-lieferzeit', 'data-lieferzeit="kurz"')]];
 // Reihenfolge der Bühne: Start = Hammerschlag (Signatur, grobe Geometrie → kein Moiré im allerersten Bild; Nachbarn Freiform und Voronoi,
 // nicht Fjordwelle), dann Orbit, Twist erst an Position 3, danach Formen und Muster im Wechsel. Erster Wechsel nach 5 s, danach alle 8 s.
 const ORDER = [6, 1, 0, 7, 2, 8, 3, 4, 5];

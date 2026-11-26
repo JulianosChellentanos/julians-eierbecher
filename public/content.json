@@ -156,7 +156,7 @@
     "trustKurz": [
       "🧵 Material: PLA",
       "🖨️ Gedruckt in Deutschland",
-      "📦 <span data-lieferzeit>5–8 Werktage</span>"
+      "📦 <span data-lieferzeit=\"kurz\">5–8 Werktage</span>"
     ]
   },
   "eierbecher": {
