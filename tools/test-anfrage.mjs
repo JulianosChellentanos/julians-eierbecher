@@ -11,7 +11,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = path.join(ROOT, 'tmp-tests', 'test-anfrage');
@@ -61,6 +61,19 @@ console.log('\n— Lieferzeit-Regel (public/js/pricing.js)');
   check(a1?.farbe.id === 'perl' && a1.schrift === false && a2?.farbe.id === 'perl' && a2.schrift === true && P.anfrageFarbeVon(it('alt'), opts) === null && P.anfrageFarbeVon(it('gold'), opts) === null,
     'auf Anfrage: Körper- und Schriftfarbe erkannt; inaktive Farbe zählt nicht (eigene Sperre), normale nicht');
   check(/^Die Schriftfarbe „Perlmutt“ gibt es derzeit nur auf Anfrage/.test(P.anfrageMeldung(a2)), 'Meldung nennt Schriftfarbe', P.anfrageMeldung(a2));
+  // Farbschrift nur, wenn sie gedruckt (und berechnet) wird: sichtbare Zeichen, Gravur beim Muster erlaubt — wie der Farbschrift-Aufpreis
+  const unsichtbar = it('weiss', { text: '\u200b\u202e', textStyle: 'farbe', textColor: 'perl' });
+  const zuTief = it('weiss', { text: 'Anna', textStyle: 'farbe', textColor: 'perl', pattern: 'lamellen', depth: 3 });
+  check(!P.mitFarbschrift(unsichtbar) && !P.mitFarbschrift(zuTief) && P.mitFarbschrift(it('weiss', { text: 'Anna', textStyle: 'farbe', textColor: 'perl' }))
+    && P.anfrageFarbeVon(unsichtbar, opts) === null && P.anfrageFarbeVon(zuTief, opts) === null
+    && P.positionLieferzeit(it('weiss', { text: '\u200b', textStyle: 'farbe', textColor: 'gold' }), opts) === '5–8 Werktage',
+  'Schriftfarbe zählt nur bei gedruckter Farbschrift (nur unsichtbare Zeichen oder Gravur gesperrt → weder Lieferzeit noch Sperre)');
+  check(P.mitFarbschrift(it('weiss', { text: '\u00ad', textStyle: 'farbe', textColor: 'gold' })), 'weiches Trennzeichen zählt wie im Preis als sichtbarer Strich');
+  const A = P.lieferzeitAllgemein;
+  check(A(farben.filter((f) => f.id !== 'gold'), '5–8 Werktage') === '5–8 Werktage' && A(farben, '5–8 Werktage') === '5–8 Werktage, einzelne Farben länger'
+    && A(farben, '5–8 Werktage', { kurz: true }) === '5–14 Werktage', 'allgemeine Angabe: mit längerer Farbe „…, einzelne Farben länger“ bzw. kurz die Spanne; kürzere (Kupfer 7) ändert nichts');
+  check(A([{ id: 'g', active: true, aufAnfrage: true, lieferzeit: '20 Werktage' }, { id: 'h', active: false, lieferzeit: '30 Werktage' }], '5–8 Werktage') === '5–8 Werktage'
+    && A(farben, 'nach Absprache') === 'nach Absprache', 'Farben auf Anfrage und inaktive zählen nicht; allgemeine ohne Zahl bleibt unverändert');
 }
 
 console.log('\n— Mail-Vorlagen');
@@ -78,6 +91,10 @@ console.log('\n— Mail-Vorlagen');
   check(m.subject === 'Farbe anfragen „Perlmutt“ · Erika <b>Beispiel</b>' && m.text.includes('Benachrichtigen: ja') && m.text.includes('Design: https://formsam.example/?d=K7P3QX')
     && m.html.includes('Zeile 1<br>Zeile &lt;2&gt;') && m.html.includes('Erika &lt;b&gt;Beispiel&lt;/b&gt;') && !m.html.includes('<b>Beispiel</b>') && m.html.includes('K7P-3QX'),
   'Meldung „Anfrage“: Betreff mit Farbe, Benachrichtigung, Design-Link, Nachricht maskiert mit Zeilenumbrüchen', m.subject);
+  const ms = T.adminAnfrage({ anfrage: { id: 'AF-261126-AB13', at: '2026-11-26T10:00:00Z', anlass: 'farbe', farbe: { id: 'feuerrot', name: 'Feuerrot', schrift: true }, name: 'Erika', email: 'erika@example.invalid',
+    nachricht: 'Hallo', benachrichtigen: false, code: null }, settings: SET, baseUrl: 'https://formsam.example' });
+  check(ms.subject === 'Farbe anfragen Schriftfarbe „Feuerrot“ · Erika' && ms.text.includes('Schriftfarbe: Feuerrot (Farbschrift der Gravur)') && ms.html.includes('Schriftfarbe Feuerrot'),
+    'Meldung zu einer Schriftfarbe: Betreff und Angaben nennen die Schriftfarbe', ms.subject);
 }
 
 // ---------------------------------------------------------------------------
@@ -191,9 +208,16 @@ const order = (id) => JSON.parse(readFileSync(path.join(ORDERS, id, 'order.json'
 const liste = () => JSON.parse(readFileSync(path.join(DATA, 'anfragen.json'), 'utf8'));
 const warte = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await sleep(100); } return false; };
 const item = (color, cfg = {}, extra = {}) => ({ product: 'vase', qty: 1, saucer: false, config: { ...VASE, color, ...cfg }, color, colorName: extra.colorName || color, code: null, ...extra });
+/** Lieferzeit, wie die Kasse im Browser sie anzeigt (pricing.js mit /api/colors und /api/pricing) — expectedLieferzeit */
+async function kassenLieferzeit(items) {
+  const cols = (await req('GET', '/api/colors')).json || [], pr = (await req('GET', '/api/pricing')).json;
+  const f = (id) => cols.find((c) => c.id === id) || null;
+  return P.bestellLieferzeit(items, { farbe: (it) => f(it.color), schriftfarbe: f, standard: String(pr?.shop?.lieferzeit || '').trim() || '5–8 Werktage' }).text;
+}
 async function bestellung(items, kunde = {}) {
   const q = await req('POST', '/api/quote', { items });
-  const co = await req('POST', '/api/checkout', { customer: { ...KUNDE, ...kunde }, items, payment: 'vorkasse', paypalOrderId: null, couponCode: null, beschaffenheit: true, mitSchluessel: true, expectedTotal: q.json?.total });
+  const co = await req('POST', '/api/checkout', { customer: { ...KUNDE, ...kunde }, items, payment: 'vorkasse', paypalOrderId: null, couponCode: null, beschaffenheit: true, mitSchluessel: true,
+    expectedTotal: q.json?.total, expectedLieferzeit: await kassenLieferzeit(items) });
   if (!co.json?.ok) throw new Error(`Kasse: ${co.status} ${co.text.slice(0, 200)}`);
   const { orderId, accessKey, itemCount } = co.json;
   for (let i = 0; i < itemCount; i++) {
@@ -280,6 +304,27 @@ async function main() {
   check(order(b3.orderId).lieferzeit === '5–8 Werktage', 'Farben ohne eigene Lieferzeit → allgemeine', order(b3.orderId).lieferzeit);
   const b4 = await bestellung([item('kupfer')]);
   check(order(b4.orderId).lieferzeit === '7 Werktage', 'nur Kupfer (7 Werktage) → kürzere eigene Lieferzeit', order(b4.orderId).lieferzeit);
+  const b5 = await bestellung([item('elfenbein', { text: '\u200b', textStyle: 'farbe', textColor: 'silber' })]);
+  check(order(b5.orderId).lieferzeit === '5–8 Werktage', 'Schriftfarbe Silber ohne sichtbaren Gravurtext (keine Farbschrift, kein Aufpreis) → allgemeine Lieferzeit', order(b5.orderId).lieferzeit);
+  // Kasse zeigt eine kürzere Lieferzeit als die Bestellung hätte (Farbe inzwischen geändert bzw. Kassen-Tab von vor dem Update) → 409
+  {
+    const items = [item('gold'), item('elfenbein')];
+    const q2 = await req('POST', '/api/quote', { items });
+    const ordner = () => readdirSync(ORDERS).length, n0 = ordner();
+    const kasse = (extra) => req('POST', '/api/checkout', { customer: KUNDE, items, payment: 'vorkasse', beschaffenheit: true, mitSchluessel: true, expectedTotal: q2.json?.total, ...extra }, { 'x-forwarded-for': neueIp() });
+    let k = await kasse({ expectedLieferzeit: '5–8 Werktage' });
+    check(k.status === 409 && k.json?.code === 'lieferzeit' && k.json?.lieferzeit === '10–14 Werktage' && /jetzt 10–14 Werktage\. Bitte prüf die Kasse/.test(k.json?.error || '') && ordner() === n0,
+      'Kasse zeigte 5–8, Bestellung hätte 10–14 → 409 „lieferzeit“ mit neuer Lieferzeit, keine Bestellung', k.json);
+    k = await kasse({});
+    check(k.status === 409 && k.json?.code === 'lieferzeit' && /bitte lade die Seite neu/.test(k.json?.error || '') && ordner() === n0, 'Kassen-Tab ohne expectedLieferzeit (zeigt die allgemeine) → 409 mit Bitte ums Neuladen', k.json);
+    k = await req('POST', '/api/paypal/create', { customer: KUNDE, items, payment: 'paypal', beschaffenheit: true, mitSchluessel: true, expectedTotal: q2.json?.total, expectedLieferzeit: '7 Werktage' }, { 'x-forwarded-for': neueIp() });
+    check(k.status === 409 && k.json?.code === 'lieferzeit', '/api/paypal/create prüft die Lieferzeit ebenso (vor der Zahlung)', k.json);
+    k = await kasse({ expectedLieferzeit: '20–25 Werktage' });
+    check(k.status === 200 && k.json?.ok, 'Kasse zeigte eine längere Lieferzeit (Farbe inzwischen schneller) → Bestellung mit der kürzeren', k.json);
+    if (k.json?.orderId) check(order(k.json.orderId).lieferzeit === '10–14 Werktage', '… order.lieferzeit = die des Servers', order(k.json.orderId).lieferzeit);
+    k = await req('POST', '/api/checkout', { customer: KUNDE, items: [item('elfenbein')], payment: 'vorkasse', beschaffenheit: true, mitSchluessel: true, expectedTotal: (await req('POST', '/api/quote', { items: [item('elfenbein')] })).json?.total }, { 'x-forwarded-for': neueIp() });
+    check(k.status === 200, 'Kassen-Tab ohne Feld mit Farbe ohne eigene Lieferzeit → wie bisher 200', k.json);
+  }
   await warte(() => smtp.got.some((m) => m.subject.includes(b4.orderId)));
   const bestaetigung = (id) => smtp.got.find((m) => m.subject.includes(id) && m.rcpts.includes(KUNDE.email));
   check(bestaetigung(b1.orderId)?.text.includes('Lieferzeit: 10–14 Werktage.') && bestaetigung(b2.orderId)?.text.includes('Lieferzeit: 120 Werktage.') && bestaetigung(b3.orderId)?.text.includes('Lieferzeit: 5–8 Werktage.'),
@@ -307,6 +352,8 @@ async function main() {
   check(r.status === 400 && /^Die Schriftfarbe „Perlmutt“ gibt es derzeit nur auf Anfrage/.test(r.json?.error || ''), '/api/quote → 400 (Schriftfarbe einer Farbschrift)', r.json);
   r = await req('POST', '/api/quote', { items: [item('elfenbein', { text: 'Anna', textStyle: 'gepraegt', textColor: 'perlmutt' })] });
   check(r.status === 200, 'Schriftfarbe ohne Farbschrift (geprägt) zählt nicht', r.json);
+  r = await req('POST', '/api/quote', { items: [item('elfenbein', { text: '\u200b\u202e', textStyle: 'farbe', textColor: 'perlmutt' }), item('elfenbein', { text: 'Anna', textStyle: 'farbe', textColor: 'lavendel', pattern: 'lamellen', depth: 3 })] });
+  check(r.status === 200 && r.json?.lines?.every((l) => !l.parts?.farbschrift), 'Schriftfarbe ohne gedruckte Farbschrift (nur unsichtbare Zeichen, Gravur beim Muster gesperrt) sperrt nicht – wie der Preis', r.json?.error || r.json?.lines?.map((l) => l.parts));
   r = await req('POST', '/api/quote', { items: [{ ...perl, color: undefined, colorName: 'Perlmutt · metallic' }] });
   check(r.status === 400 && /nur auf Anfrage/.test(r.json?.error || ''), 'ältere Zeile nur mit Farbnamen → ebenfalls 400', r.json);
   r = await req('POST', '/api/checkout', { customer: KUNDE, items: [item('elfenbein'), perl], payment: 'vorkasse', beschaffenheit: true, mitSchluessel: true, expectedTotal: 59.8 });
@@ -357,6 +404,21 @@ async function main() {
   }
   r = await anfrage({ nachricht: 'y'.repeat(3000), name: 'x'.repeat(80) });
   check(r.status === 200, 'Grenzen: Name 80, Nachricht 3000 Zeichen → 200', r.json);
+  for (const [body, re, was] of [
+    [{ name: '\u200b\u200b\u200b' }, /Namen/, 'Name nur aus unsichtbaren Zeichen'], [{ nachricht: '\u200b\u2060\u200b' }, /was du dir wünschst/, 'Nachricht nur aus unsichtbaren Zeichen'],
+    [{ nachricht: '😀'.repeat(3001) }, /zu lang/, 'Nachricht 3001 Emoji (vorher still gekürzt)'],
+  ]) {
+    r = await anfrage(body);
+    check(r.status === 400 && re.test(r.json?.error || ''), `${was} → 400`, r.json);
+  }
+  r = await anfrage({ name: 'Eri\u202eka\u0085 Bei\u200bspiel', nachricht: 'Zeile\u2028zwei\u202e', farbe: 'feuerrot', schrift: true });
+  const e3 = liste().find((x) => x.id === r.json?.id);
+  check(r.status === 200 && e3?.name === 'Erika Beispiel' && e3?.nachricht === 'Zeile\nzwei' && e3?.farbe?.schrift === true && e3?.farbe?.name === 'Feuerrot',
+    'Name/Nachricht ohne Steuer-, Bidi- und Null-Breiten-Zeichen; Schriftfarbe vermerkt', e3);
+  r = await anfrage({ anlass: 'angebot', farbe: undefined, schrift: true });
+  check(r.status === 200 && liste().find((x) => x.id === r.json?.id)?.farbe === null, 'schrift ohne Farbanfrage wird ignoriert');
+  await warte(() => smtp.got.some((m) => m.subject === 'Farbe anfragen Schriftfarbe „Feuerrot“ · Erika Beispiel'));
+  check(smtp.got.some((m) => m.subject === 'Farbe anfragen Schriftfarbe „Feuerrot“ · Erika Beispiel' && m.text.includes('Schriftfarbe: Feuerrot')), 'Meldung an den Shop nennt die Schriftfarbe', smtp.got.map((m) => m.subject).slice(-3));
   r = await req('POST', '/api/anfrage', '{kaputt', { 'x-forwarded-for': neueIp() });
   check(r.status === 400 && r.json?.error === 'Ungültige Anfrage', 'kaputtes JSON → 400', r.json);
   r = await req('POST', '/api/anfrage', JSON.stringify({ anlass: 'angebot', name: 'Erika', email: 'e@example.invalid', nachricht: 'x'.repeat(17000) }), { 'x-forwarded-for': neueIp() });
@@ -373,6 +435,10 @@ async function main() {
     '5 Anfragen je IP und Stunde, die 6. → 429 mit Hinweis auf die Adresse', [st, r.json]);
   r = await anfrage({ name: 'E' }, '192.0.2.51');
   check(r.status === 400, 'ungültige Anfragen zählen nicht gegen die Bremse (nur gültige)');
+  const st48 = [];
+  for (let i = 1; i <= 11; i++) st48.push((await anfrage({ anlass: 'angebot', farbe: undefined, nachricht: `/48 Nr. ${i}` }, `2001:db8:77:${i.toString(16)}::1`)).status);
+  r = await anfrage({ anlass: 'angebot', farbe: undefined }, '2001:db8:78:1::1');
+  check(st48.slice(0, 10).every((x) => x === 200) && st48[10] === 429 && r.status === 200, 'IPv6: höchstens 10 je /48 und Stunde (aus verschiedenen /64), anderes /48 weiter frei', st48);
   const zaehl = liste().filter((a) => Date.now() - Date.parse(a.at) < 3600e3).length;
   let gesamt = [];
   for (let i = 0; i < 60 - zaehl + 2; i++) gesamt.push((await anfrage({ anlass: 'angebot', farbe: undefined, nachricht: `Flut ${i}` })).status);
@@ -431,6 +497,8 @@ async function main() {
   const faq = (ld['@graph'] || []).find((x) => x['@type'] === 'FAQPage');
   const fq = faq?.mainEntity?.find((x) => /Individuelles/.test(x.name));
   check(fq && fq.acceptedAnswer.text.includes('schreib mir an hallo@formsam.example') && fq.acceptedAnswer.text.includes('Anfrageformular') && !/[<>]/.test(fq.acceptedAnswer.text), 'FAQ (JSON-LD): Eintrag „individuelles Angebot“ mit Kontaktadresse, ohne HTML', fq?.acceptedAnswer?.text);
+  const fl = faq?.mainEntity?.find((x) => /Wie lange dauert/.test(x.name));
+  check(fl?.acceptedAnswer.text.includes('dauert es 5–8 Werktage, einzelne Farben länger.'), 'FAQ (JSON-LD): Lieferzeit mit Einschränkung, weil Gold/Silber länger brauchen', fl?.acceptedAnswer?.text);
   check(startseite.includes('id="anfrage-modal"') && startseite.includes('id="anf-website"') && startseite.includes('href="/datenschutz#anfrage"') && startseite.includes('data-anfrage="angebot"') && startseite.includes('data-kontakt-mail'),
     'Startseite: Anfrage-Dialog mit Fallen-Feld und Datenschutz-Link, Links „Individuelles Angebot“, Kontaktadresse');
 
