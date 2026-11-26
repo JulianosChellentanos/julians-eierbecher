@@ -1,6 +1,6 @@
 # formsam – Rechtstexte: Notiz für Julian
 
-Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand`
+Stand: 26.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `/impressum`, `/datenschutz`, `/agb`, `/widerruf`, `/versand`
 
 > **Keine Rechtsberatung.** Die Texte sind sorgfältig nach dem tatsächlichen Verhalten des Shops geschrieben
 > (Code gelesen: `server.js`, `lib/mailer.js`, `lib/mail-templates.js`, `public/js/*`, `public/sw.js`),
@@ -188,15 +188,20 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
   schickst sie per Mail (Abschnitt „Kundenkonto“).
 - **Lieferzeit je Farbe** (AGB § 7, Versandseite): Die allgemeine Lieferzeit gilt, soweit bei der gewählten Farbe keine andere
   angegeben ist; bei mehreren Positionen gilt für die ganze Bestellung die längste (bei Farbschrift zählt die Schriftfarbe mit). Die
-  Bestellung hält ihre Lieferzeit beim Anlegen fest (`order.lieferzeit`), Bestätigung und Rechnung nennen genau diese. Annahme: Es wird
-  gemeinsam verschickt (keine Teillieferung) – wer Teillieferungen möchte, muss AGB § 7 anpassen.
+  Bestellung hält ihre Lieferzeit beim Anlegen fest (`order.lieferzeit`), Bestätigung und Rechnung nennen genau diese. Sie ist nie länger
+  als die in der Kasse angezeigte (§ 312d Abs. 1 BGB – die Angabe wird Vertragsinhalt): Ändert sich eine Farbe, während die Kasse offen
+  ist, lehnt der Shop ab und zeigt die neue Lieferzeit. Annahme: Es wird gemeinsam verschickt (keine Teillieferung) – wer Teillieferungen
+  möchte, muss AGB § 7 anpassen.
+- **Allgemeine Lieferzeit auf der Startseite** (Trust-Zeile, „So geht’s“, FAQ): Braucht eine bestellbare Farbe länger, steht dort
+  „5–8 Werktage, einzelne Farben länger“ (in den kleinen Kacheln auf dem Handy die ganze Spanne, z. B. „5–14 Werktage“), damit die
+  Werbeaussage nicht pauschal zu kurz ist.
 - **Farben „auf Anfrage“ und individuelle Angebote:** Solche Farben sind im Shop nicht bestellbar (die Kasse lehnt sie ab), nur
   anzufragen. Ein Angebot per E-Mail ist ein Vertrag außerhalb der Shop-Kasse: Annahme, Preis, Lieferzeit und ob die Vase nach
   deinen Vorgaben gefertigt wird (Ausschluss des Widerrufsrechts nach § 312g Abs. 2 Nr. 1 BGB) gehören ausdrücklich ins Angebot;
   Widerrufsbelehrung, AGB und eine Bestätigung auf dauerhaftem Datenträger schickst du dann selbst mit. AGB § 3 beschreibt nur
   die Shop-Bestellung – **bitte prüfen**, ob du für Angebote einen eigenen Satz in den AGB möchtest.
 - **Datenschutz – Anfrageformular** (Abschnitt `#anfrage`): Name, E-Mail, Nachricht, Anlass, Farbe, Benachrichtigungswunsch,
-  Design-Code, Eingangszeit; Art. 6 Abs. 1 lit. b bzw. f DSGVO; Zustellung als Mail an dich über den eingestellten Mailserver, keine
+  Design-Code (entsteht erst beim Absenden und nur mit Häkchen – nur das Öffnen speichert nichts), Eingangszeit; Art. 6 Abs. 1 lit. b bzw. f DSGVO; Zustellung als Mail an dich über den eingestellten Mailserver, keine
   automatische Mail an die Kundin; Anfrageliste bis zur Erledigung, höchstens 12 Monate (der Shop löscht ältere selbst). Erledigte
   Anfragen im Admin löschen, sobald du sie nicht mehr brauchst – so steht es in der Erklärung.
 - **Stand-Datum** steht zentral in `LEGAL_STAND` (`lib/legal.js`) und muss bei inhaltlichen Änderungen angepasst werden.

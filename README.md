@@ -142,18 +142,29 @@ allgemeine Lieferzeit und sind normal bestellbar — es ist nichts nachzutragen.
   Normalform (`10-14`, `10 bis 14` → „10–14 Werktage“, „7“ → „7 Werktage“); alles andere (Wochen, 0, „14–10“, Text) lehnt er mit 400 und
   deutscher Meldung ab. Leer = allgemeine Lieferzeit (Firma → Shop-Angaben). Regel an **einer** Stelle, `public/js/pricing.js`
   (`lieferzeitNorm`, `positionLieferzeit`, `bestellLieferzeit`, `anfrageFarbeVon`), die der Server mitbenutzt:
-  - Position = Lieferzeit der Körperfarbe, bei Farbschrift (Gravurtext im Stil „Farbschrift“) die längere von Körper- und Schriftfarbe.
+  - Position = Lieferzeit der Körperfarbe, bei Farbschrift die längere von Körper- und Schriftfarbe. Farbschrift heißt dabei dasselbe wie
+    beim Farbschrift-Aufpreis (`mitFarbschrift`): Stil „Farbschrift“, Gravurtext mit sichtbaren Zeichen und Gravur beim Muster erlaubt —
+    sonst zählt die Schriftfarbe weder für die Lieferzeit noch für die Sperre „auf Anfrage“.
   - Bestellung = die **längste** Lieferzeit ihrer Positionen (Vergleich nach der Obergrenze in Werktagen, bei Gleichstand der Untergrenze;
     die frei geschriebene allgemeine Lieferzeit wird dafür gelesen: „2–3 Wochen“ = 10–15 Werktage).
   - Konfigurator: Farbe-Reiter rechts in der Überschriftzeile („📦 Lieferzeit 10–14 Werktage“, eine Zeile — der Preisbereich verschiebt
-    sich nicht), Tooltip am Farbpunkt. Warenkorb: unten die Lieferzeit der Bestellung, bei verschiedenen Lieferzeiten zusätzlich je
-    Position; Kasse („📦 Lieferzeit: …“ unter dem Gesamtbetrag) und Danke-Ansicht ebenso.
+    sich nicht; bestimmt die Schriftfarbe einer Farbschrift die Lieferzeit: „📦 10–14 Werktage (Schriftfarbe)“), Tooltip am Farbpunkt.
+    Im Preisbereich selbst steht sie bewusst nicht: Er ist unten im Panel verankert und hat keine freie Zeile (der Hinweis neben dem
+    Preis ist schon zweizeilig) — jede weitere Zeile schöbe Preis und Kaufknopf. Warenkorb: unten die Lieferzeit der Bestellung, bei
+    verschiedenen Lieferzeiten zusätzlich je Position; Kasse („📦 Lieferzeit: …“ unter dem Gesamtbetrag) und Danke-Ansicht ebenso.
+  - Die Kasse schickt die angezeigte Lieferzeit mit (`expectedLieferzeit`, wie `expectedTotal`). Wäre die der Bestellung länger (Farbe
+    geändert, während die Kasse offen war), antworten `/api/checkout` und `/api/paypal/create` mit 409 `code: 'lieferzeit'`; die Kasse
+    lädt Farben und Preise neu und zeigt die neue Lieferzeit. Kassen-Tabs von vor diesem Update schicken das Feld nicht — für sie gilt
+    die allgemeine Lieferzeit als angezeigt (bei einer längeren: 409 mit Bitte ums Neuladen). Bei PayPal steht die Lieferzeit ab
+    `/api/paypal/create` fest wie der Preis.
   - Die Bestellung speichert ihre Lieferzeit beim Anlegen (`order.lieferzeit`); Bestellbestätigung, Rechnung (Lieferzeit und
     voraussichtlicher Leistungsmonat) und „Erneut senden“ lesen sie dort (`lib/lieferfrist.js` `bestellLieferzeitText`). Ältere
     Bestellungen ohne das Feld: wie bisher die allgemeine Lieferzeit. Ausgestellte Belege bleiben unverändert.
-  - Startseite (Trust-Zeile, „So geht’s“, FAQ) nennt weiter die allgemeine Lieferzeit (`data-lieferzeit`); die FAQ sagt, dass eine
-    eigene Lieferzeit an der Farbe steht. AGB § 7 und Versandseite enthalten die Regel, die Versandseite listet Farben mit abweichender
-    Lieferzeit und Farben „auf Anfrage“ automatisch.
+  - Startseite (Trust-Zeile, „So geht’s“, FAQ, auch das FAQ-JSON-LD) nennt die allgemeine Lieferzeit (`data-lieferzeit`, vor der
+    Farbwahl) — braucht eine bestellbare Farbe länger, mit Einschränkung: „5–8 Werktage, einzelne Farben länger“, in knappen Kacheln
+    (`data-lieferzeit="kurz"`, Handy) die Spanne „5–14 Werktage“ (`lieferzeitAllgemein`). Die FAQ sagt, dass eine eigene Lieferzeit an
+    der Farbe steht. AGB § 7 und Versandseite enthalten die Regel, die Versandseite listet Farben mit abweichender Lieferzeit und Farben
+    „auf Anfrage“ automatisch.
 - **Auf Anfrage** (`aufAnfrage: true`): Die Farbe bleibt im Konfigurator sichtbar und wählbar (Zeichen „Anfrage“ am Farbpunkt, bei
   Schriftfarben „?“), zeigt „Lieferzeit auf Anfrage“, und alle Kaufknöpfe heißen „Farbe anfragen“ (öffnen das Anfrageformular). Gilt
   genauso für die Schriftfarbe einer Farbschrift. `/api/quote`, `/api/checkout` und `/api/paypal/create` lehnen solche Positionen mit 400
@@ -162,10 +173,15 @@ allgemeine Lieferzeit und sind normal bestellbar — es ist nichts nachzutragen.
   normal, „In den Warenkorb“ heißt dort „Farbe anfragen“. Ältere Shop-Tabs (vor dem Update) bieten die Farbe normal an — die Kasse lehnt
   sie dann mit Meldung ab. Inaktive Farben („Im Shop“ aus) bleiben wie bisher ausgeblendet.
 - **Anfrageformular** (`public/js/anfrage.js`, ein Dialog für „Farbe anfragen“ und „Individuelles Angebot“): Name, E-Mail, Nachricht
-  (vorausgefüllt), bei Farben „Gib mir Bescheid, sobald die Farbe bestellbar ist“, das aktuelle Design als Design-Code (abwählbar; aus
-  Warenkorb und Listen der Code der Position), Link zur Datenschutzerklärung, unsichtbares Fallen-Feld `website`.
-  `POST /api/anfrage` prüft Anlass (`farbe` | `angebot`), Name 2–80, E-Mail (wie in der Kasse), Nachricht 1–3000 Zeichen und die Farbe
-  (muss es geben), bremst (5 je IP/Stunde, 50 insgesamt) und schickt eine Meldung an die Admin-Adresse (`mail.adminTo`, sonst
+  (vorausgefüllt; bei einer Schriftfarbe ist von der Schrift die Rede), bei Farben „Gib mir Bescheid, sobald die Farbe bestellbar ist“,
+  das Design als Design-Code (abwählbar; aus Warenkorb und Listen der Code der Position). Ein neuer Design-Code entsteht erst beim
+  Absenden und nur mit Häkchen — wer das Formular nur öffnet oder abbricht, speichert nichts auf dem Server (Datenschutzerklärung).
+  Link zur Datenschutzerklärung, unsichtbares Fallen-Feld `website`. Aus Warenkorb und Listen öffnet der Dialog über ihnen (sie bleiben
+  offen, der Fokus kehrt zum Knopf zurück).
+  `POST /api/anfrage` prüft Anlass (`farbe` | `angebot`, `schrift: true` = Schriftfarbe), Name 2–80, E-Mail (wie in der Kasse),
+  Nachricht 1–3000 Zeichen (Name und Nachricht ohne Steuer-, Bidi- und Null-Breiten-Zeichen wie die Kundendaten der Kasse; zu lang →
+  400, nie still gekürzt) und die Farbe (muss es geben), bremst (5 je IP bzw. IPv6-/64, 10 je IPv6-/48, 50 insgesamt je Stunde) und
+  schickt eine Meldung an die Admin-Adresse (`mail.adminTo`, sonst
   Firmen-E-Mail) mit Reply-To = Kundin und `Auto-Submitted`. **Bewusst keine Mail an die angegebene Adresse** (sonst ließe sich das
   Formular als Spam-Schleuder nutzen) — die Erfolgsmeldung sagt „Danke! Ich melde mich per E-Mail bei dir (von <Antwortadresse>)“
   (`mail.replyTo`, sonst Firmen-E-Mail; auch in `/api/pricing` → `kontakt.email`). Im Wartungsmodus gesperrt wie alle APIs.
@@ -173,9 +189,12 @@ allgemeine Lieferzeit und sind normal bestellbar — es ist nichts nachzutragen.
   (`GET /api/admin/anfragen`, `POST /api/admin/anfrage-status`, `POST /api/admin/anfrage-loeschen`). Die Meldung lässt sich im
   Versandprotokoll „Erneut“ senden, solange die Anfrage gespeichert ist. Die Datenauskunft eines Kontos enthält Anfragen derselben
   (bestätigten) Adresse.
-- **Hinweis auf individuelle Angebote**: unter dem Kaufknopf im Konfigurator („Sonderwunsch? … frag mich nach einem individuellen
-  Angebot“, auf dem Handy am Panel-Ende), FAQ-Eintrag, „Individuelles Angebot“ in der Fußzeile mit „oder schreib an <Adresse>“; jeder
-  Link auf `#angebot` (z. B. `https://www.formsam.com/#angebot`) öffnet das Formular.
+- **Hinweis auf individuelle Angebote**: am Desktop als kurzer Link in der vorhandenen Zeile unter dem Kaufknopf („💬 Sonderwunsch?
+  Individuelles Angebot“, der volle Satz „Sonderwunsch? Andere Größe, Stückzahl, Farbe oder eigene Form – frag mich nach einem
+  individuellen Angebot.“ als Tooltip). Die Zeile bekommt dadurch nie eine Zeile mehr (der Preisbereich ist unten verankert): Ist das
+  Panel schmal, steht nur „💬 Sonderwunsch?“, notfalls gar nichts (`app.js initAngebotKurz`, gemessen bei jeder Größenänderung).
+  Auf Handy und Tablet steht der ganze Satz am Panel-Ende. Dazu ein FAQ-Eintrag und „Individuelles Angebot“ in der Fußzeile mit
+  „oder schreib an <Adresse>“; jeder Link auf `#angebot` (z. B. `https://www.formsam.com/#angebot`) öffnet das Formular.
 - Test: `node tools/test-anfrage.mjs`.
 
 ## Rechnungen und Rechtstexte als PDF
@@ -290,7 +309,7 @@ aus einer IP teilen sich die laufende Prüfung (kein zusätzlicher Versuch, kein
 | Design-Codes | 300 neue je IP/Stunde; ab 5000 insgesamt je Stunde nur noch 30 je IP (bekannte Codes zählen nicht) | 429 |
 | PayPal-Einzug | nur bei aktivem PayPal und nur für Zahlungen, die der Shop in den letzten 3 Stunden selbst angelegt hat (`/api/paypal/create`, zählt bei der Kasse); Zugriffstoken bis zum Ablauf wiederverwendet, jeder Aufruf mit 30 s Zeitlimit | 400 (aus) bzw. 404 ohne Aufruf bei PayPal |
 | Vorschaubilder / Listen | 600 je IP/Stunde · 30 neue Listen, 600 Änderungen je IP/Stunde | 429 |
-| Anfrageformular | 5 je IP/Stunde · 50 insgesamt/Stunde (nur gültige Anfragen zählen; gefülltes Fallen-Feld → 200 ohne Mail, ohne Eintrag) | 429 mit Hinweis auf die Kontaktadresse |
+| Anfrageformular | 5 je IP/Stunde · 10 je IPv6-/48 · 50 insgesamt/Stunde (nur gültige Anfragen zählen; gefülltes Fallen-Feld → 200 ohne Mail, ohne Eintrag) | 429 mit Hinweis auf die Kontaktadresse |
 
 Normaler Gebrauch bleibt weit darunter (der Konfigurator speichert bei jeder Code-Anzeige ein Design und ein Vorschaubild). Der
 Abrufzähler der Design-Codes wird gebündelt höchstens einmal pro Minute gespeichert. Mails an die Kontoadresse übernehmen nur einen
