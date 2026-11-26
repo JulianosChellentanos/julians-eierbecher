@@ -1294,7 +1294,7 @@ async function wrSetStatus(ref, status) {
 // ---------------------------------------------------------------------------
 // Anfragen („Farbe anfragen“ / „Individuelles Angebot“ aus dem Shop, POST /api/anfrage)
 //   GET  /api/admin/anfragen → { ok, anfragen: [neueste zuerst] }
-//        Eintrag { id: 'AF-YYMMDD-XXXX', at, anlass: 'farbe'|'angebot', farbe: { id, name } | null, name, email, nachricht,
+//        Eintrag { id: 'AF-YYMMDD-XXXX', at, anlass: 'farbe'|'angebot', farbe: { id, name, schrift? } | null, name, email, nachricht,
 //                  benachrichtigen, code, status: 'offen'|'erledigt', erledigtAt }
 //   POST /api/admin/anfrage-status { id, status } · POST /api/admin/anfrage-loeschen { id }
 // Antworten gehen von Hand per E-Mail (die Meldung an den Shop hat Reply-To = Kundin); der Shop schreibt der Kundschaft nicht selbst.
@@ -1320,7 +1320,7 @@ function afItemHTML(a) {
   const code = String(a.code || '').trim();
   const codeTxt = code.replace(/(.{3})(?=.)/g, '$1-');
   return `<div class="wr-item ${done ? 'erledigt' : 'offen'}" id="af-${id}">
-      <div class="wr-head"><span class="badge ${done ? 'wr-erledigt' : 'wr-offen'}">${done ? '✓ erledigt' : 'offen'}</span><b>${esc(AF_ANLASS[a.anlass] || 'Anfrage')}</b>${a.farbe?.name ? `<span>· Farbe <b>${esc(a.farbe.name)}</b></span>` : ''}<span class="muted">${fmtDT(a.at)} Uhr</span><span class="muted ref">${id}</span></div>
+      <div class="wr-head"><span class="badge ${done ? 'wr-erledigt' : 'wr-offen'}">${done ? '✓ erledigt' : 'offen'}</span><b>${esc(AF_ANLASS[a.anlass] || 'Anfrage')}</b>${a.farbe?.name ? `<span>· ${a.farbe.schrift ? 'Schriftfarbe' : 'Farbe'} <b>${esc(a.farbe.name)}</b></span>` : ''}<span class="muted">${fmtDT(a.at)} Uhr</span><span class="muted ref">${id}</span></div>
       <div class="wr-who"><b>${esc(a.name)}</b> · <a href="mailto:${esc(a.email)}">${esc(a.email)}</a>${a.anlass === 'farbe' ? `<br><span class="muted">Benachrichtigen, sobald bestellbar:</span> ${a.benachrichtigen ? '<b>ja</b>' : 'nein'}` : ''}${code ? `<br><span class="muted">Design-Code:</span> <a href="/?d=${encodeURIComponent(code)}" target="_blank" rel="noopener">${esc(codeTxt)}</a>` : ''}</div>
       <div class="wr-msg">${esc(String(a.nachricht || '').trim())}</div>
       <div class="wr-foot">
@@ -1514,7 +1514,7 @@ function renderColors() {
       <label class="grow">Notiz<input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA Silk"></label>
       <label>Bestand (g)<input type="number" min="0" step="10" value="${esc(c.stock ?? '')}" placeholder="—" onchange="colors[${i}].stock=this.value===''?null:+this.value;renderColors()" style="width:88px"></label>
       <label>Aufpreis (€)<input type="number" min="0" step="0.5" value="${euroField(c.aufpreis)}" placeholder="0" title="Aufpreis je Stück für diese Körperfarbe (leer = 0)" onchange="colors[${i}].aufpreis=euro(this.value);renderColors()" style="width:88px"></label>
-      <label>Lieferzeit<input type="text" maxlength="40" value="${esc(c.lieferzeit || '')}" placeholder="${esc(allgLz)}" title="Eigene Lieferzeit dieser Farbe in Werktagen, z. B. „10–14 Werktage“ oder „7 Werktage“ – leer = allgemeine Lieferzeit (Firma → Shop-Angaben). Im Warenkorb gilt die längste aller Positionen." onchange="colors[${i}].lieferzeit=this.value.trim()" style="width:112px"${c.aufAnfrage ? ' disabled' : ''}></label>
+      <label>Lieferzeit<input type="text" maxlength="40" value="${esc(c.lieferzeit || '')}" placeholder="${esc(allgLz)}" title="Eigene Lieferzeit dieser Farbe in Werktagen, z. B. „10–14 Werktage“ oder „7 Werktage“ – leer = allgemeine Lieferzeit (Firma → Shop-Angaben). Im Warenkorb gilt die längste aller Positionen." onchange="colors[${i}].lieferzeit=this.value.trim()" style="width:104px;padding-left:8px;padding-right:8px"${c.aufAnfrage ? ' disabled' : ''}></label>
       <label>Offener Bedarf<div class="need-wrap"><div class="need ${over ? 'over' : ''}" style="width:80px"><i style="--w:${Math.round(n / maxNeed * 100)}%"></i></div><small>${n ? `${Math.round(n)} g${over ? ' ⚠️' : ''}` : '—'}</small></div></label>
       <div class="col-checks"><label class="inline"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"> Im Shop</label>
       <label class="inline" title="Die Farbe bleibt im Konfigurator sichtbar und wählbar, lässt sich aber nicht bestellen: statt „In den Warenkorb“ steht „Farbe anfragen“ (Anfrage kommt per E-Mail und unter Anfragen)"><input type="checkbox" ${c.aufAnfrage ? 'checked' : ''} onchange="colors[${i}].aufAnfrage=this.checked;renderColors()"> Auf Anfrage</label></div>

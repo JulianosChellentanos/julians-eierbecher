@@ -290,7 +290,7 @@
   /* ---------- Farben ---------- */
   .color-row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-end; padding: 12px 0; border-bottom: 1px solid #eee5d5; }
   .color-row:last-child { border-bottom: none; }
-  .color-row .grow { flex: 1; min-width: 150px; }
+  .color-row .grow { flex: 1; min-width: 110px; }
   .color-row .f-sw { flex-direction: row; align-items: center; gap: 8px; }
   .color-row label.inline { padding-bottom: 8px; }
   .color-row .col-checks { display: flex; flex-direction: column; gap: 2px; }
@@ -536,8 +536,8 @@
 
       <!-- 🎨 Farben -->
       <section id="pane-colors" class="pane" data-settings hidden>
-        <div class="pane-head"><div><h1>Filament-Farben</h1><p>Was hier aktiv ist, können Kunden im Konfigurator wählen. Rolle leer? Haken raus — die Farbe verschwindet sofort aus dem Shop. <b>Lieferzeit</b> je Farbe in Werktagen (leer = allgemeine Lieferzeit; im Warenkorb gilt die längste Position). <b>Auf Anfrage</b>: sichtbar, aber nicht bestellbar – Kundschaft kann die Farbe anfragen.</p></div><button class="ghost" onclick="addColor()">+ Farbe hinzufügen</button></div>
-        <div class="card"><div id="colors-list"></div></div>
+        <div class="pane-head"><div><h1>Filament-Farben</h1><p>Was hier aktiv ist, können Kunden im Konfigurator wählen. Rolle leer? Haken raus — die Farbe verschwindet sofort aus dem Shop.</p></div><button class="ghost" onclick="addColor()">+ Farbe hinzufügen</button></div>
+        <div class="card"><p class="muted" style="margin-bottom:4px"><b>Lieferzeit</b> je Farbe in Werktagen, z. B. „10–14“ oder „7“ (leer = allgemeine Lieferzeit; im Warenkorb gilt die längste Position). <b>Auf Anfrage</b>: im Konfigurator sichtbar, aber nicht bestellbar – Kundschaft kann die Farbe anfragen.</p><div id="colors-list"></div></div>
       </section>
 
       <!-- 🖼️ Bilder -->
