@@ -186,6 +186,19 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
   /64-Netz) nur im Arbeitsspeicher, höchstens einen Tag (Abschnitt „Wenn du die Website aufrufst“). Das Konto lässt sich
   unter „Mein Konto“ selbst löschen; eine Datenauskunft erstellst du im Admin unter Kunden (Datenexport als JSON) und
   schickst sie per Mail (Abschnitt „Kundenkonto“).
+- **Lieferzeit je Farbe** (AGB § 7, Versandseite): Die allgemeine Lieferzeit gilt, soweit bei der gewählten Farbe keine andere
+  angegeben ist; bei mehreren Positionen gilt für die ganze Bestellung die längste (bei Farbschrift zählt die Schriftfarbe mit). Die
+  Bestellung hält ihre Lieferzeit beim Anlegen fest (`order.lieferzeit`), Bestätigung und Rechnung nennen genau diese. Annahme: Es wird
+  gemeinsam verschickt (keine Teillieferung) – wer Teillieferungen möchte, muss AGB § 7 anpassen.
+- **Farben „auf Anfrage“ und individuelle Angebote:** Solche Farben sind im Shop nicht bestellbar (die Kasse lehnt sie ab), nur
+  anzufragen. Ein Angebot per E-Mail ist ein Vertrag außerhalb der Shop-Kasse: Annahme, Preis, Lieferzeit und ob die Vase nach
+  deinen Vorgaben gefertigt wird (Ausschluss des Widerrufsrechts nach § 312g Abs. 2 Nr. 1 BGB) gehören ausdrücklich ins Angebot;
+  Widerrufsbelehrung, AGB und eine Bestätigung auf dauerhaftem Datenträger schickst du dann selbst mit. AGB § 3 beschreibt nur
+  die Shop-Bestellung – **bitte prüfen**, ob du für Angebote einen eigenen Satz in den AGB möchtest.
+- **Datenschutz – Anfrageformular** (Abschnitt `#anfrage`): Name, E-Mail, Nachricht, Anlass, Farbe, Benachrichtigungswunsch,
+  Design-Code, Eingangszeit; Art. 6 Abs. 1 lit. b bzw. f DSGVO; Zustellung als Mail an dich über den eingestellten Mailserver, keine
+  automatische Mail an die Kundin; Anfrageliste bis zur Erledigung, höchstens 12 Monate (der Shop löscht ältere selbst). Erledigte
+  Anfragen im Admin löschen, sobald du sie nicht mehr brauchst – so steht es in der Erklärung.
 - **Stand-Datum** steht zentral in `LEGAL_STAND` (`lib/legal.js`) und muss bei inhaltlichen Änderungen angepasst werden.
 
 ## Was du NICHT anpassen musst (läuft automatisch aus den Einstellungen)
@@ -196,6 +209,8 @@ Stand: 25.11.2026 · Code: `lib/legal.js`, `lib/produkthinweise.js` · Seiten: `
 | PayPal an/aus (mit Client-ID) | AGB § 3 und § 8, Datenschutz (Kurzfassung, Zahlung, Bestellung, Empfänger), „Versand & Zahlung“, Lieferfristbeginn |
 | Versandkosten / Freigrenze | AGB § 6, „Versand & Zahlung“ (auch „kostenlos“ oder „ohne Freigrenze“), Versandhinweis am Preis im Shop |
 | Lieferzeit / Liefergebiet | AGB § 7, „Versand & Zahlung“, PLZ-Prüfung in Kasse und Konto (Deutschland: 5 Ziffern) |
+| Farben: Lieferzeit je Farbe, „auf Anfrage“ | „Versand & Zahlung“ (Liste der Farben mit abweichender Lieferzeit und der Farben auf Anfrage), Konfigurator, Warenkorb, Kasse, Bestätigung und Rechnung neuer Bestellungen |
+| Antwort-Adresse (✉️ E-Mail) bzw. Firmen-E-Mail | Kontaktadresse bei „Individuelles Angebot“ (Konfigurator, FAQ, Fußzeile) und in der Erfolgsmeldung des Anfrageformulars |
 | Firmendaten, Telefon, USt-IdNr. | Impressum, Datenschutz, AGB § 2, Widerrufsbelehrung, Muster-Formular, Fußzeile, PDF-Anhänge der Bestätigung (als PDF erst mit Inhaber, vollständiger Anschrift und E-Mail, sonst HTML) |
 | Hoster / Serverstandort / AV-Vertrag (Häkchen) | Datenschutz (Hosting, Kurzfassung, Empfänger; ohne Hoster neutraler Text + Admin-Warnung) |
 | Mail-Versand (eigener Mailserver / Anbieter + Name) | Datenschutz (E-Mails, Speicherdauer, Sicherungen, Empfänger) |
