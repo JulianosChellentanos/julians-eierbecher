@@ -38,7 +38,7 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
 - **Aktionen**: Rabatt je Muster, mehrere Aktionen gleichzeitig, Badges und Umschalt-Hinweis im Konfigurator (Admin → Aktionen). Mit einer Aktion zahlt niemand mehr als ohne: ist bei mehreren Stück der Normalpreis mit Mengenrabatt günstiger (Aktion ohne „Mengenrabatt zusätzlich“), gilt er für diese Warenkorb-Zeile — ohne Aktion, ohne Streichpreis. Ein nicht mit Aktionen kombinierbarer Gutschein wird nur abgelehnt, wenn eine Aktion in dieser Bestellung tatsächlich etwas spart. Streichpreis nach § 11 PAngV = **niedrigster Preis der letzten 30 Tage** vor Aktionsbeginn („Niedrigster Preis der letzten 30 Tage: …“), Prozentangaben beziehen sich darauf; Grundlage ist die Preis-Historie `data/preis-historie.json` (Momentaufnahme bei jedem Start und jeder Preis-/Aufpreis-/Aktionsänderung, 90 Tage). Test: `node tools/test-referenzpreis.mjs`
 - **Größenaufschlag**: Preis wächst mit dem Volumen relativ zur Normalgröße (relVol = Höhe/Normalhöhe × Breite²; %- und €-Satz im Admin einstellbar, live im Konfigurator sichtbar, Server rechnet verbindlich)
 - **Gravur**: zuschaltbares Extra (Aufpreis im Admin einstellbar, Standard 3 €), 7 Schriftarten (inkl. „Edel" Marcellus & „Kalligrafie" Great Vibes, OFL → Lizenzen in docs/LICENSES.md), Größe & Höhen-Position einstellbar; der Text folgt der Silhouette (Taille/Bauch) und wird um die Wand gebogen. Das Feld zeigt den Text genau so, wie er graviert wird (keine Versalien-Darstellung). Häkchen aus = keine Gravur in Preis, Code und Bestellung, der getippte Text bleibt aber im Feld und kommt mit dem Häkchen zurück. Farbschrift in derselben Farbe wie die Vase: nur ein Hinweis, keine Sperre. Die Gravurschriften (≈ 150 kB) lädt der Konfigurator erst, wenn jemand die Gravur ansteuert
-- **16 PLA-Farben mit Finishes**: matt (Bambu-Matte-Palette), glänzend (Glossy) und metallic/Silk (Gold, Silber, Kupfer, Perlmutt) — Finish pro Farbe im Admin einstellbar, gerendert mit MeshPhysicalMaterial (Clearcoat/Metalness) + RoomEnvironment-Reflexionen im Studio
+- **16 PLA-Farben mit Finishes**: matt (Bambu-Matte-Palette), glänzend (Glossy) und metallic/Silk (Gold, Silber, Kupfer, Perlmutt) — Finish pro Farbe im Admin einstellbar, gerendert mit MeshPhysicalMaterial (Clearcoat/Metalness) + RoomEnvironment-Reflexionen im Studio. Je Farbe eine eigene **Lieferzeit** und das Häkchen **„auf Anfrage“** (siehe [Farben: Lieferzeit, „auf Anfrage“ und Anfragen](#farben-lieferzeit-auf-anfrage-und-anfragen))
 - **Galerie & Produktfotos**: Im Admin (Produktfotos & Galerie) hochgeladene Fotos erscheinen sofort in der „Zuhause bei formsam“-Galerie; Fotos der Kategorie Vase ersetzen die Render-Bilder der Produktkarten
 - **Szenen-Vorschau**: Studio + 4 fotoreale CC0-HDRI-Szenen von Poly Haven (Esstisch mit echter Holztisch-Textur, Fensterbrett mit Ausblick, Café, Abend) — Environment-Beleuchtung, Trockengräser in der Vase
 - **📸 Foto-Shooting**: rendert das aktuelle Design in 4 Szenen als speicherbare PNGs
@@ -70,7 +70,8 @@ Die sieben ursprünglichen Muster bleiben geometrisch unverändert. Ein physisch
   - Liste und Detail: Bestellungen und „Letzte Bestellungen“ chronologisch (Bestellzeit, neueste oben — auch vor dem Altbestand `OV-…`), je 200 Zeilen mit „Weitere … zeigen“; die Suche findet auch eingelöste Gutschein- und Guthaben-Codes; das Detail zeigt unter den Positionen die Summen wie die Rechnung (Zwischensumme, Gutschein, Versand, Gesamtbetrag, bei Guthaben „abzüglich Guthaben“ und „Zu zahlen“). Netz- und Serverfehler erscheinen als rote Meldung („Keine Verbindung zum Server – nichts gespeichert“); CSV, Backup, Kontodaten und Fotos gelten nur als gespeichert bzw. hochgeladen, wenn der Server es bestätigt. Gilt das Passwort mitten in der Arbeit nicht mehr (anderswo geändert), schließt der Admin Detail und Dialoge, bittet um neue Anmeldung und öffnet danach die Bestellung wieder — mit der getippten, noch nicht gespeicherten Notiz
   - **Veraltete Tabs** (Admin auf Handy und Rechner): Bestelländerungen schicken den Stand mit, auf dem sie beruhen (`stand`: Status, Zahlung, Sendungsnummer, Versender, Notiz; beim Druckstatus `vorher` = Stand der Position), Einstellungen den Zähler `settings.rev` (`baseRev`; zählt nur Speichern im Admin, nicht Rechnungsnummern o. Ä.). Weicht er ab, antwortet der Server 409 „Inzwischen geändert – bitte neu laden“ — im Detail bzw. in der Speichern-Leiste steht dann „↻ Neu laden“, getippte Eingaben bleiben stehen (ein inzwischen anders gespeicherter Wert steht als Hinweis darunter). Statuswechsel prüft der Server immer, auch für Tabs von vor diesem Update ohne Stand: erlaubt sind vorwärts (auch übersprungen), Stornieren, „Storno aufheben“ (→ Neu) und „zurück auf Neu (Zahlung offen)“ aus „Bezahlt“, solange noch nichts gedruckt wird — ein alter Tab setzt so keinen Status mehr zurück (keine widersprüchlichen Kundenmails), auch nicht über den Druckstatus einer Position (ohne `vorher` kein Nachdruck aus „Gedruckt“ → 409). Kehrt ein Tab nach mehr als einer Minute in den Vordergrund zurück, lädt er selbst nach (ungespeicherte Einstellungen bleiben, im Detail auch Getipptes und eine begonnene Reklamation samt Art und Häkchen). Neues Admin-Passwort: zweimal eingeben. Test: `node tools/test-admin.mjs`
   - Druckwarteschlange, Kunden (je Konto: Daten als JSON exportieren — Gastbestellungen, Widerrufe und Mails, die nur über die Adresse zugeordnet sind, nur bei bestätigter Adresse; Konto löschen — Bestellungen bleiben ohne Kontobezug)
-  - Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz — wirkt sofort auf die Farbauswahl im Konfigurator
+  - Filament-Farben: einpflegen/deaktivieren/löschen mit Farbwähler & Bestandsnotiz, Lieferzeit je Farbe und „Auf Anfrage“ — wirkt sofort auf die Farbauswahl im Konfigurator
+  - Anfragen („Farbe anfragen“, „Individuelles Angebot“): Liste neueste oben, erledigt markieren, löschen (Zähler am Bereich)
   - Preise & Mengenrabatt-Stufen, Gutscheine (%- oder €-Codes, Mindestbestellwert, optional gültig bis / höchstens n Einlösungen), Aktionen. Gutschrift-Codes aus Reklamationen (`GH-XXXX-XXXX`, ältere `GS-XXXX-XXXX` bleiben gültig) sind **Guthaben**: einlösbar bis der Betrag aufgebraucht ist (Rest bleibt, stornierte Bestellungen geben ihn frei), immer ohne Mindestbestellwert und auch während einer Aktion — die Gutschein-Tabelle zeigt den Restwert, Mindestwert und „mit Aktion“ sind bei Guthaben nicht änderbar
   - Beim Speichern prüft der Server jedes Feld (400 mit deutscher Meldung, nichts wird übernommen): Beträge ≥ 0 mit höchstens zwei Nachkommastellen, Grundpreise > 0, Staffel unter 100 %, Währung EUR, Gutschein-Codes eindeutig (A–Z, 0–9, - _), Prozent bis 100, Farben mit Hex-Wert; E-Mail: Host ohne `smtp://`, Port 1–65535, Absender/Antwort/Admin-Adressen gültig (mehrere Admin-Adressen mit Komma), öffentliche Shop-Adresse als `https://…` ohne Pfad und Pflicht bei aktivem Versand. Ältere gespeicherte Preise mit drei Nachkommastellen rundet der Shop beim Start auf Cent
   - Mein Unternehmen (Anbieter, Steuer & Belege inkl. Wirtschafts-Identifikationsnummer `DE123456789-00001` als eigenes Feld, Bankverbindung, **Shop-Angaben** Lieferzeit/Liefergebiet, **Rechtstexte** Hoster/Serverstandort/AV-Vertrag/Mail-Versand je Server), PayPal, E-Mail, System (Passwort, Produktschalter, JSON-Backup) — alles in `data/settings.json` (nicht im Git)
@@ -108,7 +109,9 @@ Datenträger) — als PDF aus der Druckfassung (`renderLegalPage(…, { forPdf: 
 - **Widerrufsbelehrung** nach dem amtlichen Muster mit dem Baustein für die Pflicht zur Widerrufsfunktion (Gestaltungshinweis 3:
   „online unter <Adresse>/widerruf#widerrufen ausüben“ + Eingangsbestätigung auf dauerhaftem Datenträger); der Ausschluss
   (§ 312g Abs. 2 Nr. 1 BGB) steht getrennt unter dem Musterkasten. Ohne öffentliche Shop-Adresse warnt die Übersicht.
-- **Datenschutz** nennt das Zugangs-Cookie `fs_zugang` des Wartungsmodus und die täglichen Sicherungen (14 Tage).
+- **Datenschutz** nennt das Zugangs-Cookie `fs_zugang` des Wartungsmodus und die täglichen Sicherungen (14 Tage), dazu das
+  Anfrageformular (Abschnitt `#anfrage`: Daten, Zweck, Art. 6 Abs. 1 lit. b/f DSGVO, Versand über den eingestellten Mailserver,
+  Anfrageliste bis zur Erledigung, höchstens 12 Monate).
 
 Was vor dem Start noch zu erledigen ist (Anschrift, Telefon, AV-Verträge, Verpackungsregister …) und welche Annahmen in den
 Texten stecken: [docs/rechtstexte.md](docs/rechtstexte.md) — keine Rechtsberatung.
@@ -129,6 +132,51 @@ zu einem kurzen Formular (Name, E-Mail, Bestellnummer optional, Nachricht option
   Zugeordnete Widerrufe zählen dort nicht mit und werden immer bestätigt (höchstens 5 Bestätigungen je Bestellung und Tag) — Spam ohne
   echte Bestellung kann echten Kundinnen die Eingangsbestätigung nicht nehmen.
 - Admin → Übersicht zeigt offene Widerrufe (`GET /api/admin/widerrufe`, `POST /api/admin/widerruf-status`).
+
+## Farben: Lieferzeit, „auf Anfrage“ und Anfragen
+
+Je Filament-Farbe (Admin → 🎨 Farben, `settings.colors[]`) gibt es zwei Felder; Farben ohne sie (Bestand vor dem Update) haben die
+allgemeine Lieferzeit und sind normal bestellbar — es ist nichts nachzutragen.
+
+- **Lieferzeit** (`lieferzeit`): nur Werktage, Zahlen 1–120, z. B. „10–14 Werktage“ oder „7 Werktage“. Der Server speichert die
+  Normalform (`10-14`, `10 bis 14` → „10–14 Werktage“, „7“ → „7 Werktage“); alles andere (Wochen, 0, „14–10“, Text) lehnt er mit 400 und
+  deutscher Meldung ab. Leer = allgemeine Lieferzeit (Firma → Shop-Angaben). Regel an **einer** Stelle, `public/js/pricing.js`
+  (`lieferzeitNorm`, `positionLieferzeit`, `bestellLieferzeit`, `anfrageFarbeVon`), die der Server mitbenutzt:
+  - Position = Lieferzeit der Körperfarbe, bei Farbschrift (Gravurtext im Stil „Farbschrift“) die längere von Körper- und Schriftfarbe.
+  - Bestellung = die **längste** Lieferzeit ihrer Positionen (Vergleich nach der Obergrenze in Werktagen, bei Gleichstand der Untergrenze;
+    die frei geschriebene allgemeine Lieferzeit wird dafür gelesen: „2–3 Wochen“ = 10–15 Werktage).
+  - Konfigurator: Farbe-Reiter rechts in der Überschriftzeile („📦 Lieferzeit 10–14 Werktage“, eine Zeile — der Preisbereich verschiebt
+    sich nicht), Tooltip am Farbpunkt. Warenkorb: unten die Lieferzeit der Bestellung, bei verschiedenen Lieferzeiten zusätzlich je
+    Position; Kasse („📦 Lieferzeit: …“ unter dem Gesamtbetrag) und Danke-Ansicht ebenso.
+  - Die Bestellung speichert ihre Lieferzeit beim Anlegen (`order.lieferzeit`); Bestellbestätigung, Rechnung (Lieferzeit und
+    voraussichtlicher Leistungsmonat) und „Erneut senden“ lesen sie dort (`lib/lieferfrist.js` `bestellLieferzeitText`). Ältere
+    Bestellungen ohne das Feld: wie bisher die allgemeine Lieferzeit. Ausgestellte Belege bleiben unverändert.
+  - Startseite (Trust-Zeile, „So geht’s“, FAQ) nennt weiter die allgemeine Lieferzeit (`data-lieferzeit`); die FAQ sagt, dass eine
+    eigene Lieferzeit an der Farbe steht. AGB § 7 und Versandseite enthalten die Regel, die Versandseite listet Farben mit abweichender
+    Lieferzeit und Farben „auf Anfrage“ automatisch.
+- **Auf Anfrage** (`aufAnfrage: true`): Die Farbe bleibt im Konfigurator sichtbar und wählbar (Zeichen „Anfrage“ am Farbpunkt, bei
+  Schriftfarben „?“), zeigt „Lieferzeit auf Anfrage“, und alle Kaufknöpfe heißen „Farbe anfragen“ (öffnen das Anfrageformular). Gilt
+  genauso für die Schriftfarbe einer Farbschrift. `/api/quote`, `/api/checkout` und `/api/paypal/create` lehnen solche Positionen mit 400
+  ab (`farbSperre`, vor jedem PayPal-Aufruf); eine schon eingezogene PayPal-Zahlung (Preisgarantie) wird nicht nachträglich abgewiesen.
+  Ältere Warenkörbe im Browser: Position „nur auf Anfrage“ mit Knopf „Farbe anfragen“, Kasse gesperrt. Listen und Design-Codes laden
+  normal, „In den Warenkorb“ heißt dort „Farbe anfragen“. Ältere Shop-Tabs (vor dem Update) bieten die Farbe normal an — die Kasse lehnt
+  sie dann mit Meldung ab. Inaktive Farben („Im Shop“ aus) bleiben wie bisher ausgeblendet.
+- **Anfrageformular** (`public/js/anfrage.js`, ein Dialog für „Farbe anfragen“ und „Individuelles Angebot“): Name, E-Mail, Nachricht
+  (vorausgefüllt), bei Farben „Gib mir Bescheid, sobald die Farbe bestellbar ist“, das aktuelle Design als Design-Code (abwählbar; aus
+  Warenkorb und Listen der Code der Position), Link zur Datenschutzerklärung, unsichtbares Fallen-Feld `website`.
+  `POST /api/anfrage` prüft Anlass (`farbe` | `angebot`), Name 2–80, E-Mail (wie in der Kasse), Nachricht 1–3000 Zeichen und die Farbe
+  (muss es geben), bremst (5 je IP/Stunde, 50 insgesamt) und schickt eine Meldung an die Admin-Adresse (`mail.adminTo`, sonst
+  Firmen-E-Mail) mit Reply-To = Kundin und `Auto-Submitted`. **Bewusst keine Mail an die angegebene Adresse** (sonst ließe sich das
+  Formular als Spam-Schleuder nutzen) — die Erfolgsmeldung sagt „Danke! Ich melde mich per E-Mail bei dir (von <Antwortadresse>)“
+  (`mail.replyTo`, sonst Firmen-E-Mail; auch in `/api/pricing` → `kontakt.email`). Im Wartungsmodus gesperrt wie alle APIs.
+  Gespeichert in `data/anfragen.json` (atomar, höchstens 1000, älter als 12 Monate → beim Start und täglich gelöscht); Admin → 💬 Anfragen
+  (`GET /api/admin/anfragen`, `POST /api/admin/anfrage-status`, `POST /api/admin/anfrage-loeschen`). Die Meldung lässt sich im
+  Versandprotokoll „Erneut“ senden, solange die Anfrage gespeichert ist. Die Datenauskunft eines Kontos enthält Anfragen derselben
+  (bestätigten) Adresse.
+- **Hinweis auf individuelle Angebote**: unter dem Kaufknopf im Konfigurator („Sonderwunsch? … frag mich nach einem individuellen
+  Angebot“, auf dem Handy am Panel-Ende), FAQ-Eintrag, „Individuelles Angebot“ in der Fußzeile mit „oder schreib an <Adresse>“; jeder
+  Link auf `#angebot` (z. B. `https://www.formsam.com/#angebot`) öffnet das Formular.
+- Test: `node tools/test-anfrage.mjs`.
 
 ## Rechnungen und Rechtstexte als PDF
 
@@ -242,6 +290,7 @@ aus einer IP teilen sich die laufende Prüfung (kein zusätzlicher Versuch, kein
 | Design-Codes | 300 neue je IP/Stunde; ab 5000 insgesamt je Stunde nur noch 30 je IP (bekannte Codes zählen nicht) | 429 |
 | PayPal-Einzug | nur bei aktivem PayPal und nur für Zahlungen, die der Shop in den letzten 3 Stunden selbst angelegt hat (`/api/paypal/create`, zählt bei der Kasse); Zugriffstoken bis zum Ablauf wiederverwendet, jeder Aufruf mit 30 s Zeitlimit | 400 (aus) bzw. 404 ohne Aufruf bei PayPal |
 | Vorschaubilder / Listen | 600 je IP/Stunde · 30 neue Listen, 600 Änderungen je IP/Stunde | 429 |
+| Anfrageformular | 5 je IP/Stunde · 50 insgesamt/Stunde (nur gültige Anfragen zählen; gefülltes Fallen-Feld → 200 ohne Mail, ohne Eintrag) | 429 mit Hinweis auf die Kontaktadresse |
 
 Normaler Gebrauch bleibt weit darunter (der Konfigurator speichert bei jeder Code-Anzeige ein Design und ein Vorschaubild). Der
 Abrufzähler der Design-Codes wird gebündelt höchstens einmal pro Minute gespeichert. Mails an die Kontoadresse übernehmen nur einen
@@ -294,6 +343,7 @@ node server.js          # → http://localhost:4488
 | `/api/paypal/*` | PayPal-Order anlegen/einziehen (aktiv, sobald Zugangsdaten hinterlegt). `create` prüft vorher alles wie der Checkout und garantiert den Preis ab dem Klick; lehnt der Checkout nach dem Einzug trotzdem ab, wird automatisch erstattet (sonst Admin-Mail + Hinweis in der Übersicht) |
 | `/api/auth/verify`, `/api/auth/verify-resend` | E-Mail-Adresse des Kontos bestätigen (Token aus der Mail + Anmeldung) bzw. Link erneut senden |
 | `/api/widerruf` | Widerrufsfunktion (Eingangsbestätigung per Mail, Eintrag in `data/widerrufe.json`) |
+| `/api/anfrage` | Anfrageformular („Farbe anfragen“, „Individuelles Angebot“): Meldung an den Shop, Eintrag in `data/anfragen.json` — keine Mail an die Kundin (siehe [Anfragen](#farben-lieferzeit-auf-anfrage-und-anfragen)) |
 
 **Auslieferung:** Text-Dateien (HTML, CSS, JS, JSON, SVG, Manifest), Startseite und Rechtsseiten packt der Shop einmal mit gzip (Stufe 9)
 und Brotli (Qualität 11, sofern `node:zlib` es kann) und hält sie im Speicher (Schlüssel Pfad + Änderungszeit + Größe bzw. Inhalt;
@@ -312,7 +362,7 @@ mkdir -p tmp-tests/sandbox/data tmp-tests/sandbox/orders
 PORT=4490 DATA_DIR=tmp-tests/sandbox/data ORDERS_DIR=tmp-tests/sandbox/orders node server.js
 ```
 
-`DATA_DIR` enthält `settings.json`, Preis-Historie, Konten, Sessions, Designs, Listen, Widerrufe und das Mail-Protokoll, `ORDERS_DIR` die
+`DATA_DIR` enthält `settings.json`, Preis-Historie, Konten, Sessions, Designs, Listen, Widerrufe, Anfragen und das Mail-Protokoll, `ORDERS_DIR` die
 Bestellordner (`tmp-tests/` ist nicht im Git). Ein leerer Ordner startet mit den Standard-Einstellungen (Mail aus) und einem
 zufälligen Admin-Passwort, das einmal im Protokoll steht; wer ein bestimmtes will, legt vorher `settings.json` mit
 `{"adminKey": "…"}` an (wird beim Start in einen Hash umgestellt). Wer echte Einstellungen kopiert (`cp data/settings.json …`), schaltet dort vorher den
@@ -390,6 +440,7 @@ public/
   js/app.js                3D-Szene, UI, Entwurf, Bedienhilfen
   js/pricing.js            Preislogik des Browsers — dieselbe Regel wie der Server (der lädt sie für den Aktions-Bezugspreis mit)
   js/cart.js, js/auth.js   Warenkorb und Kasse bzw. Kundenkonto
+  js/anfrage.js            Anfrageformular („Farbe anfragen“, „Individuelles Angebot“)
   js/designcode.js, js/lists.js   Design-Codes und Listen (Links ?d= / ?l=)
   js/studio.js, js/mobile*.js     3D-Formenwelt der Startseite; Handy-Oberfläche (mobile-home.js lädt nur unter 700 px)
   sw.js                    Service Worker (VERSION bei Änderungen erhöhen)
@@ -397,7 +448,7 @@ public/
   content.json             Texte, Farben, Preise (Marketing)
   img/brand/               Logos, Favicon, Mail-Logo, Social-Vorschau
   vendor/, fonts/          Three.js r160 + Schriften, lokal
-data/                      Einstellungen, Preis-Historie, Konten, Widerrufe, Mail-Protokoll (nicht im Git)
+data/                      Einstellungen, Preis-Historie, Konten, Widerrufe, Anfragen, Mail-Protokoll (nicht im Git)
 orders/                    Eingegangene Bestellungen mit Rechnungen (nicht im Git)
 tools/
   check-stl.mjs            STL-Validator (watertight, Volumen, BBox …)
@@ -420,6 +471,7 @@ tools/
   test-betrieb.mjs         Sicherungs- und Update-Skripte unter deploy/
   test-eingaben.mjs        Eingaben, Fehlerantworten, Schutz-Kopfzeilen, 404, Dateirechte (startet eine eigene Instanz)
   test-paypal.mjs          PayPal-Einzug gegen eine PayPal-Attrappe (ohne Netz, eigene Instanz)
+  test-anfrage.mjs         Lieferzeit je Farbe, Farben „auf Anfrage“, Anfrageformular, Anfrageliste, Rechtstexte (eigene Instanz + Fake-SMTP)
   test-pdf.mjs, test-html-pdf.mjs, test-legal-pdf.mjs   PDF-Kern, PDF-Satz, Druckfassung der Rechtstexte
   test-pdf-einbau.mjs      PDF-Belege/-Rechtstexte im Shop: Mail-Anhänge, Route, Erneut, Rückfälle (eigene Instanz + Fake-SMTP)
   test-konfigurator.mjs    Maßangabe Ø, Entwürfe in Reglerbereichen, Service Worker (nachgebaut), Startseite/CSS/Bedienhilfen (ohne Browser)
@@ -631,6 +683,7 @@ node tools/test-betrieb.mjs                        # deploy/: Sicherung und prod
 node tools/test-eingaben.mjs                       # Eingaben, 400/404/405/413, Kopfzeilen, Dateirechte (eigene Instanz, Port 4545–4549)
 node tools/test-daten.mjs                          # Dateien, Admin-Passwort, Bremsen, Uploads, Aufräumen, Konto (eigene Instanz)
 node tools/test-paypal.mjs                         # PayPal-Einzug gegen eine Attrappe (kein Aufruf bei PayPal, eigene Instanz)
+node tools/test-anfrage.mjs                        # Lieferzeit je Farbe, „auf Anfrage“, Anfrageformular und -liste (eigene Instanz + Fake-SMTP)
 node tools/test-pdf.mjs && node tools/test-html-pdf.mjs && node tools/test-legal-pdf.mjs   # PDF-Kern, Satz, Druckfassung
 node tools/test-pdf-einbau.mjs                     # PDF-Belege und -Rechtstexte in Mails, Route, Erneut, Rückfälle (eigene Instanz)
 node tools/test-konfigurator.mjs                   # Ø-Angabe, Entwürfe, Service Worker, Startseite/Bedienhilfen (ohne Server, ohne Browser)

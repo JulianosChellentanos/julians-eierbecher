@@ -726,8 +726,9 @@ check('Rechtstexte: legalPdf für alle Seiten und Einstellungen (Kleinunternehme
     ok(!errs.length, `${slug}/${name}: ${errs.join('; ')}`);
     n++;
   }
-  // Seitenzahlen wie Chrome mit denselben Druckfassungen (±1 je nach Einstellung); AGB deutlich unter 150 KB
-  const want = { agb: [4, 4], widerruf: [3, 3], datenschutz: [6, 7], impressum: [1, 1], versand: [2, 2] };
+  // Seitenzahlen wie Chrome mit denselben Druckfassungen (±1 je nach Einstellung); AGB deutlich unter 150 KB.
+  // Datenschutz seit dem Abschnitt „Anfrageformular“ (Stand 26.11.2026) eine Seite länger
+  const want = { agb: [4, 4], widerruf: [3, 3], datenschutz: [7, 8], impressum: [1, 1], versand: [2, 2] };
   for (const [slug, [lo, hi]] of Object.entries(want)) ok([...pages[slug]].every((p) => p >= lo && p <= hi), `${slug}: ${[...pages[slug]]} Seiten statt ${lo}–${hi}`);
   ok(sizes.agb < 150 * 1024, `AGB ${Math.round(sizes.agb / 1024)} KB`);
   ok(maxMs < 1000, `${maxMs.toFixed(0)} ms für eine Seite`);
