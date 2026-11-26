@@ -222,7 +222,8 @@ function farbSperre(items) {
     const c = colorOfItem(it);
     if (c && !c.active) return `Die Farbe „${c.name}“ ist derzeit nicht verfügbar – bitte wähle für dieses Design eine andere Farbe.`;
     const cfg = it?.config || {};
-    if (String(cfg.text || '').trim() && cfg.textStyle === 'farbe' && typeof cfg.textColor === 'string') {
+    // Schriftfarbe nur bei gedruckter Farbschrift (pricing.js mitFarbschrift — dieselbe Bedingung wie der Farbschrift-Aufpreis)
+    if (preisRegel.mitFarbschrift(it)) {
       const t = (settings.colors || []).find((x) => x?.id === cfg.textColor);
       if (t && !t.active) return `Die Schriftfarbe „${t.name}“ ist derzeit nicht verfügbar – bitte wähle für dieses Design eine andere Schriftfarbe.`;
     }
@@ -240,6 +241,13 @@ const LIEFER_FARBEN = {
 };
 /** Lieferzeit einer Bestellung beim Anlegen (= längste ihrer Positionen; order.lieferzeit — Mail, Rechnung und „Erneut“ lesen sie dort) */
 const lieferzeitDerZeilen = (lines) => preisRegel.bestellLieferzeit(lines, LIEFER_FARBEN).text;
+/** Ist Lieferzeit b länger als a? (Obergrenze in Werktagen, bei Gleichstand die Untergrenze — wie laengereLieferzeit; ohne Zahl: nur bei anderem Text) */
+function lieferzeitLaenger(a, b) {
+  const sa = preisRegel.lieferzeitSpanne(a), sb = preisRegel.lieferzeitSpanne(b);
+  if (!sb) return false;
+  if (!sa) return String(a || '').trim() !== String(b || '').trim();
+  return sb.bis > sa.bis || (sb.bis === sa.bis && sb.von > sa.von);
+}
 /**
  * Wertprüfung der Positionen (Quote, PayPal, Checkout; lib/eingaben.js pruefePositionen): Form, Muster, Schrift, Stil, Rand und Verlauf
  * müssen bekannt sein, Zahlen in den Grenzen der Regler, Texte begrenzt (Gravur 40, Farbname 80), colorHex nur #rrggbb, Farbe
@@ -3581,7 +3589,7 @@ async function paypalRefund(order, amount) {
 // ---------------------------------------------------------------------------
 const MAX_POSITIONEN = 20;   // verschiedene Designs je Bestellung (Client begrenzt den Warenkorb genauso)
 const PAYPAL_PENDING_TTL = 3 * 3600e3;
-const paypalPending = new Map();   // PayPal-Order-ID → { hash, totals, beschaffenheitAt, at }
+const paypalPending = new Map();   // PayPal-Order-ID → { hash, totals, lieferzeit, beschaffenheitAt, at }
 const paypalEinzug = new Map();    // PayPal-Order-ID → laufender Einzug (Promise → true/false)
 const kasseHash = (items, couponCode) => sha256(JSON.stringify({ items, coupon: String(couponCode || '').trim().toUpperCase() }));
 function paypalPendingAufraeumen(now = Date.now()) {
@@ -3618,9 +3626,10 @@ function kundeAus(raw) {
  * Gemeinsame Prüfung für /api/paypal/create (vor der Zahlung) und /api/checkout: Adresse, Warenkorb (1–20 Positionen),
  * Produkt- und Farbsperre, gesonderte Vereinbarung zu Wasser und Standfestigkeit (§ 476 Abs. 1 Satz 2 BGB), Gutschein und der
  * in der Kasse angezeigte Gesamtbetrag (expectedTotal, § 312j Abs. 2 BGB / AGB § 6 Abs. 1: es gilt der Preis, den die Kasse
- * zeigt) — weicht er vom Server-Betrag ab, gibt es 409 statt einer Bestellung zu einem anderen Preis.
- * garantie = gemerkter Stand aus /api/paypal/create (Summen stehen fest, Vereinbarung wurde vor der Zahlung geprüft).
- * → { customer, items, totals } oder { status, error, code?, total?, customer }
+ * zeigt) — weicht er vom Server-Betrag ab, gibt es 409 statt einer Bestellung zu einem anderen Preis. Ebenso die angezeigte Lieferzeit
+ * (expectedLieferzeit): ist die der Bestellung länger, 409 code 'lieferzeit'.
+ * garantie = gemerkter Stand aus /api/paypal/create (Summen und Lieferzeit stehen fest, Vereinbarung wurde vor der Zahlung geprüft).
+ * → { customer, items, totals, lieferzeit } oder { status, error, code?, total?, lieferzeit?, customer }
  */
 function pruefeKasse(data, { garantie = null } = {}) {
   const customer = kundeAus(data?.customer);
@@ -3643,7 +3652,7 @@ function pruefeKasse(data, { garantie = null } = {}) {
   const items = data?.items;
   if (!Array.isArray(items) || !items.length) return { status: 400, error: 'Warenkorb ist leer', customer };
   if (items.length > MAX_POSITIONEN) return { status: 400, error: `Höchstens ${MAX_POSITIONEN} verschiedene Designs pro Bestellung – bitte teil deine Bestellung auf.`, customer };
-  if (garantie) return { customer, items, totals: garantie.totals };
+  if (garantie) return { customer, items, totals: garantie.totals, lieferzeit: garantie.lieferzeit || lieferzeitDerZeilen(garantie.totals.lines || items) };
   // Werte wie im Konfigurator, bekannte Farben (lib/eingaben.js) — bei PayPal schon vor der Zahlung geprüft (garantie = dieselben Positionen)
   const ungueltig = positionenFehler(items);
   if (ungueltig) return { status: 400, error: ungueltig, customer };
@@ -3669,8 +3678,19 @@ function pruefeKasse(data, { garantie = null } = {}) {
     const veraltet = !(Number(data.kasseStand) >= 2);
     return { status: 409, code: 'preis', total: totals.total, customer, error: veraltet ? 'Die Kasse ist nicht mehr aktuell – bitte lade die Seite neu und prüf den Betrag.' : `Der Preis hat sich gerade geändert: Gesamt jetzt ${money(totals.total)}. Bitte prüf die Kasse und bestätige noch einmal.` };
   }
+  // Lieferzeit der Bestellung (längste Position je nach Farbe) gegen die in der Kasse angezeigte (expectedLieferzeit, § 312d Abs. 1
+  // BGB: die Angabe vor der Bestellung wird Vertragsinhalt): Ist sie inzwischen länger (Admin hat eine Farbe geändert, während die Kasse
+  // offen war), gibt es 409 statt einer Bestellung mit längerer Lieferzeit als angezeigt. Kassen-Tabs von vor der Lieferzeit je Farbe
+  // schicken das Feld nicht — sie zeigen die allgemeine Lieferzeit und müssen bei einer längeren neu laden. Kürzer ist kein Problem.
+  const lieferzeit = lieferzeitDerZeilen(totals.lines);
+  const lzKasse = typeof data.expectedLieferzeit === 'string' && data.expectedLieferzeit.trim() ? data.expectedLieferzeit.trim().slice(0, 80) : null;
+  if (lieferzeitLaenger(lzKasse || lieferzeitText(settings), lieferzeit)) {
+    return { status: 409, code: 'lieferzeit', lieferzeit, customer, error: lzKasse
+      ? `Die Lieferzeit hat sich gerade geändert: für deine Bestellung jetzt ${lieferzeit}. Bitte prüf die Kasse und bestätige noch einmal.`
+      : `Die Lieferzeit für deine Bestellung beträgt inzwischen ${lieferzeit} – bitte lade die Seite neu (dein Warenkorb bleibt erhalten) und bestell dann noch einmal.` };
+  }
   // Bezugspreise wie in der Kasse festhalten (Rechnung/Mails) — bei PayPal schon hier in /api/paypal/create, die Garantie behält sie
-  return { customer, items, totals: aktionsBezug(totals) };
+  return { customer, items, totals: aktionsBezug(totals), lieferzeit };
 }
 /**
  * Postleitzahl für Kasse und Konto-Adresse → null oder Meldung. Liefergebiet nur Deutschland (Standard, Admin → Shop-Angaben):
@@ -3869,6 +3889,7 @@ const ANFRAGE_FILE = path.join(DATA, 'anfragen.json');
 const ANFRAGE_MAX = 1000;
 const ANFRAGE_MONATE = 12;
 const ANFRAGE_IP_MAX = 5;      // Anfragen je Anschluss (IP, IPv6-/64) und Stunde
+const ANFRAGE_48_MAX = 10;     // Anfragen je IPv6-/48 und Stunde — ein einzelner Anschluss mit vielen /64-Netzen schöpft die Gesamtgrenze nicht allein aus
 const ANFRAGE_ALLE_MAX = 50;   // Anfragen insgesamt je Stunde — eine verteilte Flut füllt weder Postfach noch Mailserver
 const ANFRAGE_ANLAESSE = ['farbe', 'angebot'];
 const ANFRAGE_STATUS = ['offen', 'erledigt'];
@@ -3932,20 +3953,23 @@ function anfrageAntwortAdresse() {
 }
 /**
  * Anfrage aus dem Shop prüfen → { anfrage } oder { error } (→ 400). Name 2–80 Zeichen ohne < >, E-Mail wie in der Kasse (isEmail, vor dem
- * @ nur ASCII — die Adresse steht im Reply-To), Nachricht 1–3000 Zeichen (Zeilenumbrüche bleiben, Steuerzeichen weg), Farbe muss es geben
- * (bei „farbe“ Pflicht), Design-Code nur in Normalform und nur, wenn es ihn gibt (sonst entfällt er).
+ * @ nur ASCII — die Adresse steht im Reply-To), Nachricht 1–3000 Zeichen (Zeilenumbrüche bleiben), Farbe muss es geben (bei „farbe“
+ * Pflicht; schrift = es geht um die Schriftfarbe einer Farbschrift), Design-Code nur in Normalform und nur, wenn es ihn gibt (sonst
+ * entfällt er). Name und Nachricht wie die Kundendaten der Kasse ohne Steuer- und unsichtbare Formatzeichen (Cc/Cf: Null-Breiten-,
+ * Bidi-Zeichen …) — die Mindestlänge zählt erst danach, die Höchstlänge vor jedem Kürzen (zu lang → 400, nie still gekürzt).
  */
 function anfrageAus(body) {
   const anlass = ANFRAGE_ANLAESSE.includes(body.anlass) ? body.anlass : null;
   if (!anlass) return { error: 'Unbekannter Anlass – bitte lade die Seite neu.' };
-  const n = kontoName(typeof body.name === 'string' ? body.name : '');
+  const n = kontoName(typeof body.name === 'string' ? ohneFormatzeichen(body.name).replace(/[\x80-\x9f\u2028\u2029]+/g, ' ') : '');
   if (n.error) return { error: n.error, feld: 'name' };
   const email = (typeof body.email === 'string' ? body.email : '').trim().toLowerCase();
   if (email.length > 254 || !isEmail(email)) return { error: 'Bitte gib eine gültige E-Mail-Adresse an – dorthin bekommst du meine Antwort.', feld: 'email' };
   const lokal = emailLokalFehler(email);
   if (lokal) return { error: lokal, feld: 'email' };
-  const roh = typeof body.nachricht === 'string' ? body.nachricht.slice(0, ANFRAGE_NACHRICHT_MAX * 2) : '';
-  const nachricht = roh.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, ' ').trim();
+  // Der Text ist durch readJson (16 KB) begrenzt — gezählt wird der ganze, bereinigte Text (Zeichen = Unicode-Codepunkte)
+  const roh = typeof body.nachricht === 'string' ? body.nachricht : '';
+  const nachricht = ohneFormatzeichen(roh).replace(/\r\n?|[\u2028\u2029]/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]+/g, ' ').replace(/[^\S\n]+$/gm, '').trim();
   if (!nachricht) return { error: 'Bitte schreib mir kurz, was du dir wünschst.', feld: 'nachricht' };
   if ([...nachricht].length > ANFRAGE_NACHRICHT_MAX) return { error: `Die Nachricht ist zu lang (höchstens ${ANFRAGE_NACHRICHT_MAX} Zeichen).`, feld: 'nachricht' };
   let farbe = null;
@@ -3953,7 +3977,7 @@ function anfrageAus(body) {
   if (fid) {
     const c = (settings.colors || []).find((x) => x?.id === fid && x.active !== false);
     if (!c) return { error: 'Diese Farbe gibt es im Shop nicht (mehr) – bitte lade die Seite neu.' };
-    farbe = { id: c.id, name: String(c.name || '') };
+    farbe = { id: c.id, name: String(c.name || ''), ...(anlass === 'farbe' && body.schrift === true ? { schrift: true } : {}) };
   } else if (anlass === 'farbe') return { error: 'Welche Farbe möchtest du anfragen? Bitte lade die Seite neu.' };
   const code = typeof body.code === 'string' ? normalizeCode(body.code.slice(0, 40)) : '';
   return {
@@ -4086,7 +4110,8 @@ function startseiteFaq(html) {
     try { liste = (JSON.parse(readFileSync(file, 'utf8')).faq || []).filter((f) => f && typeof f.q === 'string' && typeof f.a === 'string'); } catch { liste = []; }
     faqCache = { key, liste };
   }
-  const lz = lieferzeitText(settings), lg = String(settings.shop?.liefergebiet || '').trim() || 'Deutschland', km = anfrageAntwortAdresse();
+  // Lieferzeit wie im Shop (cart.js fillShopInfo): bei Farben mit längerer eigener Lieferzeit „…, einzelne Farben länger“
+  const lz = preisRegel.lieferzeitAllgemein(settings.colors, lieferzeitText(settings)), lg = String(settings.shop?.liefergebiet || '').trim() || 'Deutschland', km = anfrageAntwortAdresse();
   const text = (s) => s.replace(/<span data-lieferzeit>[^<]*<\/span>/g, lz).replace(/<span data-liefergebiet>[^<]*<\/span>/g, lg)
     .replace(/<span data-kontakt-mail>([^<]*)<\/span>/g, (_, t) => km || t)
     .replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&shy;/g, '').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
@@ -4364,7 +4389,7 @@ async function handleCheckout(req, res) {
   }
   const k = pruefeKasse(data, { garantie });
   if (k.error) {
-    const body = { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.feld ? { feld: k.feld } : {}) };
+    const body = { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.lieferzeit ? { lieferzeit: k.lieferzeit } : {}), ...(k.feld ? { feld: k.feld } : {}) };
     return paypalCap ? kasseAbgelehntNachZahlung(res, ppId, paypalCap, k.status, body, k.customer) : send(res, k.status, body);
   }
   const { customer, totals } = k;
@@ -4421,7 +4446,7 @@ async function handleCheckout(req, res) {
     subtotal: totals.subtotal, coupon: totals.coupon, shipping: totals.shipping, total: totals.total,
     // Lieferzeit der Bestellung zum Zeitpunkt der Bestellung = längste Lieferzeit ihrer Positionen (Körperfarbe, bei Farbschrift auch die
     // Schriftfarbe; ohne eigene Lieferzeit die allgemeine) — Bestätigung, Rechnung und „Erneut senden“ nennen genau diese
-    lieferzeit: lieferzeitDerZeilen(totals.lines),
+    lieferzeit: k.lieferzeit || lieferzeitDerZeilen(totals.lines),
     // Gesonderte Vereinbarung in der Kasse (Wasser/Standfestigkeit, § 476 Abs. 1 Satz 2 BGB): Zeitpunkt als Nachweis — Pflicht
     // (pruefeKasse); bei PayPal der Zeitpunkt vor der Zahlung (/api/paypal/create)
     beschaffenheitBestaetigt: garantie?.beschaffenheitAt || createdAt,
@@ -5019,12 +5044,13 @@ const server = http.createServer(async (req, res) => {
       if (body.website !== undefined && String(body.website).trim()) return send(res, 200, { ok: true, antwortVon });
       const { anfrage, error, feld } = anfrageAus(body);
       if (error) return send(res, 400, { ok: false, error, ...(feld ? { feld } : {}) });
-      const ipKey = `anfrage-ip:${clientIp(req)}`;
-      if (rateLimitReached(ipKey, ANFRAGE_IP_MAX, STUNDE_MS) || rateLimitReached('anfrage-alle', ANFRAGE_ALLE_MAX, STUNDE_MS)) {
+      const ip = clientIp(req), ipKey = `anfrage-ip:${ip}`, n48 = netz48(ip), key48 = n48 ? `anfrage-48:${n48}` : null;
+      if (rateLimitReached(ipKey, ANFRAGE_IP_MAX, STUNDE_MS) || (key48 && rateLimitReached(key48, ANFRAGE_48_MAX, STUNDE_MS))
+        || rateLimitReached('anfrage-alle', ANFRAGE_ALLE_MAX, STUNDE_MS)) {
         res.setHeader('Retry-After', '3600');
         return send(res, 429, { ok: false, error: `Gerade kommen sehr viele Anfragen an – bitte versuch es später noch einmal${antwortVon ? ` oder schreib mir direkt an ${antwortVon}` : ''}.` });
       }
-      forgotLimited(ipKey, ANFRAGE_IP_MAX, STUNDE_MS); forgotLimited('anfrage-alle', ANFRAGE_ALLE_MAX, STUNDE_MS);
+      forgotLimited(ipKey, ANFRAGE_IP_MAX, STUNDE_MS); if (key48) forgotLimited(key48, ANFRAGE_48_MAX, STUNDE_MS); forgotLimited('anfrage-alle', ANFRAGE_ALLE_MAX, STUNDE_MS);
       const entry = await withAnfragen((list) => {
         const a = { id: newAnfrageId(list), at: new Date().toISOString(), ...anfrage, status: 'offen', erledigtAt: null };
         list.push(a);
@@ -5228,7 +5254,7 @@ const server = http.createServer(async (req, res) => {
       // Vor der Zahlung genau die Prüfungen des Checkouts (Adresse, 1–20 Positionen, Sperren, Vereinbarung, Gutschein, angezeigter
       // Betrag) — sonst wäre bezahlt, die Bestellung aber abgelehnt
       const k = pruefeKasse(data);
-      if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.feld ? { feld: k.feld } : {}) });
+      if (k.error) return send(res, k.status, { ok: false, error: k.error, ...(k.code ? { code: k.code, total: k.total } : {}), ...(k.lieferzeit ? { lieferzeit: k.lieferzeit } : {}), ...(k.feld ? { feld: k.feld } : {}) });
       if (forgotLimited(`kasse:${clientIp(req)}`, KASSE_IP_MAX, STUNDE_MS)) return send(res, 429, GEBREMST());   // wie /api/checkout
       const t = k.totals;
       // 0 € (Gutschein/Guthaben deckt alles): PayPal nimmt keine Zahlung über 0,00 € an — die Kasse bestellt dann ohne Zahlung
@@ -5247,7 +5273,8 @@ const server = http.createServer(async (req, res) => {
       // Preisgarantie ab hier (siehe paypalPending) + Guthaben für die Dauer der Zahlung reservieren (wie eine offene Kasse)
       paypalPendingAufraeumen();
       const at = new Date().toISOString();
-      paypalPending.set(String(j.id), { hash: kasseHash(k.items, data.couponCode), totals: t, beschaffenheitAt: at, at: Date.now() });
+      // lieferzeit: wie die Summen ab hier garantiert (die Kasse hat sie so angezeigt) — order.lieferzeit nach dem Einzug
+      paypalPending.set(String(j.id), { hash: kasseHash(k.items, data.couponCode), totals: t, lieferzeit: k.lieferzeit, beschaffenheitAt: at, at: Date.now() });
       if (t.coupon?.guthaben || couponByCode(t.coupon?.code)?.maxEinloesungen) trackCouponUse({ orderId: `paypal:${j.id}`, coupon: t.coupon, status: 'neu', createdAt: at, customer: k.customer });
       return send(res, 200, { ok: true, id: j.id });
     }

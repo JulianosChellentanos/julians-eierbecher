@@ -259,6 +259,11 @@ function volumeSurchargeWith(pr, product, config) {
   return r2(extra * ((vol.prozent || 0) / 100 * base + (vol.euro || 0)));
 }
 
+/**
+ * Gravurtext, wie die Druckdatei ihn graviert: ohne Steuer- und Formatzeichen (Cc, Cf, U+2028/2029), das weiche Trennzeichen (U+00AD)
+ * als Strich — Spiegel von gravurSichtbar() im Server. Nur unsichtbare Zeichen = keine Gravur.
+ */
+export const gravurText = (t) => String(t ?? '').replace(/\u00ad/g, '-').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '');
 /** Gravur-Regel (Spiegel von server.js/geometry.js): Die Geometrie schaltet die Gravur ab,
  * sobald die WIRKSAME Mustertiefe über 2,5 mm (Vase) bzw. 2,0 mm (Eierbecher) liegt — dann darf
  * auch kein Gravur-Aufpreis berechnet werden. Wirksam = Wunschtiefe, begrenzt durch die
@@ -341,8 +346,15 @@ export function laengereLieferzeit(a, b) {
 }
 /** Lieferzeit einer Farbe: eigene (colors[].lieferzeit, Normalform) oder die allgemeine */
 export const farbLieferzeit = (farbe, standard) => String(farbe?.lieferzeit || '').trim() || standard;
-/** Hat die Position eine Farbschrift (zweites Filament)? Gleiche Regel wie farbSperre im Server: Text da und Stil „farbe“ */
-export const mitFarbschrift = (item) => { const c = item?.config || {}; return !!String(c.text || '').trim() && c.textStyle === 'farbe' && typeof c.textColor === 'string' && !!c.textColor; };
+/**
+ * Hat die Position eine Farbschrift (zweites Filament)? Dieselbe Bedingung wie der Farbschrift-Aufpreis (partsWith, priceItem im Server):
+ * Gravur mit sichtbaren Zeichen (gravurText), Gravur bei diesem Muster erlaubt (gravurAllowed), Stil „farbe“, Schriftfarbe gesetzt —
+ * ohne gedruckte Farbschrift zählt die Schriftfarbe weder für die Lieferzeit noch für die Sperre „auf Anfrage“
+ */
+export const mitFarbschrift = (item) => {
+  const c = item?.config || {};
+  return c.textStyle === 'farbe' && typeof c.textColor === 'string' && !!c.textColor && !!gravurText(c.text).trim() && gravurAllowed(c, item?.product);
+};
 /**
  * Lieferzeit einer Position. farbe(item) → Farbobjekt der Körperfarbe | null, schriftfarbe(id) → Farbobjekt | null,
  * standard = allgemeine Lieferzeit (Text)
@@ -371,6 +383,21 @@ export function anfrageFarbeVon(item, { farbe, schriftfarbe }) {
   }
   return null;
 }
+/**
+ * Lieferzeit für allgemeine Angaben vor der Farbwahl (data-lieferzeit: Trust-Zeile, „So geht’s“, FAQ, auch im FAQ-JSON-LD des Servers).
+ * Hat eine bestellbare Farbe (aktiv, nicht „auf Anfrage“) eine längere eigene Lieferzeit als die allgemeine, steht dort nicht mehr die
+ * allgemeine allein: lang „5–8 Werktage, einzelne Farben länger“, kurz (Handy-Kacheln, data-lieferzeit="kurz") die ganze Spanne
+ * „5–14 Werktage“. Sonst — und wenn die allgemeine keine Zahl hat — die allgemeine unverändert.
+ */
+export function lieferzeitAllgemein(farben, standard, { kurz = false } = {}) {
+  const s = lieferzeitSpanne(standard);
+  if (!s) return standard;
+  const bis = Math.max(0, ...(Array.isArray(farben) ? farben : [])
+    .filter((f) => f && f.active !== false && f.aufAnfrage !== true && String(f.lieferzeit || '').trim())
+    .map((f) => lieferzeitSpanne(f.lieferzeit)?.bis || 0));
+  if (bis <= s.bis) return standard;
+  return kurz ? `${s.von}–${bis} Werktage` : `${standard}, einzelne Farben länger`;
+}
 /** Meldung für eine Farbe, die es nur auf Anfrage gibt — Server (400) und Browser (Warenkorb, Listen) mit demselben Wortlaut */
 export const anfrageMeldung = ({ farbe, schrift }) =>
   `Die ${schrift ? 'Schriftfarbe' : 'Farbe'} „${farbe?.name || ''}“ gibt es derzeit nur auf Anfrage – bitte frag sie über „Farbe anfragen“ an oder wähle eine andere ${schrift ? 'Schriftfarbe' : 'Farbe'}.`;
@@ -394,9 +421,8 @@ function partsWith(item, pr, farbe) {
   const p = pr?.products?.[item?.product];
   if (!p) return null;
   const c = item.config || {};
-  // Gravur zählt nur mit sichtbaren Zeichen — Steuer-/Formatzeichen lässt die Druckdatei weg (wie gravurSichtbar() im Server);
-  // das weiche Trennzeichen (U+00AD) graviert sie dagegen als Strich
-  const hasText = !!String(c.text || '').replace(/\u00ad/g, '-').replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, '').trim() && gravurAllowed(c, item?.product);
+  // Gravur zählt nur mit sichtbaren Zeichen (gravurText, wie gravurSichtbar() im Server)
+  const hasText = !!gravurText(c.text).trim() && gravurAllowed(c, item?.product);
   // jeder Bestandteil auf Cent wie im Server (euro()) — sonst rechneten Browser und Server bei Preisen mit 3 Nachkommastellen verschieden
   return {
     grund: eu(p.single),
