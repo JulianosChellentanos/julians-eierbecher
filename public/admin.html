@@ -293,6 +293,8 @@
   .color-row .grow { flex: 1; min-width: 150px; }
   .color-row .f-sw { flex-direction: row; align-items: center; gap: 8px; }
   .color-row label.inline { padding-bottom: 8px; }
+  .color-row .col-checks { display: flex; flex-direction: column; gap: 2px; }
+  .color-row .col-checks label.inline { padding-bottom: 0; }
   .color-row .del { margin-bottom: 4px; }
   .need-wrap { display: flex; align-items: center; gap: 8px; height: 38px; }
   .need { height: 8px; border-radius: 5px; background: var(--bg-soft); overflow: hidden; min-width: 90px; }
@@ -526,9 +528,15 @@
         <div class="card"><div class="tbl-wrap"><table id="customers-table" class="cards"></table></div></div>
       </section>
 
+      <!-- 💬 Anfragen („Farbe anfragen“ / „Individuelles Angebot“ aus dem Shop) -->
+      <section id="pane-anfragen" class="pane" hidden>
+        <div class="pane-head"><div><h1>Anfragen</h1><p>„Farbe anfragen“ und „Individuelles Angebot“ aus dem Shop, neueste oben. Jede Anfrage kommt auch als E-Mail – „Antworten“ geht direkt an die Kundin. Erledigte löschen, sobald du sie nicht mehr brauchst; nach 12 Monaten löscht der Shop sie selbst.</p></div><button class="ghost" onclick="loadAnfragen()">↻ Neu laden</button></div>
+        <div class="card"><div id="anfragen-list"><p class="empty">Lade …</p></div></div>
+      </section>
+
       <!-- 🎨 Farben -->
       <section id="pane-colors" class="pane" data-settings hidden>
-        <div class="pane-head"><div><h1>Filament-Farben</h1><p>Was hier aktiv ist, können Kunden im Konfigurator wählen. Rolle leer? Haken raus — die Farbe verschwindet sofort aus dem Shop.</p></div><button class="ghost" onclick="addColor()">+ Farbe hinzufügen</button></div>
+        <div class="pane-head"><div><h1>Filament-Farben</h1><p>Was hier aktiv ist, können Kunden im Konfigurator wählen. Rolle leer? Haken raus — die Farbe verschwindet sofort aus dem Shop. <b>Lieferzeit</b> je Farbe in Werktagen (leer = allgemeine Lieferzeit; im Warenkorb gilt die längste Position). <b>Auf Anfrage</b>: sichtbar, aber nicht bestellbar – Kundschaft kann die Farbe anfragen.</p></div><button class="ghost" onclick="addColor()">+ Farbe hinzufügen</button></div>
         <div class="card"><div id="colors-list"></div></div>
       </section>
 

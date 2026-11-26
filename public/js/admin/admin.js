@@ -1,5 +1,5 @@
 // formsam Studio — Admin-Oberfläche (klassisches Skript, wird von /admin geladen)
-// Bereiche: Übersicht (+ Pflichtangaben, Widerrufe) · Bestellungen (+ Drawer) · Druck · Kunden · Farben · Bilder · Preise · Aktionen · Firma · PayPal · E-Mail · System
+// Bereiche: Übersicht (+ Pflichtangaben, Widerrufe) · Bestellungen (+ Drawer) · Druck · Kunden · Anfragen · Farben · Bilder · Preise · Aktionen · Firma · PayPal · E-Mail · System
 // Admin-Passwort nur für diesen Tab im sessionStorage „ovju-admin-key“ (interne Kennung mit altem Präfix) — nicht mehr dauerhaft im
 // localStorage; ein dort noch liegendes Passwort (ältere Fassung) wird beim Laden übernommen und gelöscht.
 'use strict';
@@ -242,7 +242,7 @@ const notReady = () => toast('E-Mail-Versand ist noch nicht eingerichtet (Bereic
 // Navigation
 // ---------------------------------------------------------------------------
 const NAV = [
-  ['dash', '📊', 'Übersicht'], ['orders', '📦', 'Bestellungen'], ['print', '🖨️', 'Druck'], ['customers', '👥', 'Kunden'],
+  ['dash', '📊', 'Übersicht'], ['orders', '📦', 'Bestellungen'], ['print', '🖨️', 'Druck'], ['customers', '👥', 'Kunden'], ['anfragen', '💬', 'Anfragen'],
   ['colors', '🎨', 'Farben'], ['images', '🖼️', 'Bilder'], ['pricing', '💰', 'Preise & Gutscheine'], ['aktionen', '🔥', 'Aktionen'], ['company', '🏢', 'Firma'],
   ['paypal', '💙', 'PayPal'], ['mail', '✉️', 'E-Mail'], ['system', '⚙️', 'System'],
 ];
@@ -261,6 +261,7 @@ function show(pane) {
   if (pane === 'company') renderPflicht();
   if (pane === 'print') renderPrint();
   if (pane === 'customers') renderCustomers();
+  if (pane === 'anfragen') loadAnfragen();   // Anfragen frisch vom Server (kommen jederzeit über den Shop herein)
   if (pane === 'colors') renderColors();
   if (pane === 'aktionen') aktionen.forEach((_, i) => akRefresh(i));   // Status-Chips/Countdown sofort frisch (Ticker läuft sonst nur sekündlich)
   if (pane === 'mail') loadMailLog();
@@ -281,6 +282,7 @@ function updateCounters() {
   const rk = DATA.orders.filter(reklaOpen).length;
   const wr = wrOffenCount();   // offene Widerrufe: Zähler an „Übersicht“ (dort steht die Karte)
   $('#nav-cnt-dash').textContent = wr || '';
+  $('#nav-cnt-anfragen').textContent = afOffenCount() || '';
   $('#subline').textContent = `${DATA.orders.length} Bestellungen · ${open} offen${rk ? ` · ${rk} Reklamation${rk === 1 ? '' : 'en'}` : ''}${wr ? ` · ${wr} Widerruf${wr === 1 ? '' : 'e'} offen` : ''} · ${money(rev)} Umsatz gesamt`;
 }
 
@@ -738,10 +740,12 @@ function renderDrawer() {
   // Verwendungszweck wie auf Rechnung, Bestätigungsmail, AGB und Versandseite: die Bestellnummer. Altbestand (OV-…): dessen
   // alte Rechnung verlangte die Rechnungsnummer — dort kann die Überweisung also auch die RE-Nummer tragen
   const vzweck = `<code>${esc(o.orderId)}</code>${/^OV-/.test(o.orderId || '') && o.invoiceNo ? ` <small class="muted">oder <code style="white-space:nowrap">${esc(o.invoiceNo)}</code> (alte Rechnung)</small>` : ''}`;
+  // Lieferzeit, die die Bestellung beim Anlegen festgehalten hat (längste Position je nach Farbe; ältere Bestellungen ohne Feld: allgemeine)
+  const lzZeile = o.lieferzeit ? `<dt>Lieferzeit</dt><dd>${esc(o.lieferzeit)}</dd>` : '';
   const payBlock = o.payment === 'paypal'
-    ? `<dl class="kv"><dt>Zahlart</dt><dd>PayPal ${o.paymentStatus === 'bezahlt' ? '✅ bezahlt' : '⏳ offen'}</dd><dt>PayPal-ID</dt><dd><code>${esc(o.paypalOrderId || '—')}</code></dd>${o.paidAt ? `<dt>Bezahlt am</dt><dd>${fmtDT(o.paidAt)}</dd>` : ''}</dl>`
+    ? `<dl class="kv"><dt>Zahlart</dt><dd>PayPal ${o.paymentStatus === 'bezahlt' ? '✅ bezahlt' : '⏳ offen'}</dd><dt>PayPal-ID</dt><dd><code>${esc(o.paypalOrderId || '—')}</code></dd>${o.paidAt ? `<dt>Bezahlt am</dt><dd>${fmtDT(o.paidAt)}</dd>` : ''}${lzZeile}</dl>`
     : `<dl class="kv"><dt>Zahlart</dt><dd>Vorkasse (Überweisung)</dd><dt>Betrag</dt><dd><b>${o.total != null ? money(o.total) : '—'}</b></dd><dt>Verwendungszweck</dt><dd>${vzweck}</dd>
-       <dt>Status</dt><dd>${o.paymentStatus === 'bezahlt' ? `✅ bezahlt${o.paidAt ? ' am ' + fmtDT(o.paidAt) : ''} ${undoable ? `<button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu (Zahlung offen)</button>` : `<button class="link mini" onclick="setPayment('${esc(o.orderId)}','offen')">zurücksetzen</button>`}` : `⏳ offen seit ${ageText(o.createdAt)} ${kasseAbgebrochen(o) ? '' : `<button class="mini acc" style="margin-left:8px" onclick="markPaid('${esc(o.orderId)}')">✓ Zahlung eingegangen</button>`}${undoable ? ` <button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu</button>` : ''}`}</dd></dl>`;
+       <dt>Status</dt><dd>${o.paymentStatus === 'bezahlt' ? `✅ bezahlt${o.paidAt ? ' am ' + fmtDT(o.paidAt) : ''} ${undoable ? `<button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu (Zahlung offen)</button>` : `<button class="link mini" onclick="setPayment('${esc(o.orderId)}','offen')">zurücksetzen</button>`}` : `⏳ offen seit ${ageText(o.createdAt)} ${kasseAbgebrochen(o) ? '' : `<button class="mini acc" style="margin-left:8px" onclick="markPaid('${esc(o.orderId)}')">✓ Zahlung eingegangen</button>`}${undoable ? ` <button class="link mini" onclick="undoPaid('${esc(o.orderId)}')">↩ zurück auf Neu</button>` : ''}`}</dd>${lzZeile}</dl>`;
 
   const account = o.userId ? '<span class="badge">👤 Kundenkonto</span>' : (USERS.some((u) => u.email === custEmail(o)) ? '<span class="badge">👤 hat Konto</span>' : '<span class="badge">Gast</span>');
   const tel = cu.phone ? `<br><a href="tel:${esc(cu.phone)}">${esc(cu.phone)}</a>` : '';
@@ -1287,6 +1291,73 @@ async function wrSetStatus(ref, status) {
   }
   if (CUR) renderDrawer();
 }
+// ---------------------------------------------------------------------------
+// Anfragen („Farbe anfragen“ / „Individuelles Angebot“ aus dem Shop, POST /api/anfrage)
+//   GET  /api/admin/anfragen → { ok, anfragen: [neueste zuerst] }
+//        Eintrag { id: 'AF-YYMMDD-XXXX', at, anlass: 'farbe'|'angebot', farbe: { id, name } | null, name, email, nachricht,
+//                  benachrichtigen, code, status: 'offen'|'erledigt', erledigtAt }
+//   POST /api/admin/anfrage-status { id, status } · POST /api/admin/anfrage-loeschen { id }
+// Antworten gehen von Hand per E-Mail (die Meldung an den Shop hat Reply-To = Kundin); der Shop schreibt der Kundschaft nicht selbst.
+// ---------------------------------------------------------------------------
+let ANFRAGEN = null;      // null = nicht geladen bzw. Endpoint fehlt
+let AF_ERR = '';
+let AF_ALL = false;       // erledigte Anfragen ausgeklappt
+const AF_ANLASS = { farbe: 'Farbe anfragen', angebot: 'Individuelles Angebot' };
+const afOffen = () => (ANFRAGEN || []).filter((a) => a.status !== 'erledigt');
+/** Offene Anfragen — vor dem ersten Laden die Zahl aus /api/admin/data */
+const afOffenCount = () => (ANFRAGEN ? afOffen().length : Math.max(0, Math.round(Number(DATA?.anfragenOffen) || 0)));
+async function loadAnfragen() {
+  let r;
+  try { r = await api('/api/admin/anfragen'); } catch { return; }   // 401 → Login ist schon offen
+  if (r.notReady) { ANFRAGEN = null; AF_ERR = 'Anfragen sind auf dem Server noch nicht eingerichtet.'; }
+  else if (!r.ok) AF_ERR = `Anfragen konnten nicht geladen werden: ${r.error || 'Fehler'}`;
+  else { ANFRAGEN = (Array.isArray(r.anfragen) ? r.anfragen : []).filter((a) => a && typeof a === 'object' && a.id); AF_ERR = ''; }
+  renderAnfragen();
+  updateCounters();
+}
+function afItemHTML(a) {
+  const id = esc(a.id), done = a.status === 'erledigt';
+  const code = String(a.code || '').trim();
+  const codeTxt = code.replace(/(.{3})(?=.)/g, '$1-');
+  return `<div class="wr-item ${done ? 'erledigt' : 'offen'}" id="af-${id}">
+      <div class="wr-head"><span class="badge ${done ? 'wr-erledigt' : 'wr-offen'}">${done ? '✓ erledigt' : 'offen'}</span><b>${esc(AF_ANLASS[a.anlass] || 'Anfrage')}</b>${a.farbe?.name ? `<span>· Farbe <b>${esc(a.farbe.name)}</b></span>` : ''}<span class="muted">${fmtDT(a.at)} Uhr</span><span class="muted ref">${id}</span></div>
+      <div class="wr-who"><b>${esc(a.name)}</b> · <a href="mailto:${esc(a.email)}">${esc(a.email)}</a>${a.anlass === 'farbe' ? `<br><span class="muted">Benachrichtigen, sobald bestellbar:</span> ${a.benachrichtigen ? '<b>ja</b>' : 'nein'}` : ''}${code ? `<br><span class="muted">Design-Code:</span> <a href="/?d=${encodeURIComponent(code)}" target="_blank" rel="noopener">${esc(codeTxt)}</a>` : ''}</div>
+      <div class="wr-msg">${esc(String(a.nachricht || '').trim())}</div>
+      <div class="wr-foot">
+        ${done ? `<button class="mini ghost" data-af-id="${id}" data-af-status="offen">↺ Wieder offen</button>` : `<button class="mini acc" data-af-id="${id}" data-af-status="erledigt">✓ Erledigt</button>`}
+        <button class="mini danger" data-af-id="${id}" data-af-del>🗑 Löschen</button>
+      </div>
+    </div>`;
+}
+/** Liste „Anfragen“: offene zuerst (neueste oben), erledigte eingeklappt */
+function renderAnfragen() {
+  const box = $('#anfragen-list');
+  if (!box) return;
+  if (AF_ERR) { box.innerHTML = `<p class="empty">${esc(AF_ERR)}</p>`; return; }
+  if (!ANFRAGEN) { box.innerHTML = '<p class="empty">Lade …</p>'; return; }
+  const offen = afOffen(), erledigt = ANFRAGEN.filter((a) => a.status === 'erledigt');
+  const leer = ANFRAGEN.length ? '<p class="empty">Keine offenen Anfragen.</p>' : '<p class="empty">Noch keine Anfragen eingegangen.</p>';
+  box.innerHTML = (offen.map(afItemHTML).join('') || leer) +
+    (erledigt.length ? `<div class="wr-more">${AF_ALL ? erledigt.map(afItemHTML).join('') : ''}<button class="link mini" data-af-toggle>${AF_ALL ? 'Erledigte ausblenden' : `Erledigte zeigen (${erledigt.length})`}</button></div>` : '');
+}
+async function afSetStatus(id, status) {
+  const a = (ANFRAGEN || []).find((x) => x.id === id);
+  if (!a || !['offen', 'erledigt'].includes(status)) return;
+  const r = await api('/api/admin/anfrage-status', { method: 'POST', body: JSON.stringify({ id, status }) });
+  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  a.status = status; a.erledigtAt = status === 'erledigt' ? new Date().toISOString() : null;
+  renderAnfragen(); updateCounters();
+  toast(`${id} ${status === 'erledigt' ? 'als erledigt markiert' : 'wieder offen'}`, 'ok');
+}
+async function afLoeschen(id) {
+  const a = (ANFRAGEN || []).find((x) => x.id === id);
+  if (!a || !confirm(`Anfrage ${id} von ${a.name} endgültig löschen?`)) return;
+  const r = await api('/api/admin/anfrage-loeschen', { method: 'POST', body: JSON.stringify({ id }) });
+  if (!r.ok) return toast(r.error || 'Fehler', 'err');
+  ANFRAGEN = ANFRAGEN.filter((x) => x.id !== id);
+  renderAnfragen(); updateCounters();
+  toast(`Anfrage ${id} gelöscht`, 'ok');
+}
 /** Aus dem Drawer zum Eintrag in der Übersicht springen (erledigte dafür ausklappen) */
 function wrGoto(ref) {
   const w = (WIDERRUFE || []).find((x) => x.ref === ref);
@@ -1428,6 +1499,8 @@ async function userDelete(id) {
 // Farben (Filament-Verwaltung)
 // ---------------------------------------------------------------------------
 function renderColors() {
+  // Platzhalter im Feld „Lieferzeit“: die allgemeine Lieferzeit (Firma → Shop-Angaben; auch ungespeichert, wie sie gerade im Formular steht)
+  const allgLz = String($('#sh-lieferzeit')?.value || DATA?.settings?.shop?.lieferzeit || '').trim() || '5–8 Werktage';
   const need = {};
   for (const it of queueItems()) { const c = lineColor(it.l); need[c.id || c.name] = (need[c.id || c.name] || 0) + estimate(it.l).grams; }
   const maxNeed = Math.max(1, ...Object.values(need));
@@ -1441,8 +1514,10 @@ function renderColors() {
       <label class="grow">Notiz<input type="text" value="${esc(c.note || '')}" onchange="colors[${i}].note=this.value" placeholder="z. B. Bambu PLA Silk"></label>
       <label>Bestand (g)<input type="number" min="0" step="10" value="${esc(c.stock ?? '')}" placeholder="—" onchange="colors[${i}].stock=this.value===''?null:+this.value;renderColors()" style="width:88px"></label>
       <label>Aufpreis (€)<input type="number" min="0" step="0.5" value="${euroField(c.aufpreis)}" placeholder="0" title="Aufpreis je Stück für diese Körperfarbe (leer = 0)" onchange="colors[${i}].aufpreis=euro(this.value);renderColors()" style="width:88px"></label>
+      <label>Lieferzeit<input type="text" maxlength="40" value="${esc(c.lieferzeit || '')}" placeholder="${esc(allgLz)}" title="Eigene Lieferzeit dieser Farbe in Werktagen, z. B. „10–14 Werktage“ oder „7 Werktage“ – leer = allgemeine Lieferzeit (Firma → Shop-Angaben). Im Warenkorb gilt die längste aller Positionen." onchange="colors[${i}].lieferzeit=this.value.trim()" style="width:112px"${c.aufAnfrage ? ' disabled' : ''}></label>
       <label>Offener Bedarf<div class="need-wrap"><div class="need ${over ? 'over' : ''}" style="width:80px"><i style="--w:${Math.round(n / maxNeed * 100)}%"></i></div><small>${n ? `${Math.round(n)} g${over ? ' ⚠️' : ''}` : '—'}</small></div></label>
-      <label class="inline"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"> Im Shop</label>
+      <div class="col-checks"><label class="inline"><input type="checkbox" ${c.active ? 'checked' : ''} onchange="colors[${i}].active=this.checked"> Im Shop</label>
+      <label class="inline" title="Die Farbe bleibt im Konfigurator sichtbar und wählbar, lässt sich aber nicht bestellen: statt „In den Warenkorb“ steht „Farbe anfragen“ (Anfrage kommt per E-Mail und unter Anfragen)"><input type="checkbox" ${c.aufAnfrage ? 'checked' : ''} onchange="colors[${i}].aufAnfrage=this.checked;renderColors()"> Auf Anfrage</label></div>
       <button class="ghost mini del" data-del-color="${i}" title="Farbe löschen">🗑</button>
     </div>`;
   }).join('') || '<p class="empty">Noch keine Farben angelegt.</p>';
@@ -2529,6 +2604,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.closest?.('[data-wr-toggle]')) { WR_ALL = !WR_ALL; return renderWiderrufe(); }
     const wg = e.target.closest?.('[data-wr-goto]');
     if (wg) return wrGoto(wg.dataset.wrGoto);
+    // Anfragen: erledigt / wieder offen / löschen, Erledigte ein-/ausklappen
+    const af = e.target.closest?.('[data-af-id]');
+    if (af) return af.dataset.afDel !== undefined ? afLoeschen(af.dataset.afId) : afSetStatus(af.dataset.afId, af.dataset.afStatus);
+    if (e.target.closest?.('[data-af-toggle]')) { AF_ALL = !AF_ALL; return renderAnfragen(); }
   });
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
