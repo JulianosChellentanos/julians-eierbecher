@@ -269,7 +269,7 @@
       </section>
 
       <section class="ctrl" data-tab="farbe">
-        <h3>Farbe <span class="opt" id="farbe-name">– PLA matt · glänzend · metallic</span></h3>
+        <h3>Farbe <span class="opt" id="farbe-name">– PLA matt · glänzend · metallic</span><span class="opt farbe-lz" id="farbe-lieferzeit" hidden></span></h3>
         <div class="swatch-grid" id="swatches" role="group" aria-label="Farbe der Vase"></div>
       </section>
 
@@ -299,7 +299,10 @@
           <button class="btn btn-ghost" id="btn-download" title="STL-Datei herunterladen – druckfertig in mm, slicebar in Bambu Studio, PrusaSlicer &amp; Co.">⬇ STL</button>
         </div>
         <div class="tiny">Druckfertige STL in Millimetern – direkt slicebar in Bambu Studio, PrusaSlicer &amp; Co.<br>
-          <button class="linkbtn" data-open-code="show">🔖 Design-Code anzeigen</button> · <button class="linkbtn" data-open-code="enter">Code eingeben</button></div>
+          <button class="linkbtn" data-open-code="show">🔖 Design-Code anzeigen</button> · <button class="linkbtn" data-open-code="enter">Code eingeben</button><span class="angebot-kurz"> · <button class="linkbtn" data-anfrage="angebot" title="Sonderwunsch? Andere Größe, Stückzahl, Farbe oder eigene Form – frag mich nach einem individuellen Angebot." aria-label="Sonderwunsch? Andere Größe, Stückzahl, Farbe oder eigene Form – frag mich nach einem individuellen Angebot">💬 Sonderwunsch? Individuelles Angebot</button></span></div>
+        <!-- Hinweis auf individuelle Angebote: am Desktop als kurzer Link in der Zeile darüber (gleiche Höhe — Preis und Kaufknopf bleiben, wo sie
+             abgenommen sind); diese ausführliche Zeile hängt mobile.js auf Handy und Tablet ans Panel-Ende (dort ist der Preisbereich ausgeblendet) -->
+        <p class="tiny angebot-zeile">Sonderwunsch? Andere Größe, Stückzahl, Farbe oder eigene Form – <button type="button" class="linkbtn" data-anfrage="angebot">frag mich nach einem individuellen Angebot</button>.</p>
       </div>
       <!-- Desktop: kompakte Preisleiste unten im Panel, solange Preis oder „In den Warenkorb“ des Preisbereichs außer Sicht sind (app.js initPanelCta) -->
       <div class="cta-mini" id="cta-mini" aria-hidden="true" inert>
@@ -377,6 +380,8 @@
       <p><a href="#galerie">Galerie</a></p>
       <p><a href="#faq">Häufige Fragen</a></p>
       <p><a href="#story">Über formsam</a></p>
+      <p><a href="#angebot" data-anfrage="angebot">Individuelles Angebot</a></p>
+      <p data-kontakt-zeile hidden>oder schreib an <span data-kontakt-mail></span></p>
     </div>
   </div>
   <!-- Rechtliches: eigene Seiten des Servers (lib/legal.js); „Vertrag widerrufen“ führt direkt zur Widerrufsfunktion -->
@@ -578,6 +583,34 @@
       <div class="tiny err-msg" id="dc-err" role="alert"></div>
       <div class="tiny ok-msg" id="dc-msg" role="status"></div>
     </div>
+  </div>
+</dialog>
+<!-- Anfrage: „Farbe anfragen“ (Farbe nur auf Anfrage) und „Individuelles Angebot“ — js/anfrage.js, POST /api/anfrage -->
+<dialog id="anfrage-modal" aria-labelledby="anf-title">
+  <form id="anfrage-form" class="co-wrap anf-wrap" novalidate>
+    <div class="cart-head co-head"><h2 id="anf-title">💬 Individuelles Angebot</h2><button type="button" class="btn btn-ghost" id="anf-close" aria-label="Schließen">✕</button></div>
+    <p class="dc-lead" id="anf-lead"></p>
+    <div class="co-grid">
+      <label>Name <input type="text" id="anf-name" required minlength="2" maxlength="80" autocomplete="name" enterkeyhint="next"></label>
+      <label>E-Mail <input type="email" id="anf-email" required maxlength="254" autocomplete="email" placeholder="du@example.de" enterkeyhint="next"></label>
+      <label class="wide">Nachricht <textarea id="anf-nachricht" required maxlength="3000" rows="5"></textarea></label>
+    </div>
+    <label class="co-check" id="anf-notify-row" hidden><input type="checkbox" id="anf-notify"><span>Gib mir Bescheid, sobald die Farbe bestellbar ist.</span></label>
+    <label class="co-check" id="anf-code-row"><input type="checkbox" id="anf-code" checked><span><span id="anf-code-was">Mein aktuelles Design</span> mitschicken (<span id="anf-code-name">wird vorbereitet …</span>)</span></label>
+    <!-- Falle für Bots: für Menschen unsichtbar und nicht erreichbar — ist sie gefüllt, verwirft der Server die Anfrage still -->
+    <div class="anf-falle" aria-hidden="true"><label>Website <input type="text" id="anf-website" name="website" tabindex="-1" autocomplete="off"></label></div>
+    <p class="co-legal">Ich nutze deine Angaben nur, um deine Anfrage zu beantworten – mehr dazu in der <a href="/datenschutz#anfrage" target="_blank" rel="noopener">Datenschutzerklärung</a>.<span id="anf-direkt" hidden> Lieber direkt? Schreib an <span id="anf-direkt-mail"></span>.</span></p>
+    <p class="tiny warn-msg" id="anf-error" role="alert" style="text-align:left" hidden></p>
+    <div class="modal-btns">
+      <button type="button" class="btn btn-ghost" id="anf-cancel">Abbrechen</button>
+      <button type="submit" class="btn btn-primary" id="anf-submit">Anfrage senden</button>
+    </div>
+  </form>
+  <div class="confirm" id="anf-done" hidden>
+    <div class="confirm-icon">💌</div>
+    <h2>Anfrage gesendet</h2>
+    <p id="anf-done-text" role="status"></p>
+    <button type="button" class="btn btn-primary" id="anf-done-close">Schließen</button>
   </div>
 </dialog>
 <div class="mobile-bar" id="mobile-bar" hidden>

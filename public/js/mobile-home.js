@@ -945,7 +945,8 @@ function initTabNext() {
       if (!b) { b = document.createElement('button'); b.type = 'button'; b.className = 'm-next'; sec.appendChild(b); }
       const i = o.findIndex(([k]) => k === sec.dataset.tab), next = i < 0 ? null : o[i + 1];
       b.hidden = i < 0; b.dataset.next = next ? next[0] : ''; if (i < 0) continue; // Tab gerade nicht angeboten (Extras nur beim Eierbecher)
-      const t = next ? `Weiter: ${next[1]} →` : 'Fertig · In den Warenkorb';
+      // Farbe „auf Anfrage“ (app.js renderVerfuegbarkeit setzt body.farbe-anfrage): der letzte Knopf öffnet dann das Anfrageformular
+      const t = next ? `Weiter: ${next[1]} →` : document.body.classList.contains('farbe-anfrage') ? 'Fertig · Farbe anfragen' : 'Fertig · In den Warenkorb';
       if (b.textContent !== t) b.textContent = t;
       b.classList.toggle('m-next-done', !next);
     }

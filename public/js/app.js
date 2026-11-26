@@ -23,8 +23,10 @@ import { initDesignCodes, loadFromURL, loadDesign, saveDesign, uploadThumb, form
 import { initLists, openList, loadListFromURL, createListFromCart } from './lists.js';
 import { initAuth } from './auth.js';
 import { activateTab, initMobileShell, updateMobileTabs, showToast, bumpCart, animateMoney, setMobilePrice, IS_MOBILE } from './mobile.js';
-import { aktionFor, aktionMuster, musterListLabel, aktionText, aktionTextKurz, onAktionEnde, referenzpreis, referenzText, aktionProzentGueltig, versandHTML, ustText } from './pricing.js';
+import { aktionFor, aktionMuster, musterListLabel, aktionText, aktionTextKurz, onAktionEnde, referenzpreis, referenzText, aktionProzentGueltig, versandHTML, ustText,
+  itemLieferzeit, itemAnfrageFarbe, lieferzeitStandard } from './pricing.js';
 import { initAktionBar } from './aktion.js';
+import { initAnfrage, openAnfrage } from './anfrage.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -101,19 +103,20 @@ async function loadContent() {
   const order = { matt: 0, glanz: 1, metall: 2 };
   colors.sort((a, b) => (order[a.finish || 'matt'] ?? 0) - (order[b.finish || 'matt'] ?? 0));
   // Farbangaben aus den Einstellungen (Admin) nur maskiert bzw. als geprüfter Farbwert ins HTML
+  // Farben „auf Anfrage“ (Admin): sichtbar und wählbar, mit Zeichen „Anfrage“ am Farbpunkt; abweichende Lieferzeit im Tooltip
   $('#swatches').innerHTML = colors.map((c) => {
     const sur = Math.max(0, Number(c.aufpreis) || 0);
     const fin = escAttr(c.finish || 'matt'), hex = cssHex(c.hex);
     return `
-    <button class="swatch sw-${fin}" data-id="${escAttr(c.id)}" data-hex="${hex}" data-name="${escAttr(c.name)}" data-finish="${fin}"
-      style="--sw:${hex}" title="${escAttr(c.name)}${(c.finish || 'matt') !== 'matt' ? ' · ' + escAttr(FINISH_LABEL[c.finish]) : ''}${sur > 0 ? ' · ' + fmtPlus(sur) + ' je Stück' : ''}"><span></span>${sur > 0 ? `<i class="sur sur-sw">${fmtPlus(sur)}</i>` : ''}</button>`;
+    <button class="swatch sw-${fin}${c.aufAnfrage ? ' sw-anfrage' : ''}" data-id="${escAttr(c.id)}" data-hex="${hex}" data-name="${escAttr(c.name)}" data-finish="${fin}"
+      style="--sw:${hex}" title="${escAttr(swatchTitel(c))}${sur > 0 ? ' · ' + fmtPlus(sur) + ' je Stück' : ''}"><span></span>${sur > 0 ? `<i class="sur sur-sw">${fmtPlus(sur)}</i>` : ''}${c.aufAnfrage ? '<i class="sur sur-anfrage" aria-hidden="true">Anfrage</i>' : ''}</button>`;
   }).join('');
   $$('#swatches .swatch').forEach((b) => b.addEventListener('click', () => setColor(b.dataset)));
   setColor(colors[0]);
   // Schriftfarbe (Stil „Farbschrift“): gleiche Palette, zweites Filament
   $('#text-swatches').innerHTML = colors.map((c) => `
-    <button class="swatch sw-${escAttr(c.finish || 'matt')}" data-id="${escAttr(c.id)}" data-hex="${cssHex(c.hex)}" data-name="${escAttr(c.name)}" data-finish="${escAttr(c.finish || 'matt')}"
-      style="--sw:${cssHex(c.hex)}" title="${escAttr(c.name)}"><span></span></button>`).join('');
+    <button class="swatch sw-${escAttr(c.finish || 'matt')}${c.aufAnfrage ? ' sw-anfrage' : ''}" data-id="${escAttr(c.id)}" data-hex="${cssHex(c.hex)}" data-name="${escAttr(c.name)}" data-finish="${escAttr(c.finish || 'matt')}"
+      style="--sw:${cssHex(c.hex)}" title="${escAttr(swatchTitel(c, false))}"><span></span>${c.aufAnfrage ? '<i class="sur sur-anfrage" aria-hidden="true">?</i>' : ''}</button>`).join('');
   $$('#text-swatches .swatch').forEach((b) => b.addEventListener('click', () => { setTextColor(b.dataset.id); rebuild(); }));
   setTextColor(state.textColor || 'tiefschwarz', true);
 }
@@ -211,6 +214,39 @@ function renderProductPrices() {
   $$('.product-tab[data-product] small').forEach((el) => { el.innerHTML = abPriceHTML(el.closest('.product-tab').dataset.product); });
   $$('.showcase-price[data-product]').forEach((el) => { el.innerHTML = abPriceHTML(el.dataset.product, true); });
 }
+/** Tooltip eines Farbpunkts: Name · Finish · „nur auf Anfrage“ bzw. die eigene Lieferzeit der Farbe (sonst gilt die allgemeine) */
+function swatchTitel(c, mitFinish = true) {
+  const teile = [c.name];
+  if (mitFinish && (c.finish || 'matt') !== 'matt') teile.push(FINISH_LABEL[c.finish]);
+  if (c.aufAnfrage) teile.push('nur auf Anfrage');
+  else if (String(c.lieferzeit || '').trim()) teile.push(`Lieferzeit ${c.lieferzeit}`);
+  return teile.join(' · ');
+}
+/**
+ * Lieferzeit und Bestellbarkeit des Designs (pricing.js — dieselbe Regel wie Warenkorb, Kasse und Server): Im Farbe-Reiter steht rechts
+ * neben dem Farbnamen die Lieferzeit (Körperfarbe, bei Farbschrift die längere von Körper- und Schriftfarbe). Ist eine dieser Farben nur
+ * „auf Anfrage“, steht dort „Lieferzeit auf Anfrage“, und alle Kaufknöpfe (Preisbereich, Desktop-Leiste, Handy-Leiste, „Fertig · …“)
+ * heißen „Farbe anfragen“ — ein Klick öffnet das Anfrageformular statt den Warenkorb (btn-order). Gestalten und ansehen geht weiter.
+ */
+let anfrageFarbe = null;   // { farbe, schrift } | null — für das aktuelle Design
+function renderVerfuegbarkeit(item) {
+  anfrageFarbe = itemAnfrageFarbe(item);
+  const lz = $('#farbe-lieferzeit');
+  if (lz) {
+    const t = anfrageFarbe ? `Lieferzeit auf Anfrage` : `📦 Lieferzeit ${itemLieferzeit(item)}`;
+    if (lz.textContent !== t) lz.textContent = t;
+    lz.title = anfrageFarbe ? `${anfrageFarbe.schrift ? 'Die Schriftfarbe' : 'Die Farbe'} „${anfrageFarbe.farbe.name}“ gibt es gerade nur auf Anfrage`
+      : itemLieferzeit(item) !== lieferzeitStandard() ? 'Lieferzeit in dieser Farbe' : 'Lieferzeit';
+    lz.hidden = false;
+  }
+  document.body.classList.toggle('farbe-anfrage', !!anfrageFarbe);
+  const kauf = anfrageFarbe ? 'Farbe anfragen ↗' : 'In den Warenkorb ↗';
+  for (const sel of ['#btn-order', '#cta-mini-order', '#mb-cart']) { const b = $(sel); if (b && b.textContent !== kauf) b.textContent = kauf; }
+  for (const b of $$('.m-next-done')) { const t = anfrageFarbe ? 'Fertig · Farbe anfragen' : 'Fertig · In den Warenkorb'; if (b.textContent !== t) b.textContent = t; }
+}
+/** Anfrageformular für die Farbe des aktuellen Designs, die es nur auf Anfrage gibt (Kaufknöpfe, Hinweis am Preis) */
+const farbeAnfragen = () => anfrageFarbe && openAnfrage({ anlass: 'farbe', farbe: anfrageFarbe.farbe });
+
 function renderPrices() {
   renderHeroHint();
   renderHeroUsePrice();
@@ -219,6 +255,7 @@ function renderPrices() {
   // Gleiche Aufschlüsselung wie Warenkorb & Server (pricing.js): Grund + Untersetzer + Gravur + Farbschrift + Muster + Farbe + Größe.
   // currentConfig() leert den Text, wenn die Gravur per Regel deaktiviert ist → dann auch kein Gravur-Aufpreis.
   const item = { product: state.product, saucer: state.saucer, config: currentConfig(), color: state.color, colorName: state.colorName };
+  renderVerfuegbarkeit(item);
   const q = unitParts(item);
   const total = q.unit; // = unitPrice(item): während einer Aktion der reduzierte Stückpreis
   // Aktion je Konfiguration (Produkt + Muster): Streichpreis/Badge nur, wenn genau diese Konfiguration rabattiert ist — und nur
@@ -280,11 +317,14 @@ function renderPrices() {
   // Ohne Aktion, aber mit besserer Aktion für ein anderes Muster: kurzer Hinweis „🔥 −30 % auf Gehämmert“ (Tipp schaltet um).
   const surSum = Math.round((q.muster + q.gravur + q.farbschrift + q.farbe + q.untersetzer + q.groesse) * 100) / 100;
   const narrow = window.innerWidth <= 430 && labels.length > 1;
-  if (ref) $('#mb-sub').innerHTML = `<span class="aktion-badge" title="${escAttr(referenzText(ref.tiefst))}">−${ref.prozent}\u00a0%</span> <span class="aktion-countdown" data-kurz data-aktion-id="${aktion.id}">${aktionTextKurz(aktion)}</span>`;
+  if (anfrageFarbe) setMobilePrice(undefined, `${anfrageFarbe.schrift ? 'Schriftfarbe' : 'Farbe'} nur auf Anfrage`);
+  else if (ref) $('#mb-sub').innerHTML = `<span class="aktion-badge" title="${escAttr(referenzText(ref.tiefst))}">−${ref.prozent}\u00a0%</span> <span class="aktion-countdown" data-kurz data-aktion-id="${aktion.id}">${aktionTextKurz(aktion)}</span>`;
   else if (alt) $('#mb-sub').innerHTML = `<button type="button" class="mb-aktion-hint" data-pattern="${alt.pattern}" title="${escAttr(referenzText(altRef.tiefst))}">🔥 −${altRef.prozent}\u00a0% auf ${musterListLabel(alt.keys, 'oder')}</button>`;
   else setMobilePrice(undefined, labels.length ? (narrow ? `inkl. ${fmt(surSum)} Aufpreise` : `inkl. ${labels.join(' · ')}`) : 'pro Stück');
-  // Mengenrabatt-Teaser — entfällt während einer Aktion ohne „Mengenrabatt zusätzlich“
-  $('#price-hint').textContent = aktion && !aktion.mengenrabatt ? 'Während der Aktion kein zusätzlicher Mengenrabatt' : discountTeaser(state.product);
+  // Mengenrabatt-Teaser — entfällt während einer Aktion ohne „Mengenrabatt zusätzlich“; bei einer Farbe „auf Anfrage“ steht dort stattdessen,
+  // dass es sie nur auf Anfrage gibt (gleiche Stelle und Größe — der Preisbereich verschiebt sich nicht)
+  $('#price-hint').textContent = anfrageFarbe ? `„${anfrageFarbe.farbe.name}“ gibt es nur auf Anfrage`
+    : aktion && !aktion.mengenrabatt ? 'Während der Aktion kein zusätzlicher Mengenrabatt' : discountTeaser(state.product);
   // Aufpreis-Zeile unter dem Preis („inkl. 3,00 € Lamellen · 2,00 € Farbschrift · 1,00 € Farbe Gold“)
   const badge = $('#price-size');
   badge.hidden = !labels.length;
@@ -1433,12 +1473,14 @@ function initControls() {
     if (ex.ext === '3mf') showToast('🎨 3MF mit zwei Teilen – in Bambu Studio öffnen, Filamente sind zugeordnet');
   });
 
-  // In den Warenkorb (mit Live-Vorschaubild)
+  // In den Warenkorb (mit Live-Vorschaubild) — bei einer Farbe „auf Anfrage“ stattdessen das Anfrageformular (Knopf heißt dann „Farbe anfragen“)
   $('#btn-order').addEventListener('click', async () => {
     const btn = $('#btn-order');
+    if (anfrageFarbe) { farbeAnfragen(); return; }
     if (btn.dataset.wait) return; // Doppeltipp, während die Vorschau noch rechnet
     btn.dataset.wait = '1';
     try { await modelReady(); } finally { delete btn.dataset.wait; }
+    if (anfrageFarbe) { farbeAnfragen(); return; }   // inzwischen eine Farbe „auf Anfrage“ gewählt
     zeichne();
     addToCart({
       config: designConfig(),
@@ -1864,6 +1906,17 @@ warmUp(); // Hintergrund-Thread lädt den Geometrie-Code, während die Seite noc
     colorInfo: (id) => (content.colors || []).find((c) => c.id === id) || null,
   });
   $('#cart-to-list')?.addEventListener('click', () => createListFromCart(getCart()).catch((e) => showToast(e.message)));
+  // Anfrageformular („Farbe anfragen“ / „Individuelles Angebot“): das aktuelle Design geht als Design-Code mit (wie „Design-Code anzeigen“)
+  initAnfrage({
+    getDesign: async () => {
+      await modelReady();
+      zeichne();
+      const config = designConfig();
+      const code = await saveDesign(config);
+      uploadThumb(code, captureThumb());
+      return { code, config };
+    },
+  });
   // Direktlinks: ?d=CODE → Design laden, ?l=CODE → Liste öffnen
   const linkGeladen = await loadFromURL();
   if (linkWartet) {

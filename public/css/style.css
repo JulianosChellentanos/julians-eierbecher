@@ -1466,3 +1466,41 @@ section[id] { scroll-margin-top: 72px; }
   body.konf-stuck .stage:not(.stage-full) .scene-chips, body.konf-stuck .stage:not(.stage-full) .stage-foto,
   body.konf-stuck .stage:not(.stage-full) .viewer-watermark { display: none; }
 }
+
+/* ---------- Lieferzeit je Farbe, Farben „auf Anfrage“, Anfrageformular (js/anfrage.js) ---------- */
+/* Farbe-Reiter: Lieferzeit rechts in der Überschriftzeile (eine Zeile, keine zusätzliche Höhe — Preisbereich bleibt, wo er ist) */
+.ctrl h3 .farbe-lz { margin-left: auto; text-transform: none; letter-spacing: normal; white-space: nowrap; }
+/* Handy: Lieferzeit als eigene Zeile unter „Farbe – Name“ (sonst bricht der Farbname eng um) */
+@media (max-width: 700px) {
+  .ctrl h3:has(.farbe-lz:not([hidden])) { flex-wrap: wrap; row-gap: 4px; }
+  .ctrl h3 .farbe-lz { flex-basis: 100%; margin-left: 0; }
+}
+/* Zeichen „Anfrage“ am Farbpunkt (oben mittig, wie das Preisschild unten rechts) — Schriftfarben: kleines „?“ oben rechts */
+.swatch.sw-anfrage { position: relative; }
+.swatch .sur-anfrage {
+  position: absolute; top: -7px; left: 50%; transform: translateX(-50%); z-index: 1; font-style: normal;
+  padding: 2px 4px; font-size: 0.52rem; background: var(--card); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+}
+.swatches-sm .swatch .sur-anfrage { top: -5px; left: auto; right: -5px; transform: none; padding: 1px 4px; }
+.swatch.sw-anfrage span { opacity: 0.82; }
+.swatch.sw-anfrage.active span { opacity: 1; }
+.dark .swatch .sur-anfrage { background: var(--bg-soft); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
+/* Hinweis „Sonderwunsch? … individuelles Angebot“: Desktop als kurzer Link hinter „Code eingeben“ (keine zusätzliche Zeile — der
+   Preisbereich verschiebt sich in keinem Reiter), Handy/Tablet als ganzer Satz am Panel-Ende (mobile.js verschiebt .angebot-zeile) */
+.panel-cta .angebot-zeile { display: none; }
+.angebot-kurz { white-space: nowrap; }
+.angebot-zeile.m-angebot { margin: 6px 4px 0; line-height: 1.5; }
+/* Warenkorb: Lieferzeit je Position (nur wenn sie sich unterscheiden) */
+.ci-lz { display: block; margin-top: 2px; font-size: 0.74rem; color: var(--ink-soft); line-height: 1.4; }
+.co-summary .co-lz { display: block; margin-top: 4px; }
+/* Anfrageformular */
+#anfrage-modal { max-width: 520px; }
+#anfrage-modal textarea { resize: vertical; min-height: 7.5em; line-height: 1.45; }
+#anfrage-modal .dc-lead { margin-top: -4px; }
+#anfrage-modal .co-legal { margin: 0; }
+#anfrage-modal label.co-check { margin: 0; align-items: flex-start; }
+#anfrage-modal label.co-check input { width: 20px; height: 20px; min-height: 0; flex: 0 0 auto; margin: 1px 0 0; }
+#anf-done { padding: 30px; }
+#anf-done p { color: var(--ink-soft); line-height: 1.5; }
+/* Falle für Bots: aus dem Bild, nicht fokussierbar (tabindex -1), für Bildschirmleser verborgen */
+.anf-falle { position: absolute !important; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }

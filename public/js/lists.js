@@ -2,6 +2,8 @@
 // Vorschau, Design-Code und Menge. Eigene Listen liegen mit Bearbeitungs-Token
 // im localStorage, geteilte Listen werden per Code/Link nur gelesen.
 import { addToCart, itemTitle, itemSub, getPricing } from './cart.js';
+import { itemAnfrageFarbe } from './pricing.js';
+import { openAnfrage } from './anfrage.js';
 import { produktAktiv, zeilenProdukt, EIERBECHER_HINWEIS } from './produkte.js';
 import { showToast, IS_MOBILE } from './mobile.js';
 import { copyText, formatCode, normalizeCode, esc, stripURLParam, linkFehler, linkUnbrauchbar, apiFehler } from './designcode.js';
@@ -133,7 +135,9 @@ function renderList(list) {
   const total = list.items.reduce((s, it) => s + (it.qty || 1), 0);
   // Einträge eines derzeit nicht bestellbaren Produkts (Eierbecher, Schalter aus) bleiben sichtbar, aber ausgegraut
   const bestellbar = (it) => produktAktiv(zeilenProdukt(it), getPricing());
-  const totalOk = list.items.filter(bestellbar).reduce((s, it) => s + (it.qty || 1), 0);
+  // Farbe (oder Schriftfarbe) nur auf Anfrage: Design lässt sich ansehen und anfragen, aber nicht in den Warenkorb legen
+  const anfrage = (it) => itemAnfrageFarbe(fakeItem(it));
+  const totalOk = list.items.filter((it) => bestellbar(it) && !anfrage(it)).reduce((s, it) => s + (it.qty || 1), 0);
   const box = $('#ls-body');
   box.innerHTML = `
     <button class="linkbtn ls-back" id="ls-back">← Meine Listen</button>
@@ -156,19 +160,21 @@ function renderList(list) {
       const fi = fakeItem(it);
       const col = hooks.colorInfo?.(it.config?.color);
       const off = !bestellbar(it);
+      const anf = off ? null : anfrage(it);
       return `<div class="ls-item${off ? ' ls-off' : ''}" data-i="${i}">
         <div class="ls-thumb" style="--sw:${cssHex(col?.hex)}"><img src="/api/design/${it.code}/thumb" alt="" loading="lazy" onerror="this.remove()"><span class="ls-thumb-fb">${it.config?.product === 'eierbecher' ? '🥚' : '🏺'}</span></div>
         <div class="ls-item-main">
           <b>${esc(itemTitle(fi))}</b>
           <small>${esc(itemSub(fi))}</small>
           ${off ? `<small class="ls-off-hint">${EIERBECHER_HINWEIS}</small>` : ''}
+          ${anf ? `<small class="ls-off-hint">✉️ ${anf.schrift ? 'Schriftfarbe' : 'Farbe'} „${esc(anf.farbe.name)}“ gibt es nur auf Anfrage</small>` : ''}
           <div class="ls-item-row">
             <button class="ci-code" data-code="${it.code}" title="Design-Code kopieren">🔖 ${formatCode(it.code)}</button>
             ${own ? `<span class="ci-step"><button type="button" data-q="${i}" data-d="-1" aria-label="Menge verringern">−</button><span aria-label="Menge">${it.qty || 1}</span><button type="button" data-q="${i}" data-d="1" aria-label="Menge erhöhen">+</button></span>` : `<span class="ls-qty">${it.qty || 1} ×</span>`}
           </div>
           <div class="ls-item-btns">
             <button class="btn btn-ghost" data-load="${i}"${off ? ' disabled' : ''}>👁 Ansehen</button>
-            <button class="btn btn-primary" data-cart="${i}"${off ? ' disabled' : ''}>🛒 In den Warenkorb</button>
+            ${anf ? `<button class="btn btn-primary" data-anfrage-ls="${i}">✉️ Farbe anfragen</button>` : `<button class="btn btn-primary" data-cart="${i}"${off ? ' disabled' : ''}>🛒 In den Warenkorb</button>`}
             ${own ? `<button class="btn btn-ghost ls-del" data-del="${i}" title="Aus der Liste entfernen" aria-label="Aus der Liste entfernen">🗑</button>` : ''}
           </div>
         </div>
@@ -222,9 +228,15 @@ function renderList(list) {
     if (!bestellbar(it)) { showToast(EIERBECHER_HINWEIS); return; }
     $('#lists-modal').close(); toCart(it, false);
   }));
+  box.querySelectorAll('[data-anfrage-ls]').forEach((b) => b.addEventListener('click', () => {
+    const it = list.items[+b.dataset.anfrageLs], anf = it && anfrage(it);
+    if (!anf) return;
+    $('#lists-modal').close();
+    openAnfrage({ anlass: 'farbe', farbe: anf.farbe, code: it.code });
+  }));
   $('#ls-allcart')?.addEventListener('click', () => {
     $('#lists-modal').close();
-    const ok = list.items.filter(bestellbar);
+    const ok = list.items.filter((it) => bestellbar(it) && !anfrage(it));
     // Der Warenkorb nimmt höchstens 20 verschiedene Designs (addToCart meldet das) — die Meldung zählt nur, was wirklich drin ist
     let stueck = 0, voll = false;
     ok.forEach((it, i) => { if (!voll && toCart(it, i < ok.length - 1)) stueck += it.qty || 1; else voll = true; });

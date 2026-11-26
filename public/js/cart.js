@@ -1,7 +1,7 @@
 // formsam — Warenkorb & Checkout (Preise kommen live vom Server: /api/pricing, Farbaufpreise aus /api/colors;
 // die reine Preisformel lebt in pricing.js und rechnet identisch zu priceItem() auf dem Server)
 import { exportModel } from './model-builder.js'; // Druckdateien im Hintergrund-Thread — die Kasse bleibt bedienbar
-import { copyText, formatCode, esc } from './designcode.js';
+import { copyText, formatCode, esc, saveDesign } from './designcode.js';
 import { PRODUCTS, PATTERNS, FLOWS, FONTS, RIMS } from './geometry.js';
 import { getAuthHeaders, getUser, refreshOrders, emailLokalFehler, emailFeldPruefen, plzFehler, plzFeldPruefen } from './auth.js';
 import { showToast } from './mobile.js';
@@ -11,7 +11,9 @@ import {
   setPricing, getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser,
   volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp, linePrice,
   aktionFor, aktionScopeLabel, onAktionEnde, referenzTextZeile, aktionProzentGueltig, summen,
+  itemLieferzeit, warenkorbLieferzeit, itemAnfrageFarbe, anfrageMeldung,
 } from './pricing.js';
+import { openAnfrage } from './anfrage.js';
 
 export { getPricing, setColors, getColors, fmt, fmtPlus, discountTeaser, volumeSurcharge, colorByRef, colorSurcharge, patternSurcharge, unitParts, unitPrice, unitUvp };
 /** Eierbecher bestellbar? Schalter aus /api/pricing → produkte (derzeit aus, Standard ohne Feld = aus; siehe produkte.js) */
@@ -29,6 +31,11 @@ export function fillShopInfo(root = document) {
   const { lieferzeit, liefergebiet } = shopInfo();
   root.querySelectorAll('[data-lieferzeit]').forEach((el) => { if (el.textContent !== lieferzeit) el.textContent = lieferzeit; });
   root.querySelectorAll('[data-liefergebiet]').forEach((el) => { if (el.textContent !== liefergebiet) el.textContent = liefergebiet; });
+  // Kontaktadresse für Anfragen/individuelle Angebote (/api/pricing → kontakt.email: Antwortadresse der Shop-Mails, sonst Firmen-E-Mail) —
+  // FAQ, Fußzeile; ohne Adresse bleibt der Platzhalter („die Adresse im Impressum“) bzw. die Zeile ausgeblendet
+  const kontakt = String(getPricing()?.kontakt?.email || '').trim();
+  if (kontakt) root.querySelectorAll('[data-kontakt-mail]').forEach((el) => { if (el.textContent !== kontakt) el.textContent = kontakt; });
+  root.querySelectorAll('[data-kontakt-zeile]').forEach((el) => { el.hidden = !kontakt; });
   // Hersteller (= Anbieter aus /api/pricing → anbieter, wie im Impressum) im Footer „Gut zu wissen“ — Herstellerangabe nach GPSR
   const a = getPricing()?.anbieter;
   if (a && (a.street || a.email)) {
@@ -60,6 +67,12 @@ function farbeFehlt(it) {
   return '';
 }
 const farbFehler = () => cart.map(farbeFehlt).find(Boolean) || '';
+/**
+ * Farbe einer Zeile gibt es inzwischen nur noch auf Anfrage (Admin-Häkchen; älterer Warenkorb aus dem localStorage) → { farbe, schrift } | null.
+ * Solche Zeilen lehnt der Server ab (farbSperre) — der Warenkorb kennzeichnet sie und sperrt die Kasse mit „Anfragen“-Knopf.
+ */
+const anfrageZeile = (it) => (getColors().length ? itemAnfrageFarbe(it) : null);
+const anfrageFehler = () => cart.map(anfrageZeile).find(Boolean) || null;
 
 let cart = [];
 const pricing = () => getPricing(); // immer der aktuelle Stand (aktion.js lädt die Preise nach dem Aktionsende neu)
@@ -172,6 +185,9 @@ export function itemSub(it) {
 export function addToCart({ config, color, colorName, colorHex, thumb, code }, opts = {}) {
   // Nicht bestellbare Produkte (Eierbecher, solange der Schalter aus ist) kommen nicht in den Warenkorb
   if (!produktAktiv(config?.product || 'vase', pricing())) { showToast(EIERBECHER_HINWEIS, 3500); return false; }
+  // Farbe (oder Schriftfarbe) nur auf Anfrage: nicht in den Warenkorb — Konfigurator und Listen bieten stattdessen „Farbe anfragen“
+  const anf = itemAnfrageFarbe({ product: config?.product || 'vase', config, color: color || config?.color, colorName });
+  if (anf) { showToast(anfrageMeldung(anf), 4500); return false; }
   const qty = Math.max(1, Math.min(50, Math.round(opts.qty || 1)));
   // Farb-ID (Körperfarbe) — der Server rechnet damit den Farbaufpreis; Design-Codes tragen sie in config.color
   const colorId = color || config?.color || colorByRef(null, colorName)?.id || null;
@@ -227,6 +243,8 @@ function renderCart() {
   } else {
     // Knopfnamen mit Bezug zur Position (Bildschirmleser hören sonst in jeder Zeile dasselbe); gleich benannte Vasen bekommen die Nummer dazu
     const titel = cart.map(itemTitle);
+    // Lieferzeit je Position nur nennen, wenn sie sich unterscheiden (Farben mit eigener Lieferzeit); unten steht die der Bestellung
+    const lz = warenkorbLieferzeit(cart);
     box.innerHTML = cart.map((it, i) => {
       const wer = titel.filter((t) => t === titel[i]).length > 1 ? `${titel[i]}, Position ${i + 1}` : titel[i];
       const lp = linePrice(it);
@@ -243,6 +261,8 @@ function renderCart() {
           <b>${esc(itemTitle(it))}</b>
           <small>${esc(itemSub(it))}</small>
           ${farbeFehlt(it) ? `<small class="warn-msg">⚠️ „${esc(farbeFehlt(it))}“ gibt es gerade nicht – bitte entferne die Position und gestalte das Design mit einer anderen Farbe neu.</small>` : ''}
+          ${!farbeFehlt(it) && anfrageZeile(it) ? `<small class="warn-msg">✉️ ${anfrageZeile(it).schrift ? 'Schriftfarbe' : 'Farbe'} „${esc(anfrageZeile(it).farbe.name)}“ nur auf Anfrage – <button type="button" class="linkbtn" data-anfrage-zeile="${i}">Farbe anfragen</button> oder Position entfernen.</small>` : ''}
+          ${lz.abweichend && !anfrageZeile(it) ? `<small class="ci-lz">📦 Lieferzeit ${esc(lz.je[i])}</small>` : ''}
           ${ref ? `<small class="ci-ref">${esc(referenzTextZeile(lp.lineRef, it.qty))}</small>` : ''}
           ${it.code ? `<button class="ci-code" data-code="${esc(it.code)}" title="Design-Code kopieren – damit kannst du dieses Design jederzeit wieder laden">🔖 ${esc(formatCode(it.code))}</button>` : ''}
           <div class="ci-qty">
@@ -266,14 +286,18 @@ function renderCart() {
     ${mwstZeile('ct-ref')}
     ${t.mitRef ? `<small class="ct-ref">${REF_FUSSNOTE}</small>` : ''}` : '';
   // Kasse erst, wenn alles bestellbar ist: keine aus dem Shop genommene Farbe, höchstens MAX_POSITIONEN Positionen (ältere Warenkörbe)
-  const sperre = farbFehler() ? 'Eine Farbe in deinem Warenkorb gibt es gerade nicht – bitte die markierte Position ändern.' : cart.length > MAX_POSITIONEN ? ZU_VIELE : '';
+  const anf = anfrageFehler();
+  const sperre = farbFehler() ? 'Eine Farbe in deinem Warenkorb gibt es gerade nicht – bitte die markierte Position ändern.'
+    : anf ? `${anf.schrift ? 'Die Schriftfarbe' : 'Die Farbe'} „${anf.farbe.name}“ gibt es inzwischen nur auf Anfrage – bestellen lässt sich der Warenkorb erst ohne diese Position. Frag die Farbe gern an, ich melde mich bei dir.`
+      : cart.length > MAX_POSITIONEN ? ZU_VIELE : '';
   if (sperre) $('#cart-totals').insertAdjacentHTML('beforeend', `<small class="warn-msg">${esc(sperre)}</small>`);
   $('#cart-checkout').disabled = !cart.length || !!sperre;
   // Kurz vor „Zur Kasse“: wohin, wie lange, wie bezahlen (dieselben Angaben wie Versandseite und Kasse)
   const ship = $('#cart-ship');
   if (ship) {
-    const { lieferzeit, liefergebiet } = shopInfo();
-    ship.textContent = `Lieferung nach ${liefergebiet} · ${lieferzeit} · ${zahlartenText()}`;
+    // Lieferzeit der Bestellung = längste Lieferzeit aller Positionen (wie order.lieferzeit auf dem Server)
+    const { liefergebiet } = shopInfo(), lzKorb = warenkorbLieferzeit(cart);
+    ship.textContent = `Lieferung nach ${liefergebiet} · ${lzKorb.text}${lzKorb.abweichend ? ' (längste Position)' : ''} · ${zahlartenText()}`;
     ship.hidden = !cart.length;
   }
 
@@ -290,6 +314,14 @@ function renderCart() {
   box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
     cart.splice(+b.dataset.del, 1);
     saveCart(); renderCart();
+  }));
+  // „Farbe anfragen“ an einer Position, deren Farbe es nur auf Anfrage gibt: Anfrageformular mit Farbe und Design-Code der Position
+  box.querySelectorAll('[data-anfrage-zeile]').forEach((b) => b.addEventListener('click', () => {
+    const it = cart[+b.dataset.anfrageZeile], anf = it && anfrageZeile(it);
+    if (!anf) return;
+    $('#cart-modal').close();
+    // Design-Code der Position (ältere Zeilen ohne Code: aus ihrer Konfiguration erzeugen — nicht das gerade im Konfigurator offene Design)
+    openAnfrage({ anlass: 'farbe', farbe: anf.farbe, code: it.code || (() => saveDesign({ ...it.config, color: it.color || it.config?.color })) });
   }));
 }
 
@@ -354,11 +386,12 @@ function zahlartFuerBetrag(t) {
 function renderCheckoutSummary() {
   const t = checkoutTotals();
   const coupon = gueltigerCoupon();
+  const lz = warenkorbLieferzeit(cart);   // Lieferzeit der Bestellung = längste Position (je Position nur, wenn sie sich unterscheiden)
   $('#co-summary').innerHTML = cart.map((it) => {
     const lp = linePrice(it);
     const { off, line } = lp;
     const mitRef = lp.aktionProzent > 0 && lp.lineRef != null;   // Streichpreis/Badge nur mit Zeilen-Bezugspreis (30-Tage-Tiefstpreis dieser Menge)
-    return `<div><span>${it.qty}× ${esc(itemTitle(it))}${mitRef ? ` <span class="aktion-badge" title="gegenüber dem niedrigsten Preis der letzten 30 Tage">−${lp.refProzent}\u00a0%</span>` : ''}${off ? ` <em>(Mengenrabatt −${off}\u00a0%)</em>` : ''}<br><small class="co-parts">${esc(itemSub(it))}</small></span>` +
+    return `<div><span>${it.qty}× ${esc(itemTitle(it))}${mitRef ? ` <span class="aktion-badge" title="gegenüber dem niedrigsten Preis der letzten 30 Tage">−${lp.refProzent}\u00a0%</span>` : ''}${off ? ` <em>(Mengenrabatt −${off}\u00a0%)</em>` : ''}<br><small class="co-parts">${esc(itemSub(it))}${lz.abweichend ? ` · 📦 ${esc(itemLieferzeit(it))}` : ''}</small></span>` +
       `<b${mitRef ? ' class="aktion-price"' : ''}>${fmt(line)}${mitRef ? ` ${refStrike(lp, it.qty)}` : ''}</b></div>`;
   }).join('') + `
     ${aktionRowHTML(t, 'co-aktion')}
@@ -368,6 +401,7 @@ function renderCheckoutSummary() {
     <div><span>💳 abzüglich Guthaben „${esc(coupon.code)}“</span><b>−${fmt(coupon.off)}</b></div>` : ''}
     <div class="ct-grand"><span>${coupon?.guthaben ? 'Zu zahlen' : 'Gesamt'}</span><b>${fmt(t.total)}</b></div>
     ${mwstZeile('co-ref')}
+    ${cart.length ? `<small class="co-ref co-lz">📦 Lieferzeit: ${esc(lz.text)}${lz.abweichend ? ' (die längste deiner Positionen – ich schicke alles zusammen)' : ''}</small>` : ''}
     ${cart.length && t.total <= 0 ? `<small class="co-ref">Nichts zu zahlen – dein ${coupon?.guthaben ? 'Guthaben' : 'Gutschein'} deckt den Gesamtbetrag.</small>` : ''}
     ${t.mitRef ? `<small class="co-ref">${REF_FUSSNOTE}</small>` : ''}`;
   zahlartFuerBetrag(t);
@@ -481,7 +515,7 @@ async function offeneKlaeren() {
 }
 
 function openCheckout() {
-  if (farbFehler() || cart.length > MAX_POSITIONEN) { renderCart(); return; }   // Hinweis steht im Warenkorb
+  if (farbFehler() || anfrageFehler() || cart.length > MAX_POSITIONEN) { renderCart(); return; }   // Hinweis steht im Warenkorb
   $('#cart-modal').close();
   renderCheckoutSummary();
   // Eingegebener Gutschein, der für einen anderen Warenkorb bestätigt wurde (Menge geändert, Position entfernt …): für den jetzigen
@@ -758,7 +792,8 @@ async function submitOrder(payment, paypalOrderId = null) {
     const pdfLink = $('#confirm-invoice-pdf');   // PDF-Fassung der Rechnung (fehlt sie in der Antwort, bleibt der Link verborgen)
     if (pdfLink) { pdfLink.hidden = !done.invoicePdfUrl; pdfLink.href = done.invoicePdfUrl || '#'; }
     // Lieferfrist wie in Bestellbestätigung, Rechnung und AGB § 7 — der Satz zum Fristbeginn kommt vom Server (/api/pricing → shop.fristBeginn)
-    const { lieferzeit } = shopInfo();
+    // Lieferzeit der Bestellung (längste Position) aus der Antwort von /complete, sonst wie die Kasse sie berechnet hat
+    const lieferzeit = String(done.lieferzeit || '').trim() || warenkorbLieferzeit(body.items).text;
     const frist = pricing()?.shop?.fristBeginn?.[payment === 'paypal' ? 'paypal' : 'vorkasse']
       || (payment === 'paypal' ? 'Die Frist beginnt am Tag nach Vertragsschluss, also am Tag nach deiner Bestellung.' : 'Die Frist beginnt am Tag nach deinem Überweisungsauftrag an deine Bank.');
     // Nichts zu zahlen: keine Überweisung — die Frist beginnt wie bei PayPal am Tag nach der Bestellung

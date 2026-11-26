@@ -46,7 +46,7 @@
   "faq": [
     {
       "q": "Wie lange dauert es, bis meine Bestellung ankommt?",
-      "a": "Gedruckt wird erst, wenn du bestellst: Jede Vase entsteht einzeln für dich. Bis sie bei dir ist, dauert es <span data-lieferzeit>5–8 Werktage</span>. Bei Überweisung beginnt die Frist am Tag nach deinem Überweisungsauftrag."
+      "a": "Gedruckt wird erst, wenn du bestellst: Jede Vase entsteht einzeln für dich. Bis sie bei dir ist, dauert es <span data-lieferzeit>5–8 Werktage</span>. Hat eine Farbe eine eigene Lieferzeit, steht sie direkt an der Farbe; bestellst du mehrere Vasen, gilt die längste. Bei Überweisung beginnt die Frist am Tag nach deinem Überweisungsauftrag."
     },
     {
       "q": "Kann ich einen Namen oder Text gravieren lassen?",
@@ -67,6 +67,10 @@
     {
       "q": "Gibt es Einschränkungen bei eigenen Formen?",
       "a": "Du kannst die Silhouette frei gestalten. Bei sehr ausgefallenen Formen (z. B. sehr schmaler Fuß, starker Überhang) sage ich aber keine Standfestigkeit zu. Die Druck-Ampel im Konfigurator warnt dich vor kritischen Formen."
+    },
+    {
+      "q": "Geht auch etwas Individuelles – andere Größe, Stückzahl oder Farbe?",
+      "a": "Ja, gern! Ob eine andere Größe, eine größere Stückzahl, eine Farbe, die es im Konfigurator gerade nicht gibt, oder eine ganz eigene Form: Frag mich über das <button type=\"button\" class=\"linkbtn\" data-anfrage=\"angebot\">Anfrageformular</button> nach einem individuellen Angebot oder schreib mir an <span data-kontakt-mail>die Adresse im Impressum</span>. Ich melde mich mit einem Angebot bei dir. Einzelne Farben gibt es nur auf Anfrage – sie sind im Konfigurator gekennzeichnet, und du kannst sie dort direkt anfragen."
     }
   ],
   "colors": [

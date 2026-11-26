@@ -247,6 +247,9 @@ export function initMobileShell({ product }) {
   dice.setAttribute('aria-label', 'Zufälliges Design');
   dice.addEventListener('click', () => { buzz(12); $('#btn-random').click(); });
   $('.stage').appendChild(dice);
+  // Hinweis „Sonderwunsch? … individuelles Angebot“ steht am Desktop unter dem Kaufknopf (Preisbereich, hier ausgeblendet) → ans Panel-Ende
+  const angebot = $('.panel-cta .angebot-zeile');
+  if (angebot) { angebot.classList.add('m-angebot'); $('.panel').appendChild(angebot); }
   // „Zurücksetzen“ wohnt am Desktop im Panel-Kopf, der hier ausgeblendet ist → als Textknopf ans Panel-Ende (Klick-Logik bleibt in app.js)
   const reset = $('#btn-reset');
   if (reset) { const row = document.createElement('p'); row.className = 'm-reset-row'; reset.className = 'linkbtn'; row.appendChild(reset); $('.panel').appendChild(row); }
