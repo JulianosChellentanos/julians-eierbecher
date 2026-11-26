@@ -1474,6 +1474,10 @@ section[id] { scroll-margin-top: 72px; }
 /* Farbe-Reiter: Lieferzeit rechts in der Überschriftzeile (eine Zeile, keine zusätzliche Höhe — Preisbereich bleibt, wo er ist) */
 .ctrl h3 .farbe-lz { margin-left: auto; text-transform: none; letter-spacing: normal; white-space: nowrap; }
 /* Handy: Lieferzeit als eigene Zeile unter „Farbe – Name“ (sonst bricht der Farbname eng um) */
+/* Desktop/Tablet: die Zeile bleibt einzeilig — ein langer Farbname wird gekürzt statt umzubrechen (sonst rutscht der Preisbereich) */
+@media (min-width: 701px) {
+  .ctrl h3:has(.farbe-lz:not([hidden])) #farbe-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 @media (max-width: 700px) {
   .ctrl h3:has(.farbe-lz:not([hidden])) { flex-wrap: wrap; row-gap: 4px; }
   .ctrl h3 .farbe-lz { flex-basis: 100%; margin-left: 0; }
