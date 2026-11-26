@@ -293,6 +293,99 @@ export function patternSurcharge(pattern) {
   return Math.max(0, Number(pricing?.muster?.[pattern]) || 0);
 }
 
+// ---------------------------------------------------------------------------
+// Lieferzeit je Farbe und Farben „auf Anfrage“ (colors[].lieferzeit, colors[].aufAnfrage aus /api/colors bzw. settings.colors) —
+// EINE Regel für Konfigurator, Warenkorb, Kasse und Server: server.js nimmt dieselben Funktionen für order.lieferzeit und für die
+// Sperre in /api/quote, /api/checkout und /api/paypal/create (farbSperre). Die Funktionen ohne Modulzustand bekommen Farben und
+// allgemeine Lieferzeit als Parameter (der Server ruft sie mit settings.colors auf); die Browser-Hilfen darunter nutzen colors/pricing.
+//   Lieferzeit einer Position = die der Körperfarbe, bei Farbschrift (Gravur mit Text im Stil „farbe“) die längere von Körper- und
+//   Schriftfarbe; eine Farbe ohne eigene Lieferzeit hat die allgemeine (settings.shop.lieferzeit). Lieferzeit der Bestellung = die
+//   längste ihrer Positionen — verglichen wird die Obergrenze in Werktagen, bei Gleichstand die Untergrenze.
+// ---------------------------------------------------------------------------
+/** Höchste Zahl in einer Lieferzeit je Farbe (Werktage) */
+export const LIEFERZEIT_MAX_WT = 120;
+/**
+ * Eingabe „Lieferzeit“ einer Farbe (Admin) → Normalform: „10–14 Werktage“, „7 Werktage“, „1 Werktag“ ('' = leer, also die allgemeine
+ * Lieferzeit); null = ungültig. Erlaubt nur Werktage mit Zahlen 1–120, „-“, „—“ oder „bis“ werden zum Halbgeviertstrich, das Wort
+ * „Werktage“ darf fehlen. Zuerst gekürzt, dann ein linearer Ausdruck (kein ReDoS).
+ */
+export function lieferzeitNorm(raw) {
+  const s = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (s.length > 40) return null;
+  const m = /^(\d{1,3}) ?(?:(?:-|–|—|bis) ?(\d{1,3}))? ?(werktage?|wt\.?)?$/i.exec(s);
+  if (!m) return null;
+  const von = Number(m[1]), bis = m[2] === undefined ? von : Number(m[2]);
+  if (!(von >= 1 && bis <= LIEFERZEIT_MAX_WT && von <= bis)) return null;
+  return von === bis ? `${von} Werktag${von === 1 ? '' : 'e'}` : `${von}–${bis} Werktage`;
+}
+/**
+ * Spanne einer Lieferzeit in Werktagen { von, bis } — auch für die frei geschriebene allgemeine Lieferzeit („5–8 Werktage“,
+ * „2–3 Wochen“ = 10–15, „10 Tage“ ≈ 8 Werktage); ohne Zahl null. Nur zum Vergleichen (welche ist länger), angezeigt wird der Text.
+ */
+export function lieferzeitSpanne(text) {
+  const s = String(text ?? '').slice(0, 80);
+  const z = s.match(/\d{1,4}/g);
+  if (!z) return null;
+  let von = Number(z[0]), bis = Number(z[1] ?? z[0]);
+  if (bis < von) [von, bis] = [bis, von];
+  const f = /woche/i.test(s) ? 5 : /werktag|arbeitstag/i.test(s) ? 1 : /tag/i.test(s) ? 5 / 7 : 1;
+  return { von: Math.ceil(von * f), bis: Math.ceil(bis * f) };
+}
+/** Die längere von zwei Lieferzeiten (Text): größere Obergrenze, bei Gleichstand größere Untergrenze, sonst a; eine ohne Zahl zählt nur allein */
+export function laengereLieferzeit(a, b) {
+  const sa = lieferzeitSpanne(a), sb = lieferzeitSpanne(b);
+  if (!sb) return a || b;
+  if (!sa) return b;
+  return sb.bis > sa.bis || (sb.bis === sa.bis && sb.von > sa.von) ? b : a;
+}
+/** Lieferzeit einer Farbe: eigene (colors[].lieferzeit, Normalform) oder die allgemeine */
+export const farbLieferzeit = (farbe, standard) => String(farbe?.lieferzeit || '').trim() || standard;
+/** Hat die Position eine Farbschrift (zweites Filament)? Gleiche Regel wie farbSperre im Server: Text da und Stil „farbe“ */
+export const mitFarbschrift = (item) => { const c = item?.config || {}; return !!String(c.text || '').trim() && c.textStyle === 'farbe' && typeof c.textColor === 'string' && !!c.textColor; };
+/**
+ * Lieferzeit einer Position. farbe(item) → Farbobjekt der Körperfarbe | null, schriftfarbe(id) → Farbobjekt | null,
+ * standard = allgemeine Lieferzeit (Text)
+ */
+export function positionLieferzeit(item, { farbe, schriftfarbe, standard }) {
+  let t = farbLieferzeit(farbe(item), standard);
+  if (mitFarbschrift(item)) t = laengereLieferzeit(t, farbLieferzeit(schriftfarbe(item.config.textColor), standard));
+  return t;
+}
+/** Lieferzeit der Bestellung = längste Lieferzeit ihrer Positionen → { text, je: [Text je Position], abweichend: Positionen verschieden } */
+export function bestellLieferzeit(items, opts) {
+  const je = (Array.isArray(items) ? items : []).map((it) => positionLieferzeit(it, opts));
+  const text = je.reduce((t, x) => laengereLieferzeit(t, x), je[0] || opts.standard);
+  return { text, je, abweichend: new Set(je).size > 1 };
+}
+/**
+ * Farbe einer Position, die es nur auf Anfrage gibt (aktive Farbe mit aufAnfrage: true; Körperfarbe zuerst, dann die Schriftfarbe einer
+ * Farbschrift) → { farbe, schrift: true|false } | null. Aus dem Shop genommene Farben (active: false) prüft farbSperre gesondert.
+ */
+export function anfrageFarbeVon(item, { farbe, schriftfarbe }) {
+  const f = farbe(item);
+  if (f && f.active !== false && f.aufAnfrage === true) return { farbe: f, schrift: false };
+  if (mitFarbschrift(item)) {
+    const t = schriftfarbe(item.config.textColor);
+    if (t && t.active !== false && t.aufAnfrage === true) return { farbe: t, schrift: true };
+  }
+  return null;
+}
+/** Meldung für eine Farbe, die es nur auf Anfrage gibt — Server (400) und Browser (Warenkorb, Listen) mit demselben Wortlaut */
+export const anfrageMeldung = ({ farbe, schrift }) =>
+  `Die ${schrift ? 'Schriftfarbe' : 'Farbe'} „${farbe?.name || ''}“ gibt es derzeit nur auf Anfrage – bitte frag sie über „Farbe anfragen“ an oder wähle eine andere ${schrift ? 'Schriftfarbe' : 'Farbe'}.`;
+
+// Browser: mit der geladenen Farbliste (/api/colors) und der allgemeinen Lieferzeit (/api/pricing → shop.lieferzeit)
+/** Allgemeine Lieferzeit (Fallback wie der Server: „5–8 Werktage“) */
+export const lieferzeitStandard = (p = pricing) => String(p?.shop?.lieferzeit || '').trim() || '5–8 Werktage';
+const browserFarben = () => ({ farbe: (it) => colorByRef(it?.color, it?.colorName), schriftfarbe: (id) => colorByRef(id, null), standard: lieferzeitStandard() });
+/** Lieferzeit einer Warenkorb-Zeile bzw. eines Designs im Konfigurator */
+export const itemLieferzeit = (item) => positionLieferzeit(item, browserFarben());
+/** Lieferzeit des Warenkorbs (längste Position) → { text, je, abweichend } */
+export const warenkorbLieferzeit = (items) => bestellLieferzeit(items, browserFarben());
+/** Farbe der Zeile, die es nur auf Anfrage gibt → { farbe, schrift } | null (nur mit geladener Farbliste) */
+export const itemAnfrageFarbe = (item) => anfrageFarbeVon(item, browserFarben());
+
 /**
  * Bestandteile des Stückpreises (ohne Aktion) mit einem bestimmten Preisstand pr — aktuelle Preise (unitParts) oder eine
  * Momentaufnahme der Preis-Historie (referenzpreis); farbe = Farbaufpreis in €. null, wenn es das Produkt im Stand nicht gibt.

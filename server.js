@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { createMailer, baseUrlFor, mailSettings, addressList, keepStoredPass } from './lib/mailer.js';
 import { orderConfirmation, orderStatus, statusMailAllowed, STATUS_MAIL, welcome, passwordReset, adminNewOrder, customMessage, surchargeList, surchargeText, aktionText,
   aktionSummary, aktionScopeLabel, orderAktionen, reklamationMail, REKLA_STATUS, REKLA_ART, REKLA_PHASES, RIM_LABELS,
-  widerrufEingang, adminWiderruf, lieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung, passwortGeaendert, ZAHLUNGSFRIST_TAGE } from './lib/mail-templates.js';
+  widerrufEingang, adminWiderruf, adminAnfrage, lieferzeitText, bestellLieferzeitText, fristBeginnKurz, emailBestaetigung, VERIFY_TAGE, adminPaypalKasse, zahlungserinnerung, passwortGeaendert, ZAHLUNGSFRIST_TAGE } from './lib/mail-templates.js';
 import { isEmail, emailLokalFehler, ohneFinish, kontoName, kontoAdresse, pruefeKonfig, pruefePositionen, KONFIG_LABEL } from './lib/eingaben.js';
 // Preisregel der Kasse (reine Rechnung ohne DOM) — der Server nimmt sie für den 30-Tage-Bezugspreis der Belege (aktionsBezug)
 import * as preisRegel from './public/js/pricing.js';
@@ -57,6 +57,7 @@ export const hooks = {
   reklamation: async (order, phase, opts) => {},
   userRegistered: async (user) => {},
   widerruf: async (widerruf) => {},
+  anfrage: async (anfrage) => {},
 };
 async function runHook(name, ...args) {
   try { await hooks[name]?.(...args); } catch (err) { console.error(`Hook ${name} fehlgeschlagen:`, err?.message || err); }
@@ -225,9 +226,20 @@ function farbSperre(items) {
       const t = (settings.colors || []).find((x) => x?.id === cfg.textColor);
       if (t && !t.active) return `Die Schriftfarbe „${t.name}“ ist derzeit nicht verfügbar – bitte wähle für dieses Design eine andere Schriftfarbe.`;
     }
+    // Farben „auf Anfrage“ (Admin-Häkchen): im Konfigurator sichtbar, aber nicht bestellbar — dieselbe Regel wie im Browser (pricing.js)
+    const anf = preisRegel.anfrageFarbeVon(it, LIEFER_FARBEN);
+    if (anf) return preisRegel.anfrageMeldung(anf);
   }
   return null;
 }
+/** Farbauflösung für die Lieferzeit- und Anfrage-Regeln aus pricing.js (Körperfarbe wie priceItem, Schriftfarbe per ID) */
+const LIEFER_FARBEN = {
+  farbe: (it) => colorOfItem(it),
+  schriftfarbe: (id) => (settings.colors || []).find((x) => x?.id === id) || null,
+  get standard() { return lieferzeitText(settings); },
+};
+/** Lieferzeit einer Bestellung beim Anlegen (= längste ihrer Positionen; order.lieferzeit — Mail, Rechnung und „Erneut“ lesen sie dort) */
+const lieferzeitDerZeilen = (lines) => preisRegel.bestellLieferzeit(lines, LIEFER_FARBEN).text;
 /**
  * Wertprüfung der Positionen (Quote, PayPal, Checkout; lib/eingaben.js pruefePositionen): Form, Muster, Schrift, Stil, Rand und Verlauf
  * müssen bekannt sein, Zahlen in den Grenzen der Regler, Texte begrenzt (Gravur 40, Farbname 80), colorHex nur #rrggbb, Farbe
@@ -501,6 +513,18 @@ function loadSettings() {
   }
   // Migration: Farbaufpreis je Körperfarbe (€/Stück, Standard 0)
   for (const c of settings.colors) if (c && typeof c === 'object') c.aufpreis = euro(c.aufpreis);
+  // Lieferzeit je Farbe / „auf Anfrage“: ältere Farben haben die Felder nicht (= allgemeine Lieferzeit, bestellbar) und bekommen sie
+  // erst beim nächsten Speichern im Admin. Eine von Hand unlesbar eingetragene Lieferzeit gilt als leer (Meldung im Protokoll),
+  // „auf Anfrage“ nur bei true — so lesen Konfigurator, Kasse, Belege und Rechtstexte dieselben Werte.
+  for (const c of settings.colors) {
+    if (!c || typeof c !== 'object') continue;
+    if (c.lieferzeit !== undefined) {
+      const lz = preisRegel.lieferzeitNorm(c.lieferzeit);
+      if (lz === null) console.warn(`⚠️  Farbe „${c.name}“: Lieferzeit „${String(c.lieferzeit).slice(0, 60)}“ unlesbar – es gilt die allgemeine Lieferzeit`);
+      c.lieferzeit = lz || '';
+    }
+    if (c.aufAnfrage !== undefined) c.aufAnfrage = c.aufAnfrage === true;
+  }
   // Migration Marke (formsam): alter Firmenname „OVJU — …“ → „formsam“, Absendername „OVJU“ → „formsam“.
   // Neue Felder (Land, Steuernummer, Shop- und Rechtsangaben) mit Standardwerten auffüllen — Adresse, IBAN usw. bleiben, wie sie sind.
   const co = { ...plainObj(settings.company) };
@@ -1046,8 +1070,8 @@ async function kontoLoeschen(u, wer) {
   console.log(`🗑️  Kundenkonto ${u.id} gelöscht (${wer}) – ${n} Bestellung(en) ohne Kontobezug`);
   return n;
 }
-/** Datenauskunft zu einem Kundenkonto (Admin, Art. 15 DSGVO): Konto ohne Passwort-Hash, Anmeldungen, Bestellungen, Widerrufe und
- *  Einträge im Mail-Protokoll an diese Adresse. Was nur über die E-Mail-Adresse zugeordnet ist (Gastbestellungen, Widerrufe, Mails dazu),
+/** Datenauskunft zu einem Kundenkonto (Admin, Art. 15 DSGVO): Konto ohne Passwort-Hash, Anmeldungen, Bestellungen, Widerrufe, Anfragen
+ *  (nur bei bestätigter Adresse) und Einträge im Mail-Protokoll an diese Adresse. Was nur über die E-Mail-Adresse zugeordnet ist (Gastbestellungen, Widerrufe, Mails dazu),
  *  gehört nur bei bestätigter Adresse dazu — wie im Konto; sonst könnte es jemand anderem gehören, der die Adresse wirklich hat. */
 async function kontoExport(u) {
   const { salt, hash, reset, verify, ...konto } = u;
@@ -1057,6 +1081,7 @@ async function kontoExport(u) {
   const eigene = new Set([u.id, ...bestellungen.map((o) => o.orderId)]);
   const widerrufe = await withWiderrufe((l) => ({ result: l.filter((w) => w.email === u.email && (bestaetigt || eigene.has(w.orderId))) })).catch(() => []);
   for (const w of widerrufe) eigene.add(w.ref);
+  const anfragen = bestaetigt ? await withAnfragen((l) => ({ result: l.filter((a) => a.email === u.email) })).catch(() => []) : [];
   let mails = [];
   try {
     mails = (await mailer.list({ limit: 100000 })).filter((m) => String(m.to || '').toLowerCase().split(/,\s*/).includes(u.email) && (bestaetigt || eigene.has(m.ref)))
@@ -1066,7 +1091,7 @@ async function kontoExport(u) {
     exportiertAm: new Date().toISOString(), anbieter: settings.company?.name || BRAND,
     konto: { ...konto, emailBestaetigt: !!u.emailVerifiedAt },
     anmeldungen: Object.values(sessions).filter((x) => x.userId === u.id).map((x) => ({ seit: new Date(x.createdAt).toISOString() })),
-    bestellungen, widerrufe, mails,
+    bestellungen, widerrufe, anfragen, mails,
   };
 }
 
@@ -1540,11 +1565,17 @@ const erinnerungLaeuft = new Map();   // orderId → wer gerade sendet ('senden'
 function mailNeuBaubar(e) {
   if (/^(bestaetigung|status:[a-z-]+|reklamation:[a-z]+|zahlungserinnerung|admin-neu)$/.test(e.kind || '')) return !!mailOrderId(e);
   if (/^(widerruf|admin-widerruf)$/.test(e.kind || '')) return /^WR-[A-Z0-9-]+$/.test(String(e.ref || ''));
+  if (e.kind === 'admin-anfrage') return ANFRAGE_ID_RE.test(String(e.ref || ''));
   return false;
 }
 async function mailNeuBauen(e) {
   const baseUrl = baseUrlFor(settings);
   const kind = String(e.kind || '');
+  if (kind === 'admin-anfrage') {
+    const a = await withAnfragen((list) => ({ result: list.find((x) => x.id === e.ref) || null }));
+    if (!a) throw new Error(`Anfrage ${e.ref} ist nicht mehr gespeichert`);
+    return { to: adminEmpfaenger(), replyTo: antwortAn(a.email), ...adminAnfrage({ anfrage: a, settings, baseUrl }) };
+  }
   if (kind === 'widerruf' || kind === 'admin-widerruf') {
     const w = await withWiderrufe((list) => ({ result: list.find((x) => x.ref === e.ref) || null }));
     if (!w) throw new Error(`Widerruf ${e.ref} ist nicht mehr gespeichert`);
@@ -1837,6 +1868,14 @@ hooks.widerruf = async (w) => {
     const a = adminWiderruf({ widerruf: w, settings, baseUrl });
     await mailer.queue({ to: admins, replyTo: antwortAn(w.email), subject: a.subject, text: a.text, html: a.html, kind: 'admin-widerruf', ref: w.ref });
   }
+};
+// Anfrage aus dem Shop („Farbe anfragen“ / „Individuelles Angebot“) → nur Meldung an den Shop (adminTo, sonst Firmen-Adresse) mit
+// Reply-To = Kundin; über mailer.queue automatisch mit Auto-Submitted. Keine Mail an die angegebene Adresse (siehe POST /api/anfrage).
+hooks.anfrage = async (a) => {
+  const admins = adminEmpfaenger();
+  if (!admins.length) { console.warn(`✉️  Anfrage ${a.id}: keine Admin-Adresse eingetragen – steht nur in der Anfrageliste im Admin`); return; }
+  const m = adminAnfrage({ anfrage: a, settings, baseUrl: baseUrlFor(settings) });
+  await mailer.queue({ to: admins, replyTo: antwortAn(a.email), subject: m.subject, text: m.text, html: m.html, kind: 'admin-anfrage', ref: a.id });
 };
 // Neues Kundenkonto → Willkommensmail
 hooks.userRegistered = async (user) => {
@@ -2805,7 +2844,7 @@ function ustAus(brutto, satz = 19) {
   return { netto: n / 100, ust: (c - n) / 100 };
 }
 /**
- * Leistungszeitpunkt als Kalendermonat (§ 31 Abs. 4 UStDV): Rechnungsdatum + längste Lieferzeit aus settings.shop.lieferzeit
+ * Leistungszeitpunkt als Kalendermonat (§ 31 Abs. 4 UStDV): Rechnungsdatum + längste Lieferzeit der Bestellung (bestellLieferzeitText)
  * („5–8 Werktage“ → 8 Werktage Mo–Fr, „2 Wochen“, „10 Tage“) → „Oktober 2026“. Ohne Zahl: Monat des Rechnungsdatums.
  */
 function lieferMonat(fromIso, lieferzeit) {
@@ -3000,10 +3039,11 @@ function invoiceHTML(order) {
         : `Bitte überweise ${guth ? 'den zu zahlenden Betrag' : 'den Gesamtbetrag'} innerhalb von ${ZAHLUNGSFRIST_TAGE}&nbsp;Tagen mit deiner Bestellnummer als Verwendungszweck:
        <table>${bankRows.map((row) => `<tr>${row.map(([k, v]) => `<th>${esc(k)}</th><td>${k === 'IBAN' ? nbspAlle(v) : esc(v)}</td>`).join('')}</tr>`).join('')}</table>`;
   // Leistungszeitpunkt (§ 14 Abs. 4 Nr. 6 UStG, Kalendermonat genügt nach § 31 Abs. 4 UStDV): schon versandt → Versanddatum,
-  // sonst der voraussichtliche Liefermonat (Rechnungsdatum + längste Lieferzeit) — ausdrücklich als „voraussichtlich“
+  // sonst der voraussichtliche Liefermonat (Rechnungsdatum + Obergrenze der Lieferzeit der Bestellung, order.lieferzeit je nach Farbe)
+  // — ausdrücklich als „voraussichtlich“
   const leistung = order.shippedAt
     ? `${esc(dateDE(order.shippedAt))}<small>(Versanddatum)</small>`
-    : `voraussichtlich ${esc(lieferMonat(ausgestellt, settings.shop?.lieferzeit))}<small>(Kalendermonat der Lieferung)</small>`;
+    : `voraussichtlich ${esc(lieferMonat(ausgestellt, bestellLieferzeitText(order, settings)))}<small>(Kalendermonat der Lieferung)</small>`;
   const meta = [
     ['Rechnungsnummer', esc(order.invoiceNo)],
     ['Rechnungsdatum', esc(dateDE(ausgestellt))],
@@ -3030,7 +3070,7 @@ function invoiceHTML(order) {
   </table>
   <p class="steuer">${steuerNote}</p>
   <div class="zahlung">${payNote}</div>
-  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${einheitNbsp(esc(lieferzeitText(settings)))}. ${einheitNbsp(esc(fristBeginnKurz(order.payment)))}</p>
+  <p class="dank">Danke für deine Bestellung! <span class="akzent">Gedruckt wird erst, wenn du bestellst</span> – jedes Stück entsteht individuell für dich.<br>Lieferzeit:&nbsp;${einheitNbsp(esc(bestellLieferzeitText(order, settings)))}. ${einheitNbsp(esc(fristBeginnKurz(order.payment)))}</p>
   <p class="klein">Produkthinweise: ${einheitNbsp(esc(produktHinweise(order.lines).join(' ')))}</p>`;
   return belegSeite({ title: `Rechnung ${order.invoiceNo} · ${BRAND}`, co, body, pdf: 'rechnung.pdf' });
 }
@@ -3281,12 +3321,21 @@ function preiseAus(raw) {
     shipping: { flat: betragAus(ship.flat, 'Versand pauschal', { max: 1000 }), freeFrom: betragAus(ship.freeFrom, 'Versandfrei ab', { max: 100000 }) },
   };
 }
-/** Filament-Farben prüfen: id (eindeutig), Name, Hex-Farbe, Finish, aktiv, Notiz, Bestand, Aufpreis */
-function farbenAus(list) {
+/**
+ * Filament-Farben prüfen: id (eindeutig), Name, Hex-Farbe, Finish, aktiv, Notiz, Bestand, Aufpreis, Lieferzeit (nur Werktage,
+ * Normalform „10–14 Werktage“ — leer = allgemeine Lieferzeit, pricing.js lieferzeitNorm) und aufAnfrage (sichtbar, aber nicht bestellbar)
+ */
+function farbenAus(list, bisher = settings.colors) {
   if (!Array.isArray(list) || list.length > 200) throw httpError(400, 'Farben: Liste mit höchstens 200 Einträgen erwartet');
   const ids = new Set();
-  return list.map((c, i) => {
-    objAus(c, `Farbe ${i + 1}`);
+  // Admin-Tab von vor diesem Update (kennt Lieferzeit und „auf Anfrage“ nicht): fehlende Felder behalten den gespeicherten Wert
+  const alt = new Map((Array.isArray(bisher) ? bisher : []).filter((c) => c && typeof c === 'object').map((c) => [String(c.id), c]));
+  return list.map((c0, i) => {
+    objAus(c0, `Farbe ${i + 1}`);
+    const vorher = alt.get(String(c0.id ?? '').trim());
+    const c = { ...c0 };
+    if (c.lieferzeit === undefined && vorher?.lieferzeit !== undefined) c.lieferzeit = vorher.lieferzeit;
+    if (c.aufAnfrage === undefined && vorher?.aufAnfrage !== undefined) c.aufAnfrage = vorher.aufAnfrage;
     const name = oneLine(c.name, 40);
     const pos = `Farbe „${name || i + 1}“`;
     const id = String(c.id ?? '').trim();
@@ -3299,8 +3348,11 @@ function farbenAus(list) {
     if (!['matt', 'glanz', 'metall'].includes(finish)) throw httpError(400, `${pos}: Finish muss matt, glanz oder metall sein`);
     const stock = c.stock === undefined || c.stock === null || c.stock === '' ? null : Number(c.stock);
     if (stock !== null && !(Number.isFinite(stock) && stock >= 0 && stock <= 1e7)) throw httpError(400, `${pos}: Bestand muss eine Zahl ≥ 0 sein`);
+    const lieferzeit = preisRegel.lieferzeitNorm(c.lieferzeit);
+    if (lieferzeit === null) throw httpError(400, `${pos}: Lieferzeit bitte in Werktagen angeben, z. B. „10–14 Werktage“ oder „7 Werktage“ (Zahlen 1–${preisRegel.LIEFERZEIT_MAX_WT}) – leer lassen für die allgemeine Lieferzeit`);
+    if (c.aufAnfrage !== undefined && typeof c.aufAnfrage !== 'boolean') throw httpError(400, `${pos}: „auf Anfrage“ muss ja oder nein sein`);
     return { ...c, id, name, hex: String(c.hex), finish, active: c.active === undefined ? true : !!c.active, note: oneLine(c.note, 200), stock,
-      aufpreis: betragAus(c.aufpreis ?? 0, `${pos}: Aufpreis`, { max: 10000 }) };
+      aufpreis: betragAus(c.aufpreis ?? 0, `${pos}: Aufpreis`, { max: 10000 }), lieferzeit, aufAnfrage: c.aufAnfrage === true };
   });
 }
 /** Gutscheine prüfen (nach mergeCoupons, Guthaben-Felder kommen vom Server): Code eindeutig, Art, Wert, Mindestbestellwert */
@@ -3800,6 +3852,120 @@ function newWiderrufRef(list) {
 }
 
 // ---------------------------------------------------------------------------
+// Anfragen (data/anfragen.json) — „Farbe anfragen“ (Farbe nur auf Anfrage) und „Individuelles Angebot“ aus dem Shop
+//   POST /api/anfrage { anlass: 'farbe'|'angebot', farbe?: Farb-ID, name, email, nachricht, benachrichtigen?, code?: Design-Code,
+//        website: '' (Falle für Bots) } → { ok, id, antwortVon }
+//   Jede Anfrage geht als Meldung an den Shop (adminTo, sonst Firmen-Adresse; Reply-To = Kundin, Auto-Submitted wie alle automatischen
+//   Mails) und landet in der Anfrageliste im Admin. Bewusst KEINE Mail an die angegebene Adresse — sonst könnte jeder über das
+//   Formular beliebigen Adressen Mails schicken; die Kundin bekommt die Antwort von Hand (von der Antwortadresse, antwortVon).
+//   Ist das Fallen-Feld gefüllt, antwortet der Server wie bei Erfolg, speichert und meldet aber nichts.
+//   Admin: GET /api/admin/anfragen (neueste zuerst) · POST /api/admin/anfrage-status { id, status: 'offen'|'erledigt' }
+//          POST /api/admin/anfrage-loeschen { id }
+//   Eintrag: { id: 'AF-YYMMDD-XXXX', at, anlass, farbe: { id, name } | null, name, email, nachricht, benachrichtigen, code, status, erledigtAt }
+//   Aufbewahrung (Datenschutzerklärung): höchstens 1000 Einträge (die ältesten fallen weg), älter als 12 Monate → beim Start und
+//   täglich gelöscht; erledigte und nicht mehr gebrauchte löscht der Admin selbst.
+// ---------------------------------------------------------------------------
+const ANFRAGE_FILE = path.join(DATA, 'anfragen.json');
+const ANFRAGE_MAX = 1000;
+const ANFRAGE_MONATE = 12;
+const ANFRAGE_IP_MAX = 5;      // Anfragen je Anschluss (IP, IPv6-/64) und Stunde
+const ANFRAGE_ALLE_MAX = 50;   // Anfragen insgesamt je Stunde — eine verteilte Flut füllt weder Postfach noch Mailserver
+const ANFRAGE_ANLAESSE = ['farbe', 'angebot'];
+const ANFRAGE_STATUS = ['offen', 'erledigt'];
+const ANFRAGE_ID_RE = /^AF-\d{6}-[A-F0-9]{4}$/;
+const ANFRAGE_NACHRICHT_MAX = 3000;
+/** anfragen.json lesen — fehlt die Datei: []; ist sie unlesbar, wird sie beiseitegelegt (wie widerrufe.json) und neu begonnen */
+async function readAnfragen() {
+  let raw;
+  try { raw = await readFile(ANFRAGE_FILE, 'utf8'); } catch (err) { if (err.code === 'ENOENT') return []; throw err; }
+  try {
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) throw new Error('keine Liste');
+    return list.filter((a) => a && typeof a === 'object');
+  } catch (err) {
+    const backup = `${ANFRAGE_FILE}.defekt-${Date.now()}`;
+    await rename(ANFRAGE_FILE, backup);
+    console.error(`⚠️  anfragen.json unlesbar (${err.message}) – gesichert als ${path.basename(backup)}, neue Liste begonnen`);
+    return [];
+  }
+}
+// Zugriffe nacheinander: fn(liste) → { result, changed } — bei changed atomar geschrieben
+let anfrageChain = Promise.resolve();
+function withAnfragen(fn) {
+  const run = anfrageChain.then(async () => {
+    const list = await readAnfragen();
+    const out = (await fn(list)) || {};
+    if (out.changed) await writeFileAtomic(ANFRAGE_FILE, JSON.stringify(list, null, 2));
+    return out.result;
+  });
+  anfrageChain = run.catch(() => {});
+  return run;
+}
+/** Grenze der Aufbewahrung: jetzt minus 12 Monate */
+const anfrageFrist = (now = new Date()) => { const d = new Date(now); d.setUTCMonth(d.getUTCMonth() - ANFRAGE_MONATE); return d.getTime(); };
+/** Einträge älter als 12 Monate löschen (Start, täglich) */
+async function anfragenAufraeumen() {
+  const grenze = anfrageFrist();
+  const weg = await withAnfragen((list) => {
+    const vorher = list.length;
+    const bleibt = list.filter((a) => !(Date.parse(a.at || '') < grenze));
+    if (bleibt.length === vorher) return { result: 0 };
+    list.splice(0, list.length, ...bleibt);
+    return { changed: true, result: vorher - bleibt.length };
+  });
+  if (weg) console.log(`🧹 ${weg} Anfrage(n) älter als ${ANFRAGE_MONATE} Monate gelöscht`);
+}
+/** Neue Kennung AF-YYMMDD-XXXX (eindeutig in der Liste) */
+function newAnfrageId(list) {
+  const taken = new Set(list.map((a) => a.id));
+  for (;;) {
+    const id = `AF-${stampYYMMDD()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    if (!taken.has(id)) return id;
+  }
+}
+/** Antwortadresse für Anfragen: Reply-To der Shop-Mails, sonst Firmen-E-Mail ('' ohne beides) — /api/pricing → kontakt, Erfolgsmeldung */
+function anfrageAntwortAdresse() {
+  const r = String(mailSettings(settings.mail).replyTo || '').trim().toLowerCase();
+  if (isEmail(r)) return r;
+  const co = String(settings.company?.email || '').trim().toLowerCase();
+  return isEmail(co) ? co : '';
+}
+/**
+ * Anfrage aus dem Shop prüfen → { anfrage } oder { error } (→ 400). Name 2–80 Zeichen ohne < >, E-Mail wie in der Kasse (isEmail, vor dem
+ * @ nur ASCII — die Adresse steht im Reply-To), Nachricht 1–3000 Zeichen (Zeilenumbrüche bleiben, Steuerzeichen weg), Farbe muss es geben
+ * (bei „farbe“ Pflicht), Design-Code nur in Normalform und nur, wenn es ihn gibt (sonst entfällt er).
+ */
+function anfrageAus(body) {
+  const anlass = ANFRAGE_ANLAESSE.includes(body.anlass) ? body.anlass : null;
+  if (!anlass) return { error: 'Unbekannter Anlass – bitte lade die Seite neu.' };
+  const n = kontoName(typeof body.name === 'string' ? body.name : '');
+  if (n.error) return { error: n.error, feld: 'name' };
+  const email = (typeof body.email === 'string' ? body.email : '').trim().toLowerCase();
+  if (email.length > 254 || !isEmail(email)) return { error: 'Bitte gib eine gültige E-Mail-Adresse an – dorthin bekommst du meine Antwort.', feld: 'email' };
+  const lokal = emailLokalFehler(email);
+  if (lokal) return { error: lokal, feld: 'email' };
+  const roh = typeof body.nachricht === 'string' ? body.nachricht.slice(0, ANFRAGE_NACHRICHT_MAX * 2) : '';
+  const nachricht = roh.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, ' ').trim();
+  if (!nachricht) return { error: 'Bitte schreib mir kurz, was du dir wünschst.', feld: 'nachricht' };
+  if ([...nachricht].length > ANFRAGE_NACHRICHT_MAX) return { error: `Die Nachricht ist zu lang (höchstens ${ANFRAGE_NACHRICHT_MAX} Zeichen).`, feld: 'nachricht' };
+  let farbe = null;
+  const fid = typeof body.farbe === 'string' ? body.farbe.trim().slice(0, 60) : '';
+  if (fid) {
+    const c = (settings.colors || []).find((x) => x?.id === fid && x.active !== false);
+    if (!c) return { error: 'Diese Farbe gibt es im Shop nicht (mehr) – bitte lade die Seite neu.' };
+    farbe = { id: c.id, name: String(c.name || '') };
+  } else if (anlass === 'farbe') return { error: 'Welche Farbe möchtest du anfragen? Bitte lade die Seite neu.' };
+  const code = typeof body.code === 'string' ? normalizeCode(body.code.slice(0, 40)) : '';
+  return {
+    anfrage: {
+      anlass, farbe, name: n.name, email, nachricht,
+      benachrichtigen: anlass === 'farbe' && body.benachrichtigen === true,
+      code: /^[A-Z0-9]{4,20}$/.test(code) && designs[code] ? code : null,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Rechtsseiten (lib/legal.js): /impressum /datenschutz /agb /widerruf /versand — HTML aus den Einstellungen gerendert.
 // Das Modul wird dynamisch geladen: fehlt es (oder ist es fehlerhaft), antworten die Routen mit 503 und einer
 // Notseite mit den Anbieterangaben, statt den Server zu stoppen.
@@ -3907,7 +4073,7 @@ function startseiteJsonLd(html, base) {
   return JSON.stringify({ '@context': 'https://schema.org', '@graph': graph }).replace(/</g, '\\u003c');
 }
 let faqCache = null;   // { key, liste } — content.json je Dateistand
-/** FAQ aus content.json als Text (Lieferzeit/-gebiet wie im Shop eingesetzt) — leer, wenn die Startseite keinen sichtbaren FAQ-Bereich hat */
+/** FAQ aus content.json als Text (Lieferzeit/-gebiet und Kontaktadresse wie im Shop eingesetzt) — leer, wenn die Startseite keinen sichtbaren FAQ-Bereich hat */
 function startseiteFaq(html) {
   const tags = html.match(/<[a-z]+\b[^>]*\bid="faq(?:-list)?"[^>]*>/gi) || [];
   if (!tags.some((x) => /id="faq-list"/.test(x)) || tags.some((x) => /\shidden(?=[\s=>/])/i.test(x))) return [];
@@ -3920,8 +4086,9 @@ function startseiteFaq(html) {
     try { liste = (JSON.parse(readFileSync(file, 'utf8')).faq || []).filter((f) => f && typeof f.q === 'string' && typeof f.a === 'string'); } catch { liste = []; }
     faqCache = { key, liste };
   }
-  const lz = lieferzeitText(settings), lg = String(settings.shop?.liefergebiet || '').trim() || 'Deutschland';
+  const lz = lieferzeitText(settings), lg = String(settings.shop?.liefergebiet || '').trim() || 'Deutschland', km = anfrageAntwortAdresse();
   const text = (s) => s.replace(/<span data-lieferzeit>[^<]*<\/span>/g, lz).replace(/<span data-liefergebiet>[^<]*<\/span>/g, lg)
+    .replace(/<span data-kontakt-mail>([^<]*)<\/span>/g, (_, t) => km || t)
     .replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&shy;/g, '').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ').trim();
   return faqCache.liste.map((f) => ({ q: text(f.q), a: text(f.a) })).filter((f) => f.q && f.a);
@@ -4252,6 +4419,9 @@ async function handleCheckout(req, res) {
       stlFile: `modell-${i + 1}-${l.product}.${(String(l.config?.text || '').trim() && l.config?.textStyle === 'farbe') ? '3mf' : 'stl'}`,
     })),
     subtotal: totals.subtotal, coupon: totals.coupon, shipping: totals.shipping, total: totals.total,
+    // Lieferzeit der Bestellung zum Zeitpunkt der Bestellung = längste Lieferzeit ihrer Positionen (Körperfarbe, bei Farbschrift auch die
+    // Schriftfarbe; ohne eigene Lieferzeit die allgemeine) — Bestätigung, Rechnung und „Erneut senden“ nennen genau diese
+    lieferzeit: lieferzeitDerZeilen(totals.lines),
     // Gesonderte Vereinbarung in der Kasse (Wasser/Standfestigkeit, § 476 Abs. 1 Satz 2 BGB): Zeitpunkt als Nachweis — Pflicht
     // (pruefeKasse); bei PayPal der Zeitpunkt vor der Zahlung (/api/paypal/create)
     beschaffenheitBestaetigt: garantie?.beschaffenheitAt || createdAt,
@@ -4455,12 +4625,12 @@ async function handleComplete(req, res, id, url) {
 /**
  * Angaben für die Danke-Ansicht der Kasse (Antwort von /complete, nur mit dem Schlüssel der Bestellung): zuZahlen (= order.total),
  * gesamtbetrag (mit Guthaben-Anteil, wie auf der Rechnung) und bei offener Vorkasse die Bankverbindung mit Verwendungszweck
- * (Bestellnummer) aus denselben Einstellungen wie die Rechnung. Ältere Kassen-Tabs lesen die Felder nicht.
+ * (Bestellnummer) aus denselben Einstellungen wie die Rechnung, dazu die Lieferzeit der Bestellung. Ältere Kassen-Tabs lesen die Felder nicht.
  */
 function dankeAngaben(order) {
   const zuZahlen = euro(order.total);
   const guth = guthabenDerBestellung(order);
-  const out = { zuZahlen, gesamtbetrag: guth ? Math.round((zuZahlen + guth.off) * 100) / 100 : zuZahlen, zahlungsfristTage: ZAHLUNGSFRIST_TAGE };
+  const out = { zuZahlen, gesamtbetrag: guth ? Math.round((zuZahlen + guth.off) * 100) / 100 : zuZahlen, zahlungsfristTage: ZAHLUNGSFRIST_TAGE, lieferzeit: bestellLieferzeitText(order, settings) };
   if (order.payment !== 'paypal' && zuZahlen > 0 && order.paymentStatus !== 'bezahlt') {
     const co = settings.company || {};
     const bank = { empfaenger: co.owner || co.name || '', iban: co.iban || '', bic: co.bic || '', bank: co.bank || '', verwendungszweck: order.orderId };
@@ -4530,6 +4700,9 @@ const server = http.createServer(async (req, res) => {
         // fristBeginn: Satz je Zahlungsart wie in Bestätigung, Rechnung und AGB § 7 (lib/lieferfrist.js) — Hinweis nach dem Bestellen;
         // kleinunternehmer: Hinweis „keine USt. nach § 19 UStG“ am Preis (§ 6 Abs. 1 PAngV, pricing.js ustText)
         shop: { lieferzeit: settings.shop.lieferzeit, liefergebiet: settings.shop.liefergebiet, fristBeginn: { vorkasse: fristBeginnKurz('vorkasse'), paypal: fristBeginnKurz('paypal') }, kleinunternehmer: !!settings.company?.kleinunternehmer },
+        // Kontaktadresse für Anfragen und individuelle Angebote (Hinweis im Konfigurator, FAQ, Fußzeile, Anfrageformular): Antwortadresse
+        // der Shop-Mails, sonst die Firmen-E-Mail — von dort kommt die Antwort auf eine Anfrage
+        kontakt: { email: anfrageAntwortAdresse() },
         // Hersteller = Anbieter (dieselben Angaben wie im Impressum) — Herstellerangabe beim Produktangebot (GPSR Art. 19)
         anbieter: (({ name, owner, street, zip, city, country, email }) => ({ name: name || BRAND, owner, street, zip, city, country, email }))(settings.company || {}),
       });
@@ -4838,6 +5011,31 @@ const server = http.createServer(async (req, res) => {
       return runHook('widerruf', entry);
     }
 
+    // --- Anfrage („Farbe anfragen“ / „Individuelles Angebot“): prüfen, bremsen, speichern, Meldung an den Shop — keine Mail an die Kundin
+    if (req.method === 'POST' && p === '/api/anfrage') {
+      const body = await readJson(req, 16 * 1024);
+      const antwortVon = anfrageAntwortAdresse();
+      // Falle: das Feld „website“ ist für Menschen unsichtbar — gefüllt → wie Erfolg antworten, nichts speichern, nichts senden
+      if (body.website !== undefined && String(body.website).trim()) return send(res, 200, { ok: true, antwortVon });
+      const { anfrage, error, feld } = anfrageAus(body);
+      if (error) return send(res, 400, { ok: false, error, ...(feld ? { feld } : {}) });
+      const ipKey = `anfrage-ip:${clientIp(req)}`;
+      if (rateLimitReached(ipKey, ANFRAGE_IP_MAX, STUNDE_MS) || rateLimitReached('anfrage-alle', ANFRAGE_ALLE_MAX, STUNDE_MS)) {
+        res.setHeader('Retry-After', '3600');
+        return send(res, 429, { ok: false, error: `Gerade kommen sehr viele Anfragen an – bitte versuch es später noch einmal${antwortVon ? ` oder schreib mir direkt an ${antwortVon}` : ''}.` });
+      }
+      forgotLimited(ipKey, ANFRAGE_IP_MAX, STUNDE_MS); forgotLimited('anfrage-alle', ANFRAGE_ALLE_MAX, STUNDE_MS);
+      const entry = await withAnfragen((list) => {
+        const a = { id: newAnfrageId(list), at: new Date().toISOString(), ...anfrage, status: 'offen', erledigtAt: null };
+        list.push(a);
+        if (list.length > ANFRAGE_MAX) list.splice(0, list.length - ANFRAGE_MAX);   // die ältesten fallen weg
+        return { changed: true, result: a };
+      });
+      console.log(`💬 Anfrage ${entry.id} (${entry.anlass}${entry.farbe ? ` · ${entry.farbe.name}` : ''})`);
+      send(res, 200, { ok: true, id: entry.id, antwortVon });
+      return runHook('anfrage', entry);
+    }
+
     // --- Galerie (Produktfotos, gepflegt über den Admin)
     if (p === '/api/gallery') {
       const dir = path.join(PUBLIC, 'img', 'gallery');
@@ -4983,8 +5181,10 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // Farben im Shop: aktive; lieferzeit = eigene Lieferzeit der Farbe ('' = allgemeine), aufAnfrage = sichtbar, aber nur anzufragen
+    // (ältere Shop-Tabs kennen beides nicht: sie bieten die Farbe normal an, die Kasse lehnt sie dann mit Meldung ab — farbSperre)
     if (p === '/api/colors') {
-      return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish, aufpreis }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis) })));
+      return send(res, 200, settings.colors.filter((c) => c.active).map(({ id, name, hex, finish, aufpreis, lieferzeit, aufAnfrage }) => ({ id, name, hex, finish: finish || 'matt', aufpreis: euro(aufpreis), lieferzeit: lieferzeit || '', aufAnfrage: aufAnfrage === true })));
     }
     if (req.method === 'POST' && p === '/api/quote') {
       const { items, couponCode, email: rohEmail } = await readJson(req);
@@ -5110,6 +5310,7 @@ const server = http.createServer(async (req, res) => {
         // Restwert je Guthaben-Gutschein (Gutschrift aus Reklamation) — Admin zeigt ihn in der Gutschein-Tabelle
         couponRest: guthabenRest(),
         widerrufeOffen: await withWiderrufe((list) => ({ result: list.filter((w) => w.status !== 'erledigt').length })).catch(() => 0),
+        anfragenOffen: await withAnfragen((list) => ({ result: list.filter((a) => a.status !== 'erledigt').length })).catch(() => 0),
       });
     }
     if (req.method === 'POST' && p === '/api/admin/settings') {
@@ -5538,6 +5739,29 @@ const server = http.createServer(async (req, res) => {
       }
       return send(res, 200, { ok: true });
     }
+    // Anfragen (Admin): Liste neueste zuerst · erledigt/offen · löschen
+    if (req.method === 'GET' && p === '/api/admin/anfragen') {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const list = await withAnfragen((l) => ({ result: l.slice() }));
+      return send(res, 200, { ok: true, anfragen: list.sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))) });
+    }
+    if (req.method === 'POST' && (p === '/api/admin/anfrage-status' || p === '/api/admin/anfrage-loeschen')) {
+      if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
+      const body = await readJson(req, 16 * 1024);
+      const id = String(body.id || '').trim().toUpperCase();
+      if (!ANFRAGE_ID_RE.test(id)) return send(res, 400, { ok: false, error: 'Ungültige Kennung' });
+      const loeschen = p === '/api/admin/anfrage-loeschen';
+      if (!loeschen && !ANFRAGE_STATUS.includes(body.status)) return send(res, 400, { ok: false, error: 'Status muss „offen“ oder „erledigt“ sein' });
+      const found = await withAnfragen((list) => {
+        const i = list.findIndex((x) => x.id === id);
+        if (i < 0) return { result: false };
+        if (loeschen) list.splice(i, 1);
+        else { list[i].status = body.status; list[i].erledigtAt = body.status === 'erledigt' ? new Date().toISOString() : null; }
+        return { changed: true, result: true };
+      });
+      if (!found) return send(res, 404, { ok: false, error: 'Anfrage unbekannt' });
+      return send(res, 200, { ok: true });
+    }
     if (p === '/api/admin/users') {
       if (!isAdmin(req)) return send(res, 401, { ok: false, error: 'Nicht angemeldet' });
       return send(res, 200, { ok: true, users: users.map((u) => ({ id: u.id, name: u.name, email: u.email, createdAt: u.createdAt, address: u.address || null, emailVerifiedAt: u.emailVerifiedAt || null })) });
@@ -5912,6 +6136,10 @@ loadCouponUse().catch((err) => console.error('Gutschein-Einlösungen/Belegnummer
   // Abgebrochene Kassen aufräumen: gleich nach dem Start und dann stündlich (Druckdateien nach 48 h, Bestellung nach 14 Tagen)
   setTimeout(() => kassenAufraeumen(), 5000).unref();
   setInterval(() => kassenAufraeumen(), STUNDE_MS).unref();
+  // Anfragen älter als 12 Monate löschen (Datenschutzerklärung): beim Start und dann täglich
+  const anfragenLauf = () => anfragenAufraeumen().catch((err) => console.error('Anfragen aufräumen fehlgeschlagen:', err?.message || err));
+  setTimeout(anfragenLauf, 2000).unref();
+  setInterval(anfragenLauf, 24 * STUNDE_MS).unref();
   // Rechtsseiten früh laden, damit ein fehlendes/fehlerhaftes lib/legal.js gleich im Log steht (die Routen versuchen es erneut)
   legalModule().then((m) => {
     if (!m) return;
